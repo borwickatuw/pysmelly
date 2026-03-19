@@ -1,8 +1,21 @@
 """Output formatting for findings."""
 
+import random
+
 from pysmelly.registry import Finding, Severity
 
 _SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}
+
+_TAGLINES = [
+    "Whoever smelt it, committed it.",
+    "I love the smell of refactoring in the morning.",
+    "I smell dead code.",
+    "Something is rotten in the state of your codebase.",
+    "Houston, we have a code smell.",
+    "You can't handle the smell!",
+    "This code doesn't pass the smell test.",
+    "Follow your nose -- it always knows the code that smells.",
+]
 
 
 def format_text(
@@ -47,5 +60,7 @@ def format_text(
         lines.append(f"Total: {len(findings)} finding(s)")
     else:
         lines.append("All checks passed.")
+
+    lines.append(f"\n  -- {random.choice(_TAGLINES)}")
 
     return "\n".join(lines)
