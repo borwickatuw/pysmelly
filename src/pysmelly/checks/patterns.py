@@ -3,17 +3,8 @@
 import ast
 from pathlib import Path
 
-from pysmelly.checks.helpers import find_calls_to_function
+from pysmelly.checks.helpers import build_parent_map, find_calls_to_function
 from pysmelly.registry import Finding, Severity, check
-
-
-def _build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
-    """Build a child→parent mapping for an AST."""
-    parents: dict[ast.AST, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parents[child] = node
-    return parents
 
 
 def _enclosing_function(
@@ -69,7 +60,7 @@ def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> li
     threshold = 4
 
     for filepath, tree in all_trees.items():
-        parents = _build_parent_map(tree)
+        parents = build_parent_map(tree)
         func_cache: dict[int, tuple[set[str], dict[str, int]]] = {}
 
         for node in ast.walk(tree):

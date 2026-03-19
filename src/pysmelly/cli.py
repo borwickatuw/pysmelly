@@ -133,6 +133,8 @@ CALLER_AWARE_CHECKS = {
     "internal-only",
     "return-none-instead-of-raise",
     "pass-through-params",
+    "scattered-constants",
+    "scattered-isinstance",
 }
 
 

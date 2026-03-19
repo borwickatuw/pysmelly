@@ -4,6 +4,16 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+
+def build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
+    """Build a child→parent mapping for an AST."""
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return parents
+
+
 _EXCEPTION_BASES = frozenset(
     {
         "Exception",

@@ -9,5 +9,6 @@ from pysmelly.checks import (  # noqa: F401
     imports,
     patterns,
     recommendations,
+    repetition,
     structure,
 )
