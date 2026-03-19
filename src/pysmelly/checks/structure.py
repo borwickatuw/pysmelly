@@ -76,7 +76,10 @@ def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> 
                 file=first["file"],
                 line=first["line_start"],
                 check="duplicate-blocks",
-                message=(f"{finding_data['num_stmts']} duplicate statements at: {locations_str}"),
+                message=(
+                    f"{finding_data['num_stmts']} duplicate statements "
+                    f"repeated in these places: {locations_str}"
+                ),
                 severity=Severity.MEDIUM,
             )
         )
