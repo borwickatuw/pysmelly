@@ -90,34 +90,35 @@ def _normalize_ast(node: ast.AST) -> str:
     Strips variable names, string literals, and numbers so that
     structurally identical code with different names matches.
     """
-    parts = []
+    return "|".join(_ast_signature_parts(node))
 
+
+def _ast_signature_parts(node: ast.AST):
+    """Yield structure-only tokens for AST nodes."""
     for child in ast.walk(node):
         if isinstance(child, ast.Call):
             if isinstance(child.func, ast.Name):
-                parts.append(f"call:{child.func.id}")
+                yield f"call:{child.func.id}"
             elif isinstance(child.func, ast.Attribute):
-                parts.append(f"call:.{child.func.attr}")
+                yield f"call:.{child.func.attr}"
             else:
-                parts.append("call:?")
-            parts.append(f"args:{len(child.args)},kw:{len(child.keywords)}")
+                yield "call:?"
+            yield f"args:{len(child.args)},kw:{len(child.keywords)}"
         elif isinstance(child, ast.If):
-            parts.append("if")
+            yield "if"
         elif isinstance(child, ast.For):
-            parts.append("for")
+            yield "for"
         elif isinstance(child, ast.Return):
-            parts.append("return")
+            yield "return"
         elif isinstance(child, ast.Assign):
-            parts.append("assign")
+            yield "assign"
         elif isinstance(child, ast.Expr):
-            parts.append("expr")
+            yield "expr"
         elif isinstance(child, ast.Compare):
             ops = ",".join(type(op).__name__ for op in child.ops)
-            parts.append(f"cmp:{ops}")
+            yield f"cmp:{ops}"
         elif isinstance(child, ast.Attribute):
-            parts.append(f".{child.attr}")
-
-    return "|".join(parts)
+            yield f".{child.attr}"
 
 
 def _extract_statement_blocks(
