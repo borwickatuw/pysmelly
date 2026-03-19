@@ -41,3 +41,9 @@
 - `immediately-overwritten` — pylint W0128 (self-assigning-variable), ruff territory
 
 pysmelly's differentiator is cross-file call-graph analysis. Adding single-file lint rules dilutes that focus, increases maintenance surface, and competes with tools (ruff, pylint) that do single-file analysis better and faster. The `compat-shims` exception stands because no other tool flags that pattern.
+
+## Don't add `--exclude-tests` convenience flag
+
+**Decision:** Don't implement it. Keep `--exclude` as the only mechanism.
+
+**Rationale:** Test file naming conventions vary across projects — `test_*.py`, `*_test.py`, `tests/`, `test/`, `spec/`, framework-specific patterns, etc. A hardcoded `--exclude-tests` bakes in assumptions that won't be universal. The existing `--exclude` flag is flexible enough (`--exclude 'test_*' --exclude 'tests/'`). If discoverability is a concern, better `--help` examples are the right fix, not a new flag.
