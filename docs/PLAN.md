@@ -2,27 +2,28 @@
 
 ## Current State
 
-Extracted from deployer's `bin/lint-review.py` into a standalone package. 12 checks implemented, zero dependencies, installable via `uvx`. Basic text and JSON output.
+10 checks implemented, zero dependencies, installable via `uvx`. LLM-aware `--help`, `--list-checks`, `--min-severity`, relative paths in output. 49 tests passing.
 
 ## Phase 1: Foundation (before first release)
 
 ### Remove checks better handled by other tools
 
-- [ ] **Remove `lazy-imports`** — Pylint's `import-outside-toplevel` (C0415) covers this. pysmelly should focus on cross-file analysis, not single-file rules.
-- [ ] **Remove `too-many-params`** — Ruff's PLR0913 and Pylint's R0913 already do this. Unless we add caller-aware context (e.g., "and 3 of 6 callers pass the same values"), this is just duplicating existing tools.
+- [x] **Remove `lazy-imports`** — Pylint's `import-outside-toplevel` (C0415) covers this.
+- [x] **Remove `too-many-params`** — Ruff's PLR0913 and Pylint's R0913 already do this.
 - [ ] **Evaluate `compat-shims`** — Simple pattern match; could be a Semgrep rule. Keep for now since no standard tool flags it specifically.
 
 ### Polish CLI
 
-- [ ] **`--help` should be LLM-aware** — The epilog should explain how to use pysmelly findings in a code review workflow, what each severity means in terms of action, and list complementary tools (vulture, ruff, mypy, bandit) with what they cover. An LLM reading `--help` should understand both how to invoke the tool and what to do with the output.
-- [ ] **Exit codes** — 0 = clean, 1 = findings. Consider: exit 0 for low-only findings?
-- [ ] **`--min-severity`** — Filter output to only show findings at or above a severity level.
-- [ ] **Relative paths in output** — Currently uses absolute paths from `Path.resolve()`. Use paths relative to the target directory for cleaner output.
+- [x] **`--help` should be LLM-aware** — Epilog includes severity definitions, complementary tools (vulture, ruff, pylint, mypy, bandit), exit codes, install instructions, and JSON guidance.
+- [x] **`--list-checks`** — Prints each check with severity and one-line description.
+- [x] **Exit codes** — 0 = clean, 1 = findings.
+- [x] **`--min-severity`** — Filter output to only show findings at or above a severity level.
+- [x] **Relative paths in output** — Paths are now relative to the target directory.
 
 ### Tests
 
-- [ ] Write tests for each check using small synthetic AST fixtures
-- [ ] Test CLI (argparse, exit codes, output format selection)
+- [x] Write tests for each check using small synthetic AST fixtures
+- [x] Test CLI (argparse, exit codes, output format selection)
 - [ ] `make self-check` should pass (pysmelly analyzing itself)
 
 ## Phase 2: New Checks (informed by real refactoring history)
