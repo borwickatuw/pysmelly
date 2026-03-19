@@ -1,14 +1,24 @@
 """Output formatting for findings."""
 
-import json
-from dataclasses import asdict
-
-from pysmelly.registry import Finding, Severity
+from pysmelly.registry import Finding
 
 
-def format_text(findings: list[Finding], total_files: int) -> str:
-    """Human-readable text output grouped by check."""
-    lines = [f"Parsed {total_files} Python files", ""]
+def format_text(
+    findings: list[Finding],
+    total_files: int,
+    context: list[str] | None = None,
+) -> str:
+    """Text output grouped by check, with optional guidance preamble."""
+    lines = []
+
+    if context:
+        lines.append("--- Guidance ---")
+        for item in context:
+            lines.append(item)
+        lines.append("----------------")
+        lines.append("")
+
+    lines.extend([f"Parsed {total_files} Python files", ""])
 
     by_check: dict[str, list[Finding]] = {}
     for f in findings:
@@ -26,33 +36,3 @@ def format_text(findings: list[Finding], total_files: int) -> str:
         lines.append("All checks passed.")
 
     return "\n".join(lines)
-
-
-def format_json(
-    findings: list[Finding],
-    total_files: int,
-    source_lines: dict[str, list[str]],
-) -> str:
-    """Machine-readable JSON output."""
-    result_findings = []
-    for f in findings:
-        entry = {
-            "file": f.file,
-            "line": f.line,
-            "check": f.check,
-            "message": f.message,
-            "severity": f.severity.value,
-        }
-        if source_lines and f.file in source_lines:
-            lines = source_lines[f.file]
-            idx = f.line - 1
-            if 0 <= idx < len(lines):
-                entry["source"] = lines[idx].rstrip()
-        result_findings.append(entry)
-
-    output = {
-        "total_files": total_files,
-        "total_findings": len(findings),
-        "findings": result_findings,
-    }
-    return json.dumps(output, indent=2)

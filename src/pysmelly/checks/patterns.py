@@ -9,14 +9,14 @@ from pysmelly.registry import Finding, Severity, check
 @check(
     "foo-equals-foo",
     severity=Severity.MEDIUM,
-    description="Calls with many name=name kwargs (bundle into dataclass)",
+    description="Intermediate variables gathered into an object — build it directly instead",
 )
 def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
-    """Find constructor calls where many kwargs have name=name pattern.
+    """Find calls where many kwargs match local variable names (name=name).
 
-    When a function call has 4+ arguments of the form foo=foo, it suggests
-    the caller has accumulated too many local variables that mirror a
-    constructor's parameters — consider bundling into a dataclass.
+    When a function call has 4+ arguments of the form foo=foo, the caller
+    is accumulating intermediate variables just to pass them into an object.
+    Build the object as you go instead, or pass the data structure directly.
     """
     findings = []
     threshold = 4
@@ -51,9 +51,11 @@ def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> li
                         line=node.lineno,
                         check="foo-equals-foo",
                         message=(
-                            f"{call_name}() has {foo_foo_count} foo=foo args: "
-                            f"{', '.join(foo_foo_names[:5])}"
+                            f"{call_name}() gathers {foo_foo_count} intermediate "
+                            f"variables ({', '.join(foo_foo_names[:5])}"
                             f"{'...' if len(foo_foo_names) > 5 else ''}"
+                            f") — build the object directly instead of "
+                            f"accumulating locals"
                         ),
                         severity=Severity.MEDIUM,
                     )
@@ -121,6 +123,42 @@ def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool)
     return findings
 
 
+def _has_append_to(node: ast.AST, var_name: str) -> bool:
+    """Check if an AST node contains an append call to var_name."""
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == var_name
+            and child.func.attr == "append"
+        ):
+            return True
+    return False
+
+
+def _classify_appends(siblings: list[ast.AST], var_name: str) -> tuple[int, int, int]:
+    """Classify appends by context: (loop_appends, conditional_appends, bare_appends).
+
+    A sibling For/AsyncFor containing appends → loop_appends.
+    A sibling If containing appends → conditional_appends.
+    A bare Expr with an append → bare_appends.
+    """
+    loop = 0
+    conditional = 0
+    bare = 0
+    for sibling in siblings:
+        if not _has_append_to(sibling, var_name):
+            continue
+        if isinstance(sibling, (ast.For, ast.AsyncFor)):
+            loop += 1
+        elif isinstance(sibling, ast.If):
+            conditional += 1
+        else:
+            bare += 1
+    return loop, conditional, bare
+
+
 @check(
     "temp-accumulators",
     severity=Severity.MEDIUM,
@@ -129,8 +167,12 @@ def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool)
 def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find temporary lists used only to accumulate and join/check.
 
-    Pattern: name = [], then conditional appends, then join() or 'if name:'.
-    Often replaceable with a comprehension or direct string formatting.
+    Pattern: name = [], then appends, then join() or 'if name:'.
+
+    Distinguishes two sub-patterns:
+    - Loop appending a transform → high confidence, use a comprehension (MEDIUM)
+    - Multiple independent conditional appends → low confidence, accumulator
+      is often the right choice for heterogeneous conditions (LOW)
     """
     findings = []
 
@@ -187,18 +229,41 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
                         if isinstance(child.test, ast.Name) and child.test.id == var_name:
                             join_or_check = True
 
-            if append_count >= 2 and join_or_check and other_uses == 0:
+            loop_appends, conditional_appends, bare_appends = _classify_appends(siblings, var_name)
+
+            # A loop body runs N times, so 1 append in a loop is sufficient
+            min_appends = 1 if loop_appends > 0 else 2
+
+            if append_count >= min_appends and join_or_check and other_uses == 0:
+
+                if loop_appends > 0:
+                    severity = Severity.MEDIUM
+                    message = (
+                        f"'{var_name}' is a loop-and-append accumulator "
+                        f"— replace with a comprehension"
+                    )
+                elif conditional_appends > 0 and bare_appends == 0:
+                    severity = Severity.LOW
+                    message = (
+                        f"'{var_name}' is built from {conditional_appends} "
+                        f"independent conditions then joined/checked "
+                        f"— accumulator may be appropriate here"
+                    )
+                else:
+                    severity = Severity.MEDIUM
+                    message = (
+                        f"'{var_name}' is a temporary accumulator "
+                        f"({append_count} appends then join/check) — "
+                        f"consider a comprehension or direct approach"
+                    )
+
                 findings.append(
                     Finding(
                         file=str(filepath),
                         line=assign_line,
                         check="temp-accumulators",
-                        message=(
-                            f"'{var_name}' is a temporary accumulator "
-                            f"({append_count} appends then join/check) — "
-                            f"consider a comprehension or direct approach"
-                        ),
-                        severity=Severity.MEDIUM,
+                        message=message,
+                        severity=severity,
                     )
                 )
 

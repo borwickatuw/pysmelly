@@ -11,7 +11,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/cli.py` - CLI entry point, argparse setup
 - `src/pysmelly/registry.py` - `@check` decorator, `Finding` dataclass, `Severity` enum
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
-- `src/pysmelly/output.py` - Text and JSON formatters
+- `src/pysmelly/output.py` - Text formatter
 - `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only)
 - `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts)
 - `src/pysmelly/checks/structure.py` - Structural checks (too-many-params, duplicate-blocks)
@@ -23,7 +23,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 ```bash
 uv run pysmelly                        # Analyze current directory
 uv run pysmelly --check dead-code      # Run single check
-uv run pysmelly --format=json src/     # JSON output
+uv run pysmelly --no-context src/     # Suppress LLM guidance preamble
 uv run pytest                          # Run tests
 make format                            # Format with black + isort
 make self-check                        # Run pysmelly on itself

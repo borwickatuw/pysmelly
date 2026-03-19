@@ -10,7 +10,7 @@ from pathlib import Path
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
 from pysmelly.discovery import get_changed_lines, get_git_root, get_python_files, parse_file
-from pysmelly.output import format_json, format_text
+from pysmelly.output import format_text
 from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding, Severity
 
 EPILOG = """\
@@ -29,10 +29,9 @@ Exit codes:
   0       No findings
   1       One or more findings reported
 
-For LLM-assisted code review, use --format=json for structured output.
-Each finding includes file, line, check name, message, and severity
-for programmatic consumption. Use --list-checks to see available checks
-with descriptions.
+Output includes a guidance preamble to help LLM consumers interpret
+findings in context. Use --no-context to suppress. Use --list-checks
+to see available checks with descriptions.
 
 Complementary tools to run alongside pysmelly:
   vulture     Dead code detection (name-matching, no call graph)
@@ -92,6 +91,53 @@ def _is_suppressed(finding: Finding, source_lines: dict[str, list[str]]) -> bool
     return False
 
 
+# Checks that use cross-file caller analysis — findings are affected by file exclusions
+CALLER_AWARE_CHECKS = {
+    "unused-defaults",
+    "constant-args",
+    "dead-code",
+    "single-call-site",
+    "internal-only",
+}
+
+
+def _has_test_excludes(excludes: list[str]) -> bool:
+    """Check if any --exclude patterns target test files."""
+    return any("test" in pat.lower() for pat in excludes)
+
+
+def _build_guidance(excludes: list[str], checks_with_findings: set[str]) -> list[str]:
+    """Build contextual guidance for LLM consumers."""
+    guidance = [
+        "pysmelly performs cross-file call-graph analysis to find vestigial "
+        "code patterns — the kind of cruft that survives after design changes. "
+        "Findings are signals for review, not mandates — use judgment about "
+        "whether each finding represents a real problem in context.",
+    ]
+
+    if _has_test_excludes(excludes):
+        guidance.append(
+            "Test files were excluded from this analysis (via --exclude). "
+            "When evaluating findings, do not use test callers to justify "
+            "keeping code as-is. If a parameter is always passed the same "
+            "value in production, don't keep it general just because tests "
+            "pass different values — simplify both the code and the tests. "
+            "Tests should reflect actual usage, not speculative generality."
+        )
+
+    caller_findings = checks_with_findings & CALLER_AWARE_CHECKS
+    if caller_findings:
+        guidance.append(
+            "Caller-aware checks ("
+            + ", ".join(sorted(caller_findings))
+            + ") analyze how functions are actually called across the codebase. "
+            "A function that looks reasonable in isolation may reveal vestigial "
+            "design when you see that every caller uses it the same way."
+        )
+
+    return guidance
+
+
 def _print_check_list() -> None:
     """Print all registered checks with severity and description."""
     name_width = max(len(name) for name in CHECKS)
@@ -134,12 +180,6 @@ def main(argv: list[str] | None = None) -> None:
         help="Exclude files matching this pattern (can be repeated, e.g. 'test_*')",
     )
     parser.add_argument(
-        "--format",
-        choices=["text", "json"],
-        default="text",
-        help="Output format (default: text)",
-    )
-    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -158,6 +198,11 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         metavar="REF",
         help="Only report findings in lines changed since REF (default: HEAD)",
+    )
+    parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Suppress the guidance preamble (on by default for LLM consumers)",
     )
     parser.add_argument(
         "--list-checks",
@@ -223,7 +268,7 @@ def main(argv: list[str] | None = None) -> None:
                 if str(offset / f.file) in changed and f.line in changed[str(offset / f.file)]
             ]
 
-    # Load source lines for suppression checks and JSON context
+    # Load source lines for suppression checks
     source_lines: dict[str, list[str]] = {}
     files_with_findings = {f.file for f in all_findings}
     for file_rel in files_with_findings:
@@ -235,11 +280,20 @@ def main(argv: list[str] | None = None) -> None:
     # Filter suppressed findings (# pysmelly: ignore / # pysmelly: ignore[check-name])
     all_findings = [f for f in all_findings if not _is_suppressed(f, source_lines)]
 
+    # Annotate caller-aware findings when test files are excluded
+    if _has_test_excludes(args.exclude):
+        for f in all_findings:
+            if f.check in CALLER_AWARE_CHECKS:
+                f.message += " [test files excluded]"
+
+    # Build guidance preamble for LLM consumers (on by default)
+    context: list[str] | None = None
+    if not args.no_context:
+        checks_with_findings = {f.check for f in all_findings}
+        context = _build_guidance(args.exclude, checks_with_findings)
+
     # Output
-    if args.format == "json":
-        print(format_json(all_findings, len(all_trees), source_lines))
-    else:
-        print(format_text(all_findings, len(all_trees)))
+    print(format_text(all_findings, len(all_trees), context=context))
 
     sys.exit(1 if all_findings else 0)
 

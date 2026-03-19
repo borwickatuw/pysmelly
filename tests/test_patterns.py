@@ -18,7 +18,7 @@ def build(name, age, email, role):
 """)
         findings = check_foo_equals_foo(t, verbose=False)
         assert len(findings) == 1
-        assert "4 foo=foo args" in findings[0].message
+        assert "gathers 4 intermediate variables" in findings[0].message
 
     def test_ignores_below_threshold(self, trees):
         t = trees.code("""\
@@ -130,6 +130,53 @@ def build():
 """)
         findings = check_temp_accumulators(t, verbose=False)
         assert len(findings) == 0
+
+    def test_loop_append_is_medium_severity(self, trees):
+        """Loop-and-append is high confidence — should be a comprehension."""
+        t = trees.code("""\
+def build(items):
+    parts = []
+    for item in items:
+        parts.append(item.name)
+    return ", ".join(parts)
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert findings[0].severity.value == "medium"
+        assert "comprehension" in findings[0].message
+        assert "loop-and-append" in findings[0].message
+
+    def test_conditional_appends_are_low_severity(self, trees):
+        """Independent conditional appends — accumulator is often appropriate."""
+        t = trees.code("""\
+def build(config):
+    flags = []
+    if config.verbose:
+        flags.append("--verbose")
+    if config.debug:
+        flags.append("--debug")
+    if flags:
+        run(flags)
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert findings[0].severity.value == "low"
+        assert "independent conditions" in findings[0].message
+
+    def test_mixed_loop_and_conditional_is_medium(self, trees):
+        """When loop appends are present, stays MEDIUM even with conditionals."""
+        t = trees.code("""\
+def build(items, extra):
+    parts = []
+    for item in items:
+        parts.append(item.name)
+    if extra:
+        parts.append(extra)
+    return ", ".join(parts)
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert findings[0].severity.value == "medium"
 
 
 class TestConstantDispatchDicts:

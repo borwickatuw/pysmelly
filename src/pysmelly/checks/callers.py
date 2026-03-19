@@ -214,9 +214,7 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
         # Count non-self/cls params
         param_count = 0
         if func_node:
-            param_count = len(
-                [a for a in func_node.args.args if a.arg not in ("self", "cls")]
-            )
+            param_count = len([a for a in func_node.args.args if a.arg not in ("self", "cls")])
 
         # Detect when all args come from a single object
         single_source = _args_from_single_object(call_node)
@@ -230,10 +228,7 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
         parts = [f"{func_name}()"]
         if param_count > 0:
             parts.append(f"has {param_count} params and")
-        parts.append(
-            f"exactly 1 call site "
-            f"({call['file'].split('/')[-1]}:{call['line']})"
-        )
+        parts.append(f"exactly 1 call site " f"({call['file'].split('/')[-1]}:{call['line']})")
         if single_source:
             parts.append(f"— all args from '{single_source}'")
         parts.append("— consider inlining")
