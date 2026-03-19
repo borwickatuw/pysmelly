@@ -29,3 +29,15 @@
 **Decision:** Don't implement it.
 
 **Rationale:** Ruff's UP006 and UP007 already detect `typing.List`, `typing.Optional`, etc. and auto-fix them. pysmelly should not reimplement what ruff does well.
+
+## Don't add single-file checks that overlap with existing tools
+
+**Decision:** Don't implement `stdlib-shadow`, `function-level-loggers`, `write-only-variables`, `immediately-overwritten`, or `remainder-flags`.
+
+**Rationale:** These are all single-file pattern matches that existing tools already handle or could trivially handle:
+- `stdlib-shadow` — ruff A005
+- `function-level-loggers` — pylint W1203/W1201 territory
+- `write-only-variables` — pylint W0612, vulture
+- `immediately-overwritten` — pylint W0128 (self-assigning-variable), ruff territory
+
+pysmelly's differentiator is cross-file call-graph analysis. Adding single-file lint rules dilutes that focus, increases maintenance surface, and competes with tools (ruff, pylint) that do single-file analysis better and faster. The `compat-shims` exception stands because no other tool flags that pattern.

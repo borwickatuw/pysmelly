@@ -16,15 +16,9 @@ This was already in the ideas list but the deployer feedback provided concrete e
 
 | Source | Proposed check |
 |---|---|
-| Refactoring history | **`param-clumps`** — detect groups of 3+ parameters that appear together in multiple function signatures. Strong signal for "extract a dataclass." |
-| Refactoring history | **`parallel-implementations`** — (hard to detect generically, but a variant: functions with the same name/signature in different files, or if/else branches that both produce the same type) |
-| PYTHON.md | **`stdlib-shadow`** — detect Python files whose names shadow stdlib modules. |
-| PYTHON.md | **`function-level-loggers`** — detect `logging.getLogger()` or `logging.basicConfig()` inside functions instead of at module level. |
-| PYTHON.md | **`remainder-flags`** — detect argparse patterns where REMAINDER is used alongside flags that will be swallowed. |
-| Ideas | **`write-only-variables`** — Variable assigned but never read in the same scope. Different from unused imports. |
-| Ideas | **`boolean-parameter-smell`** — Functions with boolean parameters where the first statement is `if flag:` — suggests the function should be two functions. |
-| Ideas | **`stale-comments`** — Comments referencing function/variable names that no longer exist in the codebase. |
-| Ideas | **`immediately-overwritten`** — `x = "default"` immediately followed by `x = compute()`. The first assignment is dead. |
+| Refactoring history | **`param-clumps`** — detect groups of 3+ parameters that appear together in multiple function signatures. Strong signal for "extract a dataclass." Cross-file, leverages existing function index. |
+
+Single-file checks (`stdlib-shadow`, `function-level-loggers`, `write-only-variables`, `immediately-overwritten`, `remainder-flags`) deliberately excluded — see [DECISIONS.md](DECISIONS.md). Speculative checks (`parallel-implementations`, `boolean-parameter-smell`, `stale-comments`) moved to [SOMEDAY-MAYBE.md](SOMEDAY-MAYBE.md).
 
 ## Better Output for LLMs
 
