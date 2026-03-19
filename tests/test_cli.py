@@ -48,7 +48,8 @@ class TestCLI:
         data = json.loads(output)
         assert data["total_findings"] > 0
         finding = data["findings"][0]
-        assert set(finding.keys()) == {"file", "line", "check", "message", "severity"}
+        assert {"file", "line", "check", "message", "severity"} <= set(finding.keys())
+        assert "source" in finding  # source context included
 
     def test_min_severity_filters(self, tmp_path, capsys):
         """--min-severity high filters out medium and low findings."""
@@ -150,6 +151,62 @@ used()
         files = {f["file"] for f in data["findings"]}
         assert any("mod_a" in f for f in files)
         assert any("mod_b" in f for f in files)
+
+    def test_inline_suppression(self, tmp_path, capsys):
+        """# pysmelly: ignore suppresses findings."""
+        (tmp_path / "suppressed.py").write_text(
+            "def unused_func():  # pysmelly: ignore\n    pass\n"
+        )
+        try:
+            main(["--format", "json", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        data = json.loads(output)
+        assert data["total_findings"] == 0
+
+    def test_inline_suppression_specific_check(self, tmp_path, capsys):
+        """# pysmelly: ignore[check-name] suppresses only that check."""
+        (tmp_path / "specific.py").write_text(
+            "def unused_func():  # pysmelly: ignore[dead-code]\n    pass\n"
+        )
+        try:
+            main(["--format", "json", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        data = json.loads(output)
+        # dead-code suppressed, but other checks may still fire
+        for f in data["findings"]:
+            assert f["check"] != "dead-code"
+
+    def test_inline_suppression_line_above(self, tmp_path, capsys):
+        """Suppression comment on the line above also works."""
+        (tmp_path / "above.py").write_text(
+            "# pysmelly: ignore[dead-code]\ndef unused_func():\n    pass\n"
+        )
+        try:
+            main(["--format", "json", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        data = json.loads(output)
+        for f in data["findings"]:
+            assert f["check"] != "dead-code"
+
+    def test_json_source_context(self, tmp_path, capsys):
+        """JSON output includes source line for each finding."""
+        (tmp_path / "ctx.py").write_text("def unused_func():\n    pass\n")
+        try:
+            main(["--format", "json", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        data = json.loads(output)
+        assert data["total_findings"] > 0
+        finding = data["findings"][0]
+        assert "source" in finding
+        assert "unused_func" in finding["source"]
 
     def test_invalid_directory(self, capsys):
         """Non-existent directory prints error and exits 1."""

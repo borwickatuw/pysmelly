@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
-from pysmelly.discovery import get_python_files, parse_file
+from pysmelly.discovery import get_changed_lines, get_git_root, get_python_files, parse_file
 from pysmelly.output import format_json, format_text
 from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding, Severity
 
@@ -43,6 +43,33 @@ pysmelly does NOT check formatting, types, or security — use the tools
 above for those. pysmelly focuses on design smells and refactoring signals
 that require cross-file analysis.
 """
+
+
+def _is_suppressed(finding: Finding, source_lines: dict[str, list[str]]) -> bool:
+    """Check if a finding is suppressed by an inline comment."""
+    lines = source_lines.get(finding.file)
+    if not lines:
+        return False
+
+    # Check the finding's line and the line above it
+    for idx in (finding.line - 1, finding.line - 2):
+        if not (0 <= idx < len(lines)):
+            continue
+        line = lines[idx]
+        pos = line.find("pysmelly: ignore")
+        if pos == -1:
+            continue
+        rest = line[pos + len("pysmelly: ignore") :]
+        # Blanket ignore (no bracket follows)
+        if not rest.startswith("["):
+            return True
+        # Specific check: pysmelly: ignore[check-name]
+        end = rest.find("]")
+        if end != -1:
+            check_names = {c.strip() for c in rest[1:end].split(",")}
+            if finding.check in check_names:
+                return True
+    return False
 
 
 def _print_check_list() -> None:
@@ -103,6 +130,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Minimum severity to report (default: low)",
     )
     parser.add_argument(
+        "--diff",
+        nargs="?",
+        const="HEAD",
+        default=None,
+        metavar="REF",
+        help="Only report findings in lines changed since REF (default: HEAD)",
+    )
+    parser.add_argument(
         "--list-checks",
         action="store_true",
         help="List all available checks with descriptions and exit",
@@ -151,9 +186,36 @@ def main(argv: list[str] | None = None) -> None:
     min_level = severity_order[Severity(args.min_severity)]
     all_findings = [f for f in all_findings if severity_order[f.severity] >= min_level]
 
+    # Filter by diff (only findings in changed lines)
+    if args.diff is not None:
+        git_root = get_git_root(base)
+        if git_root:
+            changed = get_changed_lines(args.diff, git_root)
+            try:
+                offset = base.relative_to(git_root)
+            except ValueError:
+                offset = Path()
+            all_findings = [
+                f
+                for f in all_findings
+                if str(offset / f.file) in changed and f.line in changed[str(offset / f.file)]
+            ]
+
+    # Load source lines for suppression checks and JSON context
+    source_lines: dict[str, list[str]] = {}
+    files_with_findings = {f.file for f in all_findings}
+    for file_rel in files_with_findings:
+        try:
+            source_lines[file_rel] = (base / file_rel).read_text().splitlines()
+        except OSError:
+            pass
+
+    # Filter suppressed findings (# pysmelly: ignore / # pysmelly: ignore[check-name])
+    all_findings = [f for f in all_findings if not _is_suppressed(f, source_lines)]
+
     # Output
     if args.format == "json":
-        print(format_json(all_findings, len(all_trees)))
+        print(format_json(all_findings, len(all_trees), source_lines))
     else:
         print(format_text(all_findings, len(all_trees)))
 

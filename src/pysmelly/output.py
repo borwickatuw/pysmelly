@@ -28,20 +28,31 @@ def format_text(findings: list[Finding], total_files: int) -> str:
     return "\n".join(lines)
 
 
-def format_json(findings: list[Finding], total_files: int) -> str:
+def format_json(
+    findings: list[Finding],
+    total_files: int,
+    source_lines: dict[str, list[str]],
+) -> str:
     """Machine-readable JSON output."""
+    result_findings = []
+    for f in findings:
+        entry = {
+            "file": f.file,
+            "line": f.line,
+            "check": f.check,
+            "message": f.message,
+            "severity": f.severity.value,
+        }
+        if source_lines and f.file in source_lines:
+            lines = source_lines[f.file]
+            idx = f.line - 1
+            if 0 <= idx < len(lines):
+                entry["source"] = lines[idx].rstrip()
+        result_findings.append(entry)
+
     output = {
         "total_files": total_files,
         "total_findings": len(findings),
-        "findings": [
-            {
-                "file": f.file,
-                "line": f.line,
-                "check": f.check,
-                "message": f.message,
-                "severity": f.severity.value,
-            }
-            for f in findings
-        ],
+        "findings": result_findings,
     }
     return json.dumps(output, indent=2)
