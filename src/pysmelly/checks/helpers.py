@@ -21,12 +21,44 @@ def find_calls_to_function(all_trees: dict[Path, ast.Module], func_name: str) ->
     return calls
 
 
+def _find_main_entry_points(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Find function names called from ``if __name__ == "__main__":`` blocks."""
+    entry_points: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.If):
+                continue
+            if not _is_main_guard(node.test):
+                continue
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+                    entry_points.add(child.func.id)
+    return entry_points
+
+
+def _is_main_guard(test: ast.expr) -> bool:
+    """Check if an expression is ``__name__ == "__main__"``."""
+    if not isinstance(test, ast.Compare):
+        return False
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    left, right = test.left, test.comparators[0]
+    # __name__ == "__main__"
+    if isinstance(left, ast.Name) and left.id == "__name__":
+        return isinstance(right, ast.Constant) and right.value == "__main__"
+    # "__main__" == __name__
+    if isinstance(right, ast.Name) and right.id == "__name__":
+        return isinstance(left, ast.Constant) and left.value == "__main__"
+    return False
+
+
 def build_function_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[dict]]:
     """Build map of public function definitions across the codebase.
 
-    Returns only non-private, non-decorated, non-method, non-test functions
-    that are defined at the top level (not nested inside other functions).
+    Returns only non-private, non-decorated, non-method, non-test, non-entry-point
+    functions that are defined at the top level (not nested inside other functions).
     """
+    entry_points = _find_main_entry_points(all_trees)
     func_defs: dict[str, list[dict]] = defaultdict(list)
     for filepath, tree in all_trees.items():
         # Collect nested function ids to exclude them
@@ -44,8 +76,10 @@ def build_function_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[di
                 continue
             if id(node) in nested_funcs:
                 continue
-            # Skip private, dunder, and test functions
+            # Skip private, dunder, test, and entry-point functions
             if node.name.startswith("_") or node.name.startswith("test"):
+                continue
+            if node.name in entry_points:
                 continue
             # Skip decorated functions (registered via decorator, not direct calls)
             if node.decorator_list:

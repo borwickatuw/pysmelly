@@ -124,6 +124,17 @@ HANDLERS = {"a": handler_a}
         findings = check_dead_code(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_main_entry_point(self, trees):
+        t = trees.code("""\
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
+""")
+        findings = check_dead_code(t, verbose=False)
+        assert len(findings) == 0
+
     def test_ignores_imported_function(self, trees):
         t = trees.files(
             {
@@ -168,6 +179,18 @@ helper()
         t = trees.code("""\
 def helper():
     pass
+""")
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_main_entry_point(self, trees):
+        """Functions called from __main__ guard are entry points, not inline candidates."""
+        t = trees.code("""\
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
 """)
         findings = check_single_call_site(t, verbose=False)
         assert len(findings) == 0

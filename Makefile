@@ -12,4 +12,4 @@ lint:
 	uv run isort --check src/ tests/
 
 self-check:
-	uv run pysmelly --min-severity medium src/
+	uv run pysmelly src/
