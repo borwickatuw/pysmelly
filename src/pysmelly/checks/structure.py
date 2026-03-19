@@ -226,9 +226,7 @@ def check_duplicate_except_blocks(
             continue
         reported.add(locations_key)
 
-        deduped, locations_str = _dedup_and_format_locations(
-            handlers, "file", "func", "line"
-        )
+        deduped, locations_str = _dedup_and_format_locations(handlers, "file", "func", "line")
         first = deduped[0]
         findings.append(
             Finding(

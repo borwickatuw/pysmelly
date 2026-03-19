@@ -678,9 +678,7 @@ def _attr_chain(node: ast.expr) -> str:
     severity=Severity.MEDIUM,
     description="Function assigned to attribute of external object at module scope",
 )
-def check_runtime_monkey_patch(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+def check_runtime_monkey_patch(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find module-level monkey-patches: obj.attr = local_function.
 
     Monkey-patching replaces behavior at runtime, making code harder to
