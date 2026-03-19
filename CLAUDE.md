@@ -15,7 +15,9 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params)
 - `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts)
 - `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps)
-- `src/pysmelly/checks/imports.py` - Import checks (lazy-imports, compat-shims)
+- `src/pysmelly/checks/imports.py` - Import checks (compat-shims)
+- `src/pysmelly/checks/recommendations.py` - Stdlib alternatives check with TOML catalog
+- `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
 
 ## Common Commands

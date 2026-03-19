@@ -30,10 +30,13 @@ pysmelly src/
 pysmelly --check unused-defaults
 
 # Skip specific checks
-pysmelly --skip lazy-imports --skip single-call-site
+pysmelly --skip single-call-site --skip trivial-wrappers
 
-# JSON output (for LLM consumption)
-pysmelly --format=json
+# Only show findings in changed lines
+pysmelly --diff HEAD
+
+# Exclude test files
+pysmelly --exclude 'test_*' --exclude 'tests/'
 
 # Verbose output
 pysmelly -v
@@ -49,28 +52,35 @@ pysmelly -v
 | `dead-code` | Public functions with zero callers anywhere in the codebase. Cross-references direct calls, imports, dict/list references, and callback passing. |
 | `compat-shims` | `try/except ImportError` patterns left over from supporting older Python versions the project no longer targets. |
 | `suspicious-fallbacks` | `.get()` on module-level constant dicts with non-trivial defaults. If the key should always exist, use `[]` indexing and fail fast. |
+| `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults. Required config should fail fast, not silently fall back. |
 
 ### Medium severity — review each, fix what makes sense
 
 | Check | What it finds |
 |---|---|
-| `foo-equals-foo` | Constructor calls with 4+ `name=name` kwargs, suggesting the caller has too many mirrored local variables — bundle into a dataclass. |
+| `constant-args` | Parameter always receives the same literal value from every caller. The value should be a default or constant. |
+| `foo-equals-foo` | Single-use locals gathered into an object — suggests bundling into a dataclass or building directly. |
 | `duplicate-blocks` | Structurally identical code blocks across functions (AST-normalized, so different variable names still match). |
+| `duplicate-except-blocks` | Identical except handlers with same error messages across files. |
 | `temp-accumulators` | `parts = []; parts.append(...); join(parts)` patterns replaceable with comprehensions. |
 | `constant-dispatch-dicts` | Module-level `{"name": func, ...}` tables that can get out of sync — consider decorator registration. |
-| `too-many-params` | Functions with 6+ parameters (excluding self/cls). |
+| `return-none-instead-of-raise` | Functions returning `None` on error where callers all guard against `None`. The function should raise instead. |
+| `pass-through-params` | Parameters received by a function and only forwarded to another function. The intermediary's signature is vestigial. |
+| `param-clumps` | Groups of 3+ parameters appearing together in 3+ function signatures — extract a dataclass. |
+| `runtime-monkey-patch` | Function assigned to attribute of external object at module scope. |
 
 ### Low severity — informational
 
 | Check | What it finds |
 |---|---|
-| `single-call-site` | Public functions called exactly once — candidates for inlining. |
+| `single-call-site` | Short public functions called exactly once — candidates for inlining. |
 | `internal-only` | Public functions only called within their own file — candidates for `_private` naming. |
-| `lazy-imports` | Imports inside functions instead of at module level. |
+| `trivial-wrappers` | Functions whose body is a single return statement — candidates for inlining. |
+| `stdlib-alternatives` | Stdlib modules where well-known third-party libraries are better, deprecated stdlib/third-party modules, and mixed stdlib/modern usage in the same codebase. |
 
-## Output formats
+## Output
 
-**Text** (default) — grouped by check, one line per finding:
+Text output, grouped by check, one line per finding:
 
 ```
 === unused-defaults (2 finding(s)) ===
@@ -78,23 +88,7 @@ pysmelly -v
   src/myapp/config.py:12: load_config() param 'env' defaults to None but all 5 caller(s) always pass it
 ```
 
-**JSON** (`--format=json`) — structured for programmatic consumption:
-
-```json
-{
-  "total_files": 42,
-  "total_findings": 2,
-  "findings": [
-    {
-      "file": "src/myapp/deploy.py",
-      "line": 45,
-      "check": "unused-defaults",
-      "message": "deploy() param 'timeout' defaults to None but all 3 caller(s) always pass it",
-      "severity": "high"
-    }
-  ]
-}
-```
+Output includes a guidance preamble for LLM consumers. Use `--no-context` to suppress it.
 
 ## What pysmelly is NOT
 
@@ -111,17 +105,13 @@ pysmelly focuses on the gap: **cross-file call-graph analysis** and **design-lev
 
 ## Using with Claude Code
 
-pysmelly is designed to work well as a code review tool invoked by Claude Code or similar AI assistants. A typical workflow:
+pysmelly is designed to work well as a code review tool invoked by Claude Code or similar AI assistants:
 
 ```bash
-# Run pysmelly, get structured findings
-pysmelly --format=json src/ > /tmp/smells.json
-
-# Or just run it directly — the text output is clear enough for LLMs
 pysmelly src/
 ```
 
-The three severity levels map to AI review actions:
+The text output includes a guidance preamble that helps LLMs interpret findings in context. The three severity levels map to AI review actions:
 - **High**: Auto-fix or flag for immediate attention
 - **Medium**: Discuss in review, suggest specific refactoring
 - **Low**: Mention in summary, don't block on these
