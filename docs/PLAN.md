@@ -2,7 +2,7 @@
 
 ## Current State
 
-10 checks implemented, zero dependencies, installable via `uvx`. LLM-aware `--help`, `--list-checks`, `--min-severity`, relative paths in output. 49 tests passing.
+13 checks implemented, zero dependencies, installable via `uvx`. LLM-aware `--help`, `--list-checks`, `--min-severity`, relative paths in output. 68 tests passing.
 
 ## Phase 1: Foundation (before first release)
 
@@ -24,7 +24,7 @@
 
 - [x] Write tests for each check using small synthetic AST fixtures
 - [x] Test CLI (argparse, exit codes, output format selection)
-- [ ] `make self-check` should pass (pysmelly analyzing itself)
+- [x] `make self-check` should pass (pysmelly analyzing itself)
 
 ## Phase 2: New Checks (informed by real refactoring history)
 
@@ -34,12 +34,12 @@ These are based on patterns observed in the deployer project, where Claude Code 
 
 | Pattern observed in git history | Proposed check |
 |---|---|
-| `def0e34` "Make vestigial Optional params required" — unused-defaults found these, but a related pattern is **params that are always the same value** across all callers. | **`constant-args`** — param always receives the same literal value from every caller. Suggests the value should be a default or constant. |
+| `def0e34` "Make vestigial Optional params required" — unused-defaults found these, but a related pattern is **params that are always the same value** across all callers. | **`constant-args`** ✅ — param always receives the same literal value from every caller. Suggests the value should be a default or constant. |
 | `a390d5b` "Refactor 6 functions to accept DeploymentContext instead of 8-13 params" — too-many-params found these, but the real signal was that **the same N params were passed together** across multiple functions. | **`param-clumps`** — detect groups of 3+ parameters that appear together in multiple function signatures. Strong signal for "extract a dataclass." |
 | `5547656` "Prefix internal-only functions with underscore" — direct result of `internal-only` check. | (Already covered by `internal-only`.) |
 | `f3ab3d2` "Remove 6 dead functions with zero callers" — direct result of `dead-code` check. | (Already covered.) |
-| `be88fa0` "Move lazy imports to module level" — direct result of `lazy-imports` check. | (Will be removed — better covered by pylint.) |
-| `7babbd9` "Remove trivial config getter functions, inline at call sites" — functions that just returned a dict lookup or attribute access. | **`trivial-wrappers`** — functions whose body is a single return of a dict lookup, attribute access, or simple expression. Candidates for inlining. |
+| `be88fa0` "Move lazy imports to module level" — direct result of `lazy-imports` check. | (Removed — covered by pylint C0415.) |
+| `7babbd9` "Remove trivial config getter functions, inline at call sites" — functions that just returned a dict lookup or attribute access. | **`trivial-wrappers`** ✅ — functions whose body is a single return of a dict lookup, attribute access, or simple expression. Candidates for inlining. |
 | `96728f8` "Unify aws/ecs.py to boto3, remove CLI subprocess fallbacks" — two code paths doing the same thing (subprocess vs SDK). | **`parallel-implementations`** — (hard to detect generically, but a variant: functions with the same name/signature in different files, or if/else branches that both produce the same type) |
 | `b93dbb7` "Remove tomllib fallback and move lazy imports to module level" — `compat-shims` found this one. | (Already covered.) |
 | `21c56ba` "Simplify ServiceMetrics construction" — `foo-equals-foo` found this. | (Already covered.) |
@@ -49,7 +49,7 @@ These are based on patterns observed in the deployer project, where Claude Code 
 
 | Best practice | Proposed check |
 |---|---|
-| "Fail fast for required configuration" — `os.environ.get("KEY", "default-value")` where the default hides a missing config | **`env-fallbacks`** — detect `os.environ.get()` or `os.getenv()` calls with non-None defaults. Fail-fast principle says required config should raise, not fall back. |
+| "Fail fast for required configuration" — `os.environ.get("KEY", "default-value")` where the default hides a missing config | **`env-fallbacks`** ✅ — detect `os.environ.get()` or `os.getenv()` calls with non-None defaults. Fail-fast principle says required config should raise, not fall back. |
 | "Use modern type hints (3.10+ syntax)" — `from typing import List, Dict, Optional` | **`legacy-type-hints`** — detect imports from `typing` for types available as builtins (List, Dict, Set, Tuple, Optional, Union). |
 | "Don't shadow stdlib module names" — files named `secrets.py`, `logging.py` | **`stdlib-shadow`** — detect Python files whose names shadow stdlib modules. |
 | "Module-level loggers" — `logging.getLogger()` called inside functions | **`function-level-loggers`** — detect `logging.getLogger()` or `logging.basicConfig()` inside functions instead of at module level. |
