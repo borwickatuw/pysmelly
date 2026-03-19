@@ -7,6 +7,7 @@ def format_text(
     findings: list[Finding],
     total_files: int,
     context: list[str] | None,
+    summary: bool = False,
 ) -> str:
     """Text output grouped by check, with optional guidance preamble."""
     lines = []
@@ -24,11 +25,17 @@ def format_text(
     for f in findings:
         by_check.setdefault(f.check, []).append(f)
 
-    for check_name, check_findings in by_check.items():
-        lines.append(f"=== {check_name} ({len(check_findings)} finding(s)) ===")
-        for f in check_findings:
-            lines.append(f"  {f.file}:{f.line}: {f.message}")
+    if summary:
+        for check_name, check_findings in by_check.items():
+            severity = check_findings[0].severity.value
+            lines.append(f"  {check_name:<30} [{severity:<6}]  {len(check_findings)}")
         lines.append("")
+    else:
+        for check_name, check_findings in by_check.items():
+            lines.append(f"=== {check_name} ({len(check_findings)} finding(s)) ===")
+            for f in check_findings:
+                lines.append(f"  {f.file}:{f.line}: {f.message}")
+            lines.append("")
 
     if findings:
         lines.append(f"Total: {len(findings)} finding(s)")

@@ -242,6 +242,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Suppress the guidance preamble (on by default for LLM consumers)",
     )
     parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Show finding counts per check without individual findings",
+    )
+    parser.add_argument(
         "--list-checks",
         action="store_true",
         help="List all available checks with descriptions and exit",
@@ -324,7 +329,7 @@ def main(argv: list[str] | None = None) -> None:
         context = _build_guidance(args.exclude, checks_with_findings)
 
     # Output
-    print(format_text(all_findings, len(all_trees), context=context))
+    print(format_text(all_findings, len(all_trees), context=context, summary=args.summary))
 
     sys.exit(1 if all_findings else 0)
 
