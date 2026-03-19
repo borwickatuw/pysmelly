@@ -6,60 +6,150 @@ from pathlib import Path
 from pysmelly.registry import Finding, Severity, check
 
 
+def _build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
+    """Build a child→parent mapping for an AST."""
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return parents
+
+
+def _enclosing_function(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Walk up the parent chain to find the enclosing function."""
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current
+    return None
+
+
+def _get_param_names(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Get all parameter names from a function definition."""
+    names = {a.arg for a in func_node.args.args}
+    names |= {a.arg for a in func_node.args.posonlyargs}
+    names |= {a.arg for a in func_node.args.kwonlyargs}
+    if func_node.args.vararg:
+        names.add(func_node.args.vararg.arg)
+    if func_node.args.kwarg:
+        names.add(func_node.args.kwarg.arg)
+    return names
+
+
+def _count_name_loads(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, int]:
+    """Count Load occurrences of each name in a function body."""
+    counts: dict[str, int] = {}
+    for child in ast.walk(func_node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+            counts[child.id] = counts.get(child.id, 0) + 1
+    return counts
+
+
 @check(
     "foo-equals-foo",
     severity=Severity.MEDIUM,
-    description="Intermediate variables gathered into an object — build it directly instead",
+    description="Single-use locals gathered into an object — inline or build directly",
 )
 def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find calls where many kwargs match local variable names (name=name).
 
-    When a function call has 4+ arguments of the form foo=foo, the caller
-    is accumulating intermediate variables just to pass them into an object.
-    Build the object as you go instead, or pass the data structure directly.
+    Distinguishes three cases:
+    - Single-use locals (x = compute(); g(x=x) where x isn't used again) — the
+      real smell, these intermediates can be inlined.
+    - Forwarded parameters (def f(x): g(x=x)) — just passing through, not a smell.
+    - Multi-use locals — used elsewhere too, less clear-cut.
+
+    Pure parameter forwarding is suppressed. Single-use locals are MEDIUM severity.
     """
     findings = []
     threshold = 4
 
     for filepath, tree in all_trees.items():
+        parents = _build_parent_map(tree)
+        func_cache: dict[int, tuple[set[str], dict[str, int]]] = {}
+
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             if not node.keywords:
                 continue
 
-            foo_foo_count = 0
             foo_foo_names = []
             for kw in node.keywords:
                 if kw.arg is None:
                     continue
                 if isinstance(kw.value, ast.Name) and kw.value.id == kw.arg:
-                    foo_foo_count += 1
                     foo_foo_names.append(kw.arg)
 
-            if foo_foo_count >= threshold:
-                if isinstance(node.func, ast.Name):
-                    call_name = node.func.id
-                elif isinstance(node.func, ast.Attribute):
-                    call_name = node.func.attr
-                else:
-                    call_name = "?"
+            if len(foo_foo_names) < threshold:
+                continue
 
-                findings.append(
-                    Finding(
-                        file=str(filepath),
-                        line=node.lineno,
-                        check="foo-equals-foo",
-                        message=(
-                            f"{call_name}() gathers {foo_foo_count} intermediate "
-                            f"variables ({', '.join(foo_foo_names[:5])}"
-                            f"{'...' if len(foo_foo_names) > 5 else ''}"
-                            f") — build the object directly instead of "
-                            f"accumulating locals"
-                        ),
-                        severity=Severity.MEDIUM,
+            if isinstance(node.func, ast.Name):
+                call_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                call_name = node.func.attr
+            else:
+                call_name = "?"
+
+            # Classify each foo=foo name
+            enclosing = _enclosing_function(node, parents)
+            if enclosing:
+                fid = id(enclosing)
+                if fid not in func_cache:
+                    func_cache[fid] = (
+                        _get_param_names(enclosing),
+                        _count_name_loads(enclosing),
                     )
+                param_names, load_counts = func_cache[fid]
+
+                single_use = [
+                    n for n in foo_foo_names if n not in param_names and load_counts.get(n, 0) == 1
+                ]
+                forwarded = [n for n in foo_foo_names if n in param_names]
+                multi_use = [
+                    n for n in foo_foo_names if n not in param_names and load_counts.get(n, 0) > 1
+                ]
+
+                # Pure forwarding — not a smell
+                if not single_use and not multi_use:
+                    continue
+
+                if single_use:
+                    names_str = ", ".join(single_use[:5])
+                    if len(single_use) > 5:
+                        names_str += "..."
+                    message = (
+                        f"{call_name}() has {len(foo_foo_names)} foo=foo args, "
+                        f"{len(single_use)} are single-use locals "
+                        f"({names_str}) that could be inlined"
+                    )
+                    severity = Severity.MEDIUM
+                else:
+                    message = (
+                        f"{call_name}() has {len(foo_foo_names)} foo=foo args "
+                        f"— consider whether intermediate variables are needed"
+                    )
+                    severity = Severity.LOW
+            else:
+                # Module-level call — no function context for classification
+                message = (
+                    f"{call_name}() has {len(foo_foo_names)} foo=foo args "
+                    f"— consider building the object directly"
                 )
+                severity = Severity.MEDIUM
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="foo-equals-foo",
+                    message=message,
+                    severity=severity,
+                )
+            )
 
     return findings
 

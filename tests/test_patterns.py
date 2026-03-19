@@ -11,18 +11,65 @@ from pysmelly.checks.patterns import (
 
 
 class TestFooEqualsFoo:
-    def test_finds_many_foo_foo_args(self, trees):
+    def test_finds_single_use_locals(self, trees):
+        """Single-use locals gathered into a call — the real smell."""
+        t = trees.code("""\
+def build():
+    name = get_name()
+    age = get_age()
+    email = get_email()
+    role = get_role()
+    return Thing(name=name, age=age, email=email, role=role)
+""")
+        findings = check_foo_equals_foo(t, verbose=False)
+        assert len(findings) == 1
+        assert "single-use locals" in findings[0].message
+        assert findings[0].severity.value == "medium"
+
+    def test_suppresses_pure_forwarding(self, trees):
+        """def f(x): g(x=x) is just forwarding — not a smell."""
         t = trees.code("""\
 def build(name, age, email, role):
     return Thing(name=name, age=age, email=email, role=role)
 """)
         findings = check_foo_equals_foo(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_mixed_forwarded_and_single_use(self, trees):
+        """Reports single-use locals even when some args are forwarded params."""
+        t = trees.code("""\
+def build(name):
+    age = get_age()
+    email = get_email()
+    role = get_role()
+    extra = get_extra()
+    return Thing(name=name, age=age, email=email, role=role, extra=extra)
+""")
+        findings = check_foo_equals_foo(t, verbose=False)
         assert len(findings) == 1
-        assert "gathers 4 intermediate variables" in findings[0].message
+        assert "4 are single-use locals" in findings[0].message
+        assert "name" not in findings[0].message.split("single-use locals")[1]
+
+    def test_multi_use_locals_are_low_severity(self, trees):
+        """Locals used elsewhere too are less clear-cut — LOW severity."""
+        t = trees.code("""\
+def build():
+    name = get_name()
+    age = get_age()
+    email = get_email()
+    role = get_role()
+    log(name, age, email, role)
+    return Thing(name=name, age=age, email=email, role=role)
+""")
+        findings = check_foo_equals_foo(t, verbose=False)
+        assert len(findings) == 1
+        assert findings[0].severity.value == "low"
 
     def test_ignores_below_threshold(self, trees):
         t = trees.code("""\
-def build(name, age):
+def build():
+    name = get_name()
+    age = get_age()
     return Thing(name=name, age=age)
 """)
         findings = check_foo_equals_foo(t, verbose=False)
