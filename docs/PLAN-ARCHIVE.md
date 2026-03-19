@@ -6,6 +6,7 @@
 
 - [x] **Remove `lazy-imports`** — Pylint's `import-outside-toplevel` (C0415) covers this.
 - [x] **Remove `too-many-params`** — Ruff's PLR0913 and Pylint's R0913 already do this.
+- [x] **Evaluate `compat-shims`** — Keep it. No standard tool flags this pattern. See [DECISIONS.md](DECISIONS.md).
 
 ### Polish CLI
 
@@ -14,6 +15,10 @@
 - [x] **Exit codes** — 0 = clean, 1 = findings.
 - [x] **`--min-severity`** — Filter output to only show findings at or above a severity level.
 - [x] **Relative paths in output** — Paths are now relative to the target directory.
+- [x] **`--exclude`** — Exclude files by glob pattern (pulled forward from Phase 4).
+- [x] **Multiple targets** — Accept multiple directories for cross-directory analysis.
+- [x] **`--version`** — Uses git describe with package metadata fallback.
+- [x] **`__main__` entry point detection** — Functions called from `if __name__ == "__main__":` blocks are excluded from caller-aware checks.
 
 ### Tests
 
@@ -21,7 +26,7 @@
 - [x] Test CLI (argparse, exit codes, output format selection)
 - [x] `make self-check` should pass (pysmelly analyzing itself)
 
-## Phase 2: New Checks (completed)
+## Phase 2: New Checks
 
 ### Checks inspired by actual refactoring commits
 
@@ -46,3 +51,9 @@
 | `b93dbb7` "Remove tomllib fallback and move lazy imports to module level" | `compat-shims` |
 | `21c56ba` "Simplify ServiceMetrics construction" | `foo-equals-foo` |
 | `c30caa1` "Use canonical FARGATE_VALID_MEMORY, fail fast on unknown CPU value" | `suspicious-fallbacks` |
+
+## Phase 3: Better Output for LLMs
+
+- [x] **`--diff` mode** — Only report findings in lines changed since a git ref.
+- [x] **Code context in JSON output** — Each finding includes a `source` field with the source line.
+- [x] **Inline suppression** — `# pysmelly: ignore` and `# pysmelly: ignore[check-name]` comments.

@@ -2,15 +2,9 @@
 
 ## Current State
 
-13 checks implemented, zero dependencies, installable via `uvx`. LLM-aware `--help`, `--list-checks`, `--min-severity`, relative paths in output. 68 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work.
+13 checks, zero dependencies, installable via `uvx`. 76 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
 
-## Open Items
-
-### Evaluate existing checks
-
-- [ ] **Evaluate `compat-shims`** — Simple pattern match; could be a Semgrep rule. Keep for now since no standard tool flags it specifically.
-
-### Potential new checks
+## Potential new checks
 
 | Source | Proposed check |
 |---|---|
@@ -26,19 +20,15 @@
 | Ideas | **`stale-comments`** — Comments referencing function/variable names that no longer exist in the codebase. |
 | Ideas | **`immediately-overwritten`** — `x = "default"` immediately followed by `x = compute()`. The first assignment is dead. |
 
-## Phase 3: Better Output for LLMs
+## Better Output for LLMs
 
-- [ ] **`--diff` mode** — Only report findings on files/functions changed in a git diff. Critical for PR review workflows where the LLM doesn't need 100 findings about the whole codebase.
-- [ ] **Code context in JSON output** — Include the actual source lines for each finding so the LLM can reason about whether to fix without additional file reads.
 - [ ] **Suggestion field** — Each finding includes a concrete suggestion (e.g., "Remove the `= None` default and update callers at lines X, Y, Z").
 - [ ] **SARIF output** — For IDE integration (VS Code, GitHub Advanced Security).
-- [ ] **Inline suppression** — `# pysmelly: ignore[check-name]` comments to acknowledge findings without removing them.
 
-## Phase 4: Configuration
+## Configuration
 
 - [ ] **`pyproject.toml` support** — `[tool.pysmelly]` section for thresholds, exclusions, enabled checks.
 - [ ] **Threshold overrides** — e.g., `--foo-equals-foo-threshold=5`.
-- [ ] **Per-file exclusions** — `exclude = ["tests/**", "migrations/**"]`.
 - [ ] **Entry-point plugins** — Allow third-party packages to register checks via `[project.entry-points."pysmelly.checks"]`.
 
 ## Non-Goals
