@@ -9,6 +9,28 @@ from pysmelly.registry import Finding, Severity, check
 NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "log", "quiet"})
 
 
+def _dedup_and_format_locations(
+    items: list[dict], file_key: str, func_key: str, line_key: str, max_display: int = 4
+) -> tuple[list[dict], str]:
+    """Deduplicate items by (file, func) and format a locations string."""
+    seen: set[tuple[str, str]] = set()
+    deduped = []
+    for item in items:
+        key = (item[file_key], item[func_key])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+
+    locations_str = ", ".join(
+        f"{item[file_key].split('/')[-1]}:{item[func_key]}():{item[line_key]}"
+        for item in deduped[:max_display]
+    )
+    if len(deduped) > max_display:
+        locations_str += f" (+{len(deduped) - max_display} more)"
+
+    return deduped, locations_str
+
+
 @check(
     "duplicate-blocks",
     severity=Severity.MEDIUM,
@@ -57,21 +79,9 @@ def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             }
 
     for finding_data in sorted(best_per_pair.values(), key=lambda f: -f["num_stmts"]):
-        blocks = finding_data["blocks"]
-        seen = set()
-        deduped = []
-        for b in blocks:
-            key = (b["file"], b["func"])
-            if key not in seen:
-                seen.add(key)
-                deduped.append(b)
-
-        locations_str = ", ".join(
-            f"{b['file'].split('/')[-1]}:{b['func']}():{b['line_start']}" for b in deduped[:4]
+        deduped, locations_str = _dedup_and_format_locations(
+            finding_data["blocks"], "file", "func", "line_start"
         )
-        if len(deduped) > 4:
-            locations_str += f" (+{len(deduped) - 4} more)"
-
         first = deduped[0]
         findings.append(
             Finding(
@@ -206,8 +216,8 @@ def check_duplicate_except_blocks(
         if len(handlers) < 2:
             continue
 
-        # Cross-file only
-        files = {h["file"] for h in handlers}
+        # Cross-file only — structural similarity with _find_param_clumps, not extractable
+        files = {h["file"] for h in handlers}  # pysmelly: ignore[duplicate-blocks]
         if len(files) < 2:
             continue
 
@@ -216,21 +226,9 @@ def check_duplicate_except_blocks(
             continue
         reported.add(locations_key)
 
-        # Deduplicate by (file, func) for display
-        seen: set[tuple[str, str]] = set()
-        deduped = []
-        for h in handlers:
-            key = (h["file"], h["func"])
-            if key not in seen:
-                seen.add(key)
-                deduped.append(h)
-
-        locations_str = ", ".join(
-            f"{h['file'].split('/')[-1]}:{h['func']}():{h['line']}" for h in deduped[:4]
+        deduped, locations_str = _dedup_and_format_locations(
+            handlers, "file", "func", "line"
         )
-        if len(deduped) > 4:
-            locations_str += f" (+{len(deduped) - 4} more)"
-
         first = deduped[0]
         findings.append(
             Finding(
@@ -352,22 +350,10 @@ def check_param_clumps(all_trees: dict[Path, ast.Module], verbose: bool) -> list
         params = sorted(clump["params"])
         locs = clump["locations"]
 
-        # Deduplicate locations by (file, func_name) for display
-        seen: set[tuple[str, str]] = set()
-        deduped = []
-        for loc in locs:
-            key = (loc["file"], loc["func_name"])
-            if key not in seen:
-                seen.add(key)
-                deduped.append(loc)
-
-        params_str = ", ".join(params)
-        locs_str = ", ".join(
-            f"{loc['file'].split('/')[-1]}:{loc['func_name']}()" for loc in deduped[:6]
+        deduped, locs_str = _dedup_and_format_locations(
+            locs, "file", "func_name", "line", max_display=6
         )
-        if len(deduped) > 6:
-            locs_str += f" (+{len(deduped) - 6} more)"
-
+        params_str = ", ".join(params)
         first = deduped[0]
         findings.append(
             Finding(

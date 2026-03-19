@@ -6,7 +6,7 @@ from pysmelly.registry import Finding
 def format_text(
     findings: list[Finding],
     total_files: int,
-    context: list[str] | None = None,
+    context: list[str] | None,
 ) -> str:
     """Text output grouped by check, with optional guidance preamble."""
     lines = []
