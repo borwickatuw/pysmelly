@@ -41,6 +41,8 @@ include = ["src/pysmelly"]
 dev = [
     "black>=24.0",
     "isort>=5.13",
+    "bandit>=1.7",
+    "pip-audit>=2.6",
 ]
 test = [
     "pytest>=8.0",
@@ -61,3 +63,22 @@ line_length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "--strict-markers -ra --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+fail_under = 70
+show_missing = true
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+skips = ["B101"]

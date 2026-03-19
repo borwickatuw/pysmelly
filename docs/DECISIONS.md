@@ -23,3 +23,9 @@
 **Decision:** Remove it.
 
 **Rationale:** Ruff's PLR0913 and Pylint's R0913 already do this. The check becomes interesting only with caller-aware context (e.g., `param-clumps` detecting the same params passed together), which is a separate check.
+
+## Don't add `legacy-type-hints` check
+
+**Decision:** Don't implement it.
+
+**Rationale:** Ruff's UP006 and UP007 already detect `typing.List`, `typing.Optional`, etc. and auto-fix them. pysmelly should not reimplement what ruff does well.

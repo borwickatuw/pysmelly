@@ -10,7 +10,6 @@
 |---|---|
 | Refactoring history | **`param-clumps`** — detect groups of 3+ parameters that appear together in multiple function signatures. Strong signal for "extract a dataclass." |
 | Refactoring history | **`parallel-implementations`** — (hard to detect generically, but a variant: functions with the same name/signature in different files, or if/else branches that both produce the same type) |
-| PYTHON.md | **`legacy-type-hints`** — detect imports from `typing` for types available as builtins (List, Dict, Set, Tuple, Optional, Union). Consider: ruff UP006/UP007 may already cover this. |
 | PYTHON.md | **`stdlib-shadow`** — detect Python files whose names shadow stdlib modules. |
 | PYTHON.md | **`function-level-loggers`** — detect `logging.getLogger()` or `logging.basicConfig()` inside functions instead of at module level. |
 | PYTHON.md | **`remainder-flags`** — detect argparse patterns where REMAINDER is used alongside flags that will be swallowed. |
