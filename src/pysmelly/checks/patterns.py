@@ -658,6 +658,92 @@ def check_env_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> lis
     return findings
 
 
+def _attr_chain(node: ast.expr) -> str:
+    """Build a dotted string from nested Attribute nodes."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_attr_chain(node.value)}.{node.attr}"
+    return "?"
+
+
+@check(
+    "runtime-monkey-patch",
+    severity=Severity.MEDIUM,
+    description="Function assigned to attribute of external object at module scope",
+)
+def check_runtime_monkey_patch(
+    all_trees: dict[Path, ast.Module], verbose: bool
+) -> list[Finding]:
+    """Find module-level monkey-patches: obj.attr = local_function.
+
+    Monkey-patching replaces behavior at runtime, making code harder to
+    trace and debug. Consider subclassing, decoration, or dependency
+    injection instead.
+    """
+    findings = []
+
+    for filepath, tree in all_trees.items():
+        # Collect locally-defined function names at module level
+        local_funcs: set[str] = set()
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                local_funcs.add(node.name)
+
+        if not local_funcs:
+            continue
+
+        # Collect captured originals: name = obj.attr at module level
+        captured_attrs: dict[str, str] = {}
+        for node in ast.iter_child_nodes(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Attribute)
+            ):
+                captured_attrs[_attr_chain(node.value)] = node.targets[0].id
+
+        # Find module-level: obj.attr = local_func
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Attribute):
+                continue
+            if not isinstance(node.value, ast.Name):
+                continue
+            if node.value.id not in local_funcs:
+                continue
+
+            target_str = _attr_chain(target)
+            func_name = node.value.id
+
+            capture_name = captured_attrs.get(target_str)
+            if capture_name:
+                message = (
+                    f"{target_str} = {func_name} — "
+                    f"monkey-patch at module scope "
+                    f"(original captured as '{capture_name}')"
+                )
+            else:
+                message = f"{target_str} = {func_name} — monkey-patch at module scope"
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="runtime-monkey-patch",
+                    message=message,
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings
+
+
 def _get_env_call_key(node: ast.Call) -> str | None:
     """Return the env var name if this is an os.environ.get() or os.getenv() call."""
     # os.environ.get("KEY", ...)

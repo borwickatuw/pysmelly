@@ -4,6 +4,7 @@ from pysmelly.checks.patterns import (
     check_constant_dispatch_dicts,
     check_env_fallbacks,
     check_foo_equals_foo,
+    check_runtime_monkey_patch,
     check_suspicious_fallbacks,
     check_temp_accumulators,
     check_trivial_wrappers,
@@ -537,4 +538,87 @@ import os
 val = os.getenv("KEY", None)
 """)
         findings = check_env_fallbacks(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestRuntimeMonkeyPatch:
+    def test_finds_basic_monkey_patch(self, trees):
+        """Module-level obj.attr = local_func is flagged."""
+        t = trees.code("""\
+def get_urls_with_maintenance(self):
+    pass
+
+admin.site.get_urls = get_urls_with_maintenance
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
+        assert len(findings) == 1
+        assert "admin.site.get_urls" in findings[0].message
+        assert "monkey-patch" in findings[0].message
+
+    def test_detects_captured_original(self, trees):
+        """Capture-then-replace pattern noted in message."""
+        t = trees.code("""\
+original_get_urls = admin.site.get_urls
+
+def get_urls_with_maintenance(self):
+    pass
+
+admin.site.get_urls = get_urls_with_maintenance
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
+        assert len(findings) == 1
+        assert "original_get_urls" in findings[0].message
+
+    def test_simple_attr_assignment(self, trees):
+        """Single-level attribute patch: MyClass.method = func."""
+        t = trees.code("""\
+def is_active_display(obj):
+    return obj.is_active
+
+MyModelAdmin.is_active_display = is_active_display
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
+        assert len(findings) == 1
+        assert "MyModelAdmin.is_active_display" in findings[0].message
+
+    def test_ignores_non_function_value(self, trees):
+        """String/constant assignments are not monkey-patches."""
+        t = trees.code("""\
+def something():
+    pass
+
+admin.site.site_header = "My Admin"
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_call_value(self, trees):
+        """obj.attr = func() is configuration, not monkey-patching."""
+        t = trees.code("""\
+def make_handler():
+    pass
+
+obj.handler = make_handler()
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_non_local_function(self, trees):
+        """Value not defined as a function in this file is not flagged."""
+        t = trees.code("""\
+admin.site.get_urls = imported_func
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_assignment_inside_function(self, trees):
+        """Attribute assignments inside functions are not module-level."""
+        t = trees.code("""\
+def my_func():
+    pass
+
+def setup():
+    admin.site.get_urls = my_func
+""")
+        findings = check_runtime_monkey_patch(t, verbose=False)
         assert len(findings) == 0
