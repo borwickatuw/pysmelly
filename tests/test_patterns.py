@@ -440,6 +440,24 @@ class Config:
         findings = check_trivial_wrappers(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_call_with_extra_constant_kwarg(self, trees):
+        """Wrapper that adds compress=True is providing configuration, not trivial."""
+        t = trees.code("""\
+def encrypt_token_for_task(data):
+    return signing.dumps(data, compress=True)
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_call_with_hardcoded_arg(self, trees):
+        """Wrapper that passes a constant positional arg is adding configuration."""
+        t = trees.code("""\
+def get_rds_client():
+    return boto3.client("rds")
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
     def test_flags_call_with_simple_passthrough(self, trees):
         """return func(name) with simple Name args is still trivial."""
         t = trees.code("""\
@@ -475,26 +493,26 @@ class Config:
         t = trees.files(
             {
                 "client.py": """\
-def get_client():
-    return boto3.client("rds")
+def get_data(key):
+    return fetch(key)
 """,
-                "a.py": "from client import get_client\nget_client()\n",
-                "b.py": "from client import get_client\nget_client()\n",
-                "c.py": "from client import get_client\nget_client()\n",
+                "a.py": "from client import get_data\nget_data('x')\n",
+                "b.py": "from client import get_data\nget_data('y')\n",
+                "c.py": "from client import get_data\nget_data('z')\n",
             }
         )
         findings = check_trivial_wrappers(t, verbose=False)
         assert len(findings) == 0
 
-    def test_flags_single_caller_wrapper(self, trees):
-        """Wrappers with few callers are still flagged."""
+    def test_flags_single_caller_pure_forwarding(self, trees):
+        """Pure forwarding wrappers with few callers are still flagged."""
         t = trees.files(
             {
                 "client.py": """\
-def get_client():
-    return boto3.client("rds")
+def get_data(key):
+    return fetch(key)
 """,
-                "a.py": "from client import get_client\nget_client()\n",
+                "a.py": "from client import get_data\nget_data('x')\n",
             }
         )
         findings = check_trivial_wrappers(t, verbose=False)

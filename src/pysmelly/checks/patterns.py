@@ -477,24 +477,30 @@ def _is_self_method_chain(value: ast.expr) -> bool:
     )
 
 
-def _call_has_complex_args(call_node: ast.Call) -> bool:
-    """Check if a Call's arguments involve real computation (not just pass-throughs).
+def _is_pure_forwarding_call(
+    call_node: ast.Call, func_node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> bool:
+    """Check if a call only forwards the wrapper's own parameters.
 
-    Returns True when any argument is more than a simple Name or Constant,
-    indicating the function is doing real mapping/transformation work
-    (e.g., from_dict() with data.get() calls).
+    Returns False when the call adds any extra arguments (constants,
+    expressions, etc.) beyond what the wrapper receives — the wrapper
+    is adding configuration, not just forwarding.
     """
+    param_names = {a.arg for a in func_node.args.args if a.arg not in ("self", "cls")}
+    param_names |= {a.arg for a in func_node.args.posonlyargs}
+    param_names |= {a.arg for a in func_node.args.kwonlyargs}
+
     for arg in call_node.args:
         if isinstance(arg, ast.Starred):
             continue  # *args pass-through
-        if not isinstance(arg, (ast.Name, ast.Constant)):
-            return True
+        if not (isinstance(arg, ast.Name) and arg.id in param_names):
+            return False
     for kw in call_node.keywords:
         if kw.arg is None:
             continue  # **kwargs pass-through
-        if not isinstance(kw.value, (ast.Name, ast.Constant)):
-            return True
-    return False
+        if not (isinstance(kw.value, ast.Name) and kw.value.id in param_names):
+            return False
+    return True
 
 
 def _collect_subclass_methods(tree: ast.Module) -> set[int]:
@@ -565,8 +571,8 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             if _is_self_method_chain(ret_value):
                 continue
 
-            # Suppress: calls with complex args (from_dict doing real mapping)
-            if isinstance(ret_value, ast.Call) and _call_has_complex_args(ret_value):
+            # Suppress: calls that add arguments beyond parameter forwarding
+            if isinstance(ret_value, ast.Call) and not _is_pure_forwarding_call(ret_value, node):
                 continue
 
             desc = _describe_trivial_return(ret_value)
