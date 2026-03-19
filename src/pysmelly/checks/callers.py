@@ -571,6 +571,170 @@ def _find_guard_in_tree(tree: ast.Module, assign_node: ast.Assign, var_name: str
     return False
 
 
+@check(
+    "pass-through-params",
+    severity=Severity.MEDIUM,
+    description="Params received by a function and only forwarded to another function",
+)
+def check_pass_through_params(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find parameters that a function receives but only passes through to other functions.
+
+    If a parameter is never used by the intermediary function — only
+    forwarded to known functions in the codebase — the caller should
+    pass directly to the consumer, or a context/config object should be used.
+    """
+    findings = []
+    func_defs = build_function_index(all_trees)
+    known_funcs = set(func_defs.keys())
+
+    for func_name, defs in func_defs.items():
+        if len(defs) > 1:
+            continue
+
+        func_node = _find_func_node(all_trees, func_name)
+        if func_node is None:
+            continue
+
+        # Skip orphan functions — dead-code handles those
+        calls = find_calls_to_function(all_trees, func_name)
+        if not calls:
+            continue
+
+        classifications = _classify_param_uses(func_node, known_funcs)
+
+        for param_name, info in classifications.items():
+            if info["total_loads"] == 0:
+                continue  # unused param, different smell
+            if info["non_forwarding_loads"] > 0:
+                continue  # used for more than forwarding
+            if not info["call_targets"]:
+                continue  # no known targets
+
+            targets = sorted(info["call_targets"])
+            targets_str = ", ".join(f"{t}()" for t in targets)
+
+            findings.append(
+                Finding(
+                    file=defs[0]["file"],
+                    line=defs[0]["line"],
+                    check="pass-through-params",
+                    message=(
+                        f"{func_name}() receives '{param_name}' but only forwards "
+                        f"it to {targets_str} — consider passing directly or "
+                        f"using a context object"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings
+
+
+def _build_body_parent_map(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[int, ast.AST]:
+    """Build child→parent map for function body, excluding nested functions/classes."""
+    parent_map: dict[int, ast.AST] = {}
+    worklist: list[ast.AST] = []
+    for stmt in func_node.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        worklist.append(stmt)
+
+    while worklist:
+        node = worklist.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            parent_map[id(child)] = node
+            worklist.append(child)
+
+    return parent_map
+
+
+def _get_call_target_name(call_node: ast.Call) -> str | None:
+    """Extract the function name from a Call node, or None if complex."""
+    if isinstance(call_node.func, ast.Name):
+        return call_node.func.id
+    if isinstance(call_node.func, ast.Attribute):
+        return call_node.func.attr
+    return None
+
+
+def _classify_param_uses(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    known_funcs: set[str],
+) -> dict[str, dict]:
+    """Classify each parameter's uses as forwarding or non-forwarding.
+
+    Returns a dict mapping param name to:
+      total_loads: number of Name(Load) references
+      non_forwarding_loads: uses outside call-arg position or to unknown targets
+      call_targets: set of known function names the param is forwarded to
+    """
+    all_params = (
+        [a.arg for a in func_node.args.posonlyargs]
+        + [a.arg for a in func_node.args.args]
+        + [a.arg for a in func_node.args.kwonlyargs]
+    )
+    param_names = {p for p in all_params if p not in ("self", "cls")}
+
+    if not param_names:
+        return {}
+
+    parent_map = _build_body_parent_map(func_node)
+
+    results: dict[str, dict] = {}
+    for p in param_names:
+        results[p] = {
+            "total_loads": 0,
+            "non_forwarding_loads": 0,
+            "call_targets": set(),
+        }
+
+    # Walk function body (excluding nested functions/classes)
+    worklist: list[ast.AST] = []
+    for stmt in func_node.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        worklist.append(stmt)
+
+    while worklist:
+        node = worklist.pop()
+
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in results:
+            info = results[node.id]
+            info["total_loads"] += 1
+
+            parent = parent_map.get(id(node))
+            if parent is None:
+                info["non_forwarding_loads"] += 1
+            else:
+                call_node = None
+                if isinstance(parent, ast.Call) and node in parent.args:
+                    call_node = parent
+                elif isinstance(parent, ast.keyword):
+                    grandparent = parent_map.get(id(parent))
+                    if isinstance(grandparent, ast.Call):
+                        call_node = grandparent
+
+                if call_node is not None:
+                    target_name = _get_call_target_name(call_node)
+                    if target_name and target_name in known_funcs:
+                        info["call_targets"].add(target_name)
+                    else:
+                        info["non_forwarding_loads"] += 1
+                else:
+                    info["non_forwarding_loads"] += 1
+
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            worklist.append(child)
+
+    return results
+
+
 def _args_from_single_object(call_node: ast.Call) -> str | None:
     """Check if all call arguments are attributes of a single object.
 

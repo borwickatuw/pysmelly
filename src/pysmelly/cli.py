@@ -129,6 +129,7 @@ CALLER_AWARE_CHECKS = {
     "single-call-site",
     "internal-only",
     "return-none-instead-of-raise",
+    "pass-through-params",
 }
 
 

@@ -1,10 +1,12 @@
-"""Structural checks — duplicate code blocks."""
+"""Structural checks — duplicate code blocks and parameter clumps."""
 
 import ast
 from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.registry import Finding, Severity, check
+
+NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "log", "quiet"})
 
 
 @check(
@@ -320,3 +322,187 @@ def _extract_except_handlers(tree: ast.Module, filepath: Path) -> list[dict]:
                 )
 
     return handlers
+
+
+@check(
+    "param-clumps",
+    severity=Severity.MEDIUM,
+    description="Groups of 3+ parameters appearing together in 3+ function signatures",
+)
+def check_param_clumps(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find groups of parameters that recur together across function signatures.
+
+    When 3+ parameters appear together in 3+ function signatures,
+    it's a strong signal to extract a dataclass or config object.
+    """
+    findings = []
+    signatures = _extract_all_signatures(all_trees)
+    clumps = _find_param_clumps(signatures)
+
+    for clump in clumps:
+        params = sorted(clump["params"])
+        locs = clump["locations"]
+
+        # Deduplicate locations by (file, func_name) for display
+        seen: set[tuple[str, str]] = set()
+        deduped = []
+        for loc in locs:
+            key = (loc["file"], loc["func_name"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(loc)
+
+        params_str = ", ".join(params)
+        locs_str = ", ".join(
+            f"{loc['file'].split('/')[-1]}:{loc['func_name']}()" for loc in deduped[:6]
+        )
+        if len(deduped) > 6:
+            locs_str += f" (+{len(deduped) - 6} more)"
+
+        first = deduped[0]
+        findings.append(
+            Finding(
+                file=first["file"],
+                line=first["line"],
+                check="param-clumps",
+                message=(
+                    f"Parameters ({params_str}) appear together in "
+                    f"{len(deduped)} functions: {locs_str} "
+                    f"— consider extracting a dataclass"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+def _is_test_file(filepath: Path) -> bool:
+    """Check if a file path looks like a test file."""
+    name = filepath.name
+    if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
+        return True
+    for part in filepath.parts:
+        if part in ("tests", "test"):
+            return True
+    return False
+
+
+def _get_meaningful_params(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> frozenset[str]:
+    """Extract param names excluding self/cls/vararg/kwarg/noise."""
+    params = set()
+    for arg in func_node.args.posonlyargs + func_node.args.args + func_node.args.kwonlyargs:
+        if arg.arg not in ("self", "cls") and arg.arg not in NOISE_PARAMS:
+            params.add(arg.arg)
+    return frozenset(params)
+
+
+def _extract_all_signatures(all_trees: dict[Path, ast.Module]) -> list[dict]:
+    """Walk all trees, yield signature info for every qualifying function.
+
+    Includes methods, private functions, and decorated functions (broader
+    than build_function_index) but excludes nested functions, test functions,
+    and test files.
+    """
+    signatures = []
+
+    for filepath, tree in all_trees.items():
+        if _is_test_file(filepath):
+            continue
+
+        file_str = str(filepath)
+
+        # Collect nested function ids to exclude them
+        nested_funcs: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for child in ast.walk(node):
+                    if child is node:
+                        continue
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        nested_funcs.add(id(child))
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if id(node) in nested_funcs:
+                continue
+            if node.name.startswith("test"):
+                continue
+
+            params = _get_meaningful_params(node)
+            if len(params) < 3:
+                continue
+
+            signatures.append(
+                {
+                    "params": params,
+                    "func_name": node.name,
+                    "file": file_str,
+                    "line": node.lineno,
+                }
+            )
+
+    return signatures
+
+
+def _find_param_clumps(
+    signatures: list[dict],
+    min_clump_size: int = 3,
+    min_occurrences: int = 3,
+) -> list[dict]:
+    """Find groups of parameters that appear together in multiple signatures.
+
+    Phase 1: Exact matches (identical param sets in 3+ functions).
+    Phase 2: Intersection discovery (common subsets across different param sets).
+    Then deduplicate: suppress subset clumps when a superset covers the same locations.
+    """
+    by_params: dict[frozenset[str], list[dict]] = defaultdict(list)
+    for sig in signatures:
+        by_params[sig["params"]].append(sig)
+
+    # Collect candidate clumps keyed by param set
+    candidates: dict[frozenset[str], list[dict]] = {}
+
+    # Phase 1: Exact matches
+    for params, sigs in by_params.items():
+        if len(params) >= min_clump_size and len(sigs) >= min_occurrences:
+            candidates[params] = sigs
+
+    # Phase 2: Intersection discovery
+    distinct_sets = list(by_params.keys())
+    intersections_seen: set[frozenset[str]] = set()
+
+    for i in range(len(distinct_sets)):
+        for j in range(i + 1, len(distinct_sets)):
+            intersection = distinct_sets[i] & distinct_sets[j]
+            if len(intersection) < min_clump_size:
+                continue
+            key = frozenset(intersection)
+            if key in intersections_seen:
+                continue
+            intersections_seen.add(key)
+
+            matching = [s for s in signatures if key <= s["params"]]
+            if len(matching) >= min_occurrences:
+                # Keep the version with more locations
+                if key not in candidates or len(matching) > len(candidates[key]):
+                    candidates[key] = matching
+
+    clumps = [{"params": k, "locations": v} for k, v in candidates.items()]
+
+    # Deduplicate: suppress subset if locations also subset
+    to_remove: set[int] = set()
+    for i in range(len(clumps)):
+        for j in range(len(clumps)):
+            if i == j:
+                continue
+            if clumps[i]["params"] < clumps[j]["params"]:  # proper subset
+                locs_i = {(s["file"], s["func_name"]) for s in clumps[i]["locations"]}
+                locs_j = {(s["file"], s["func_name"]) for s in clumps[j]["locations"]}
+                if locs_i <= locs_j:
+                    to_remove.add(i)
+
+    return [c for i, c in enumerate(clumps) if i not in to_remove]

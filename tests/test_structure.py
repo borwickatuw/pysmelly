@@ -1,6 +1,10 @@
 """Tests for structural checks."""
 
-from pysmelly.checks.structure import check_duplicate_blocks, check_duplicate_except_blocks
+from pysmelly.checks.structure import (
+    check_duplicate_blocks,
+    check_duplicate_except_blocks,
+    check_param_clumps,
+)
 
 
 class TestDuplicateBlocks:
@@ -230,4 +234,207 @@ def func_b():
         cleanup()
 """)
         findings = check_duplicate_except_blocks(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestParamClumps:
+    def test_basic_clump(self, trees):
+        """4 identical params in 3 free functions."""
+        t = trees.code("""\
+def create_user(first_name, last_name, email, phone):
+    pass
+
+def update_user(first_name, last_name, email, phone):
+    pass
+
+def validate_user(first_name, last_name, email, phone):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 1
+        assert "first_name" in findings[0].message
+        assert "3 functions" in findings[0].message
+        assert "consider extracting a dataclass" in findings[0].message
+
+    def test_cross_file(self, trees):
+        """Same param set across different files."""
+        t = trees.files(
+            {
+                "users.py": """\
+def create_user(first_name, last_name, email):
+    pass
+""",
+                "api.py": """\
+def update_user(first_name, last_name, email):
+    pass
+""",
+                "admin.py": """\
+def admin_create_user(first_name, last_name, email):
+    pass
+""",
+            }
+        )
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_methods_included(self, trees):
+        """Class methods with same params as free functions are detected."""
+        t = trees.code("""\
+class UserService:
+    def create(self, first_name, last_name, email):
+        pass
+
+    def update(self, first_name, last_name, email):
+        pass
+
+def validate_user(first_name, last_name, email):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_intersection_discovery(self, trees):
+        """Functions with overlapping params detect common subset."""
+        t = trees.code("""\
+def func_a(a, b, c, d, e):
+    pass
+
+def func_b(a, b, c, x, y):
+    pass
+
+def func_c(a, b, c, z):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) >= 1
+        # Should find {a, b, c} as common
+        found = False
+        for f in findings:
+            if all(p in f.message for p in ("a", "b", "c")):
+                found = True
+        assert found
+
+    def test_private_functions_included(self, trees):
+        """Private functions participate in clumps."""
+        t = trees.code("""\
+def _validate(first_name, last_name, email):
+    pass
+
+def create_user(first_name, last_name, email):
+    pass
+
+def update_user(first_name, last_name, email):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_only_two_functions_no_finding(self, trees):
+        """Below threshold of 3 functions."""
+        t = trees.code("""\
+def create_user(first_name, last_name, email):
+    pass
+
+def update_user(first_name, last_name, email):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_only_two_shared_params_no_finding(self, trees):
+        """Below clump size of 3."""
+        t = trees.code("""\
+def func_a(x, y, extra1):
+    pass
+
+def func_b(x, y, extra2):
+    pass
+
+def func_c(x, y, extra3):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        # Only x and y are shared, which is < 3
+        assert len(findings) == 0
+
+    def test_noise_params_filtered(self, trees):
+        """Noise params should not count toward clumps."""
+        t = trees.code("""\
+def func_a(data, verbose, debug, timeout):
+    pass
+
+def func_b(data, verbose, debug, timeout):
+    pass
+
+def func_c(data, verbose, debug, timeout):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        # After filtering noise params, only {data} remains (< 3)
+        assert len(findings) == 0
+
+    def test_test_functions_excluded(self, trees):
+        """Functions named test_* are excluded."""
+        t = trees.code("""\
+def test_create_user(first_name, last_name, email):
+    pass
+
+def test_update_user(first_name, last_name, email):
+    pass
+
+def test_validate_user(first_name, last_name, email):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_test_files_excluded(self, trees):
+        """Files named test_* are excluded."""
+        t = trees.files(
+            {
+                "test_users.py": """\
+def create_user(first_name, last_name, email):
+    pass
+
+def update_user(first_name, last_name, email):
+    pass
+
+def validate_user(first_name, last_name, email):
+    pass
+""",
+            }
+        )
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_superset_suppresses_subset(self, trees):
+        """If {a,b,c,d} appears in 3 functions, don't also report {a,b,c}."""
+        t = trees.code("""\
+def func_a(a, b, c, d):
+    pass
+
+def func_b(a, b, c, d):
+    pass
+
+def func_c(a, b, c, d):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        assert len(findings) == 1
+        assert "d" in findings[0].message  # The full set should be reported
+
+    def test_few_params_after_filtering(self, trees):
+        """Functions with < 3 params after noise filtering don't qualify."""
+        t = trees.code("""\
+def func_a(x, y, verbose):
+    pass
+
+def func_b(x, y, verbose):
+    pass
+
+def func_c(x, y, verbose):
+    pass
+""")
+        findings = check_param_clumps(t, verbose=False)
+        # After filtering verbose, only {x, y} remains (< 3)
         assert len(findings) == 0

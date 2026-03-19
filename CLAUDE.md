@@ -12,9 +12,9 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/registry.py` - `@check` decorator, `Finding` dataclass, `Severity` enum
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter
-- `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only)
+- `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params)
 - `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts)
-- `src/pysmelly/checks/structure.py` - Structural checks (too-many-params, duplicate-blocks)
+- `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps)
 - `src/pysmelly/checks/imports.py` - Import checks (lazy-imports, compat-shims)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
 

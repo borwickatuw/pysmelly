@@ -4,6 +4,7 @@ from pysmelly.checks.callers import (
     check_constant_args,
     check_dead_code,
     check_internal_only,
+    check_pass_through_params,
     check_return_none_instead_of_raise,
     check_single_call_site,
     check_unused_defaults,
@@ -657,4 +658,195 @@ if y is None:
     pass
 """)
         findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestPassThroughParams:
+    def test_basic_forwarding(self, trees):
+        """B receives params and only forwards to C."""
+        t = trees.code("""\
+def inner(data, mode):
+    pass
+
+def outer(data, mode):
+    inner(data, mode)
+
+outer("x", "fast")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 2
+        params = {f.message.split("'")[1] for f in findings}
+        assert params == {"data", "mode"}
+        assert "inner()" in findings[0].message
+
+    def test_keyword_forwarding(self, trees):
+        """Keyword argument forwarding is detected."""
+        t = trees.code("""\
+def inner(x, mode):
+    pass
+
+def outer(x, mode):
+    inner(x, mode=mode)
+
+outer(1, "test")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 2
+        params = {f.message.split("'")[1] for f in findings}
+        assert params == {"x", "mode"}
+
+    def test_param_used_beyond_forwarding(self, trees):
+        """Param used in condition + forwarding is not forwarding-only."""
+        t = trees.code("""\
+def inner(mode):
+    pass
+
+def outer(data, mode):
+    if mode == "fast":
+        inner(mode)
+    return data
+
+outer("x", "fast")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_forwarding_to_unknown_function(self, trees):
+        """Forwarding to external/unknown function is not reported."""
+        t = trees.code("""\
+def outer(data):
+    print(data)
+
+outer("x")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_args_kwargs_excluded(self, trees):
+        """*args and **kwargs are inherently forwarding mechanisms."""
+        t = trees.code("""\
+def inner(x):
+    pass
+
+def outer(*args, **kwargs):
+    inner(*args)
+
+outer(1)
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_param_with_attribute_access(self, trees):
+        """mode.upper() is real usage, not forwarding."""
+        t = trees.code("""\
+def inner(x):
+    pass
+
+def outer(mode):
+    x = mode.upper()
+    inner(x)
+
+outer("test")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_dead_function_not_reported(self, trees):
+        """Function with no callers — dead-code handles it."""
+        t = trees.code("""\
+def inner(x):
+    pass
+
+def outer(x):
+    inner(x)
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_private_functions_excluded(self, trees):
+        """Private functions are not in the function index."""
+        t = trees.code("""\
+def inner(x):
+    pass
+
+def _wrapper(x):
+    inner(x)
+
+_wrapper(1)
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_cross_file_forwarding(self, trees):
+        """Forwarding detected across files."""
+        t = trees.files(
+            {
+                "lib.py": """\
+def process(data, mode):
+    pass
+""",
+                "wrapper.py": """\
+def handle(data, mode):
+    process(data, mode)
+
+handle("x", "fast")
+""",
+            }
+        )
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 2
+        params = {f.message.split("'")[1] for f in findings}
+        assert params == {"data", "mode"}
+
+    def test_multiple_targets(self, trees):
+        """Param forwarded to multiple known functions."""
+        t = trees.code("""\
+def validate(data, mode):
+    pass
+
+def transform(data, mode):
+    pass
+
+def process(data, mode):
+    validate(data, mode)
+    transform(data, mode)
+
+process("x", "fast")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 2
+        for f in findings:
+            assert "validate()" in f.message
+            assert "transform()" in f.message
+
+    def test_param_with_default_forwarded(self, trees):
+        """Param with default value that is only forwarded."""
+        t = trees.code("""\
+def inner(mode):
+    pass
+
+def outer(mode="default"):
+    inner(mode)
+
+outer()
+outer("fast")
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 1
+        assert "mode" in findings[0].message
+
+    def test_param_used_in_comparison_alongside_forwarding(self, trees):
+        """Param used in comparison + forwarded is not forwarding-only."""
+        t = trees.code("""\
+def inner(mode):
+    pass
+
+def outer(mode):
+    inner(mode)
+    if mode == "fast":
+        pass
+
+outer("fast")
+""")
+        findings = check_pass_through_params(t, verbose=False)
         assert len(findings) == 0
