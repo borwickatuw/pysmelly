@@ -312,12 +312,6 @@ def main(argv: list[str] | None = None) -> None:
     # Filter suppressed findings (# pysmelly: ignore / # pysmelly: ignore[check-name])
     all_findings = [f for f in all_findings if not _is_suppressed(f, source_lines)]
 
-    # Annotate caller-aware findings when test files are excluded
-    if _has_test_excludes(args.exclude):
-        for f in all_findings:
-            if f.check in CALLER_AWARE_CHECKS:
-                f.message += " [test files excluded]"
-
     # Build guidance preamble for LLM consumers (on by default)
     context: list[str] | None = None
     if not args.no_context:

@@ -188,8 +188,8 @@ used()
         output = capsys.readouterr().err
         assert "not a directory" in output
 
-    def test_exclude_test_annotates_caller_findings(self, tmp_path, capsys):
-        """--exclude test_* annotates caller-aware findings with [test files excluded]."""
+    def test_exclude_test_no_per_finding_annotation(self, tmp_path, capsys):
+        """--exclude test_* does not annotate individual findings (guidance banner suffices)."""
         (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
         (tmp_path / "test_app.py").write_text("from app import unused_func\nunused_func()\n")
         try:
@@ -198,16 +198,6 @@ used()
             pass
         output = capsys.readouterr().out
         assert "dead-code" in output
-        assert "[test files excluded]" in output
-
-    def test_exclude_non_test_no_annotation(self, tmp_path, capsys):
-        """--exclude with non-test pattern does not annotate findings."""
-        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
-        try:
-            main(["--no-context", "--exclude", "vendor_*", str(tmp_path)])
-        except SystemExit:
-            pass
-        output = capsys.readouterr().out
         assert "[test files excluded]" not in output
 
     def test_context_on_by_default(self, tmp_path, capsys):
