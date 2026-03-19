@@ -57,3 +57,10 @@
 - [x] **`--diff` mode** — Only report findings in lines changed since a git ref.
 - [x] **Code context in JSON output** — Each finding includes a `source` field with the source line.
 - [x] **Inline suppression** — `# pysmelly: ignore` and `# pysmelly: ignore[check-name]` comments.
+
+## Phase 4: Deployer Real-World Feedback
+
+Checks identified from running pysmelly on a real production codebase.
+
+- [x] **`return-none-instead-of-raise`** — Functions with mixed returns (None + value) where 2+ callers guard against None. The function should raise instead of pushing error handling to every call site. Caller-aware check in `callers.py`.
+- [x] **`duplicate-except-blocks`** — Identical except handlers across files — same exception type, same error messages, same structure. Higher confidence than `duplicate-blocks` by including string literals and exception type in signature. Cross-file only (same-file handled by `duplicate-blocks`). Structural check in `structure.py`.

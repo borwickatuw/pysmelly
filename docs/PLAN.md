@@ -2,21 +2,9 @@
 
 ## Current State
 
-13 checks, zero dependencies, installable via `uvx`. 102 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
+15 checks, zero dependencies, installable via `uvx`. 121 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
 
 ## Next up — from deployer real-world feedback
-
-These emerged from running pysmelly on a real production codebase. Prioritized by signal quality and fit with pysmelly's cross-file analysis strength.
-
-### `return-none-instead-of-raise`
-
-Functions that return None on error paths where every caller checks `if result is None: handle_error()`. The function should just raise — the None-return propagates complexity to every call site.
-
-Cross-file analysis: detect that a function has branches returning None, then verify all callers guard against it. High signal, actionable ("make the function raise instead"), leverages existing `find_calls_to_function` infrastructure.
-
-### `duplicate-except-blocks`
-
-Identical except blocks across files — same exception type, same error message string, same handling logic. Extension of existing `duplicate-blocks` check but narrowed to except blocks for high confidence. Catches copy-paste error handling across modules (e.g., "Push failed" duplicated in deploy.py and ci_deploy.py).
 
 ### `pass-through-params` (upgraded)
 
