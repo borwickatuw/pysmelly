@@ -27,14 +27,6 @@ variable name. Search other files for imports of that module + attribute writes
 (`module.var.append(...)`, `module.var[key] = ...`, etc.). Flag variables with
 cross-module mutation.
 
-### circular-imports
+### ~~circular-imports~~
 
-Modules that import each other, creating circular dependency pressure. Often
-masked by lazy imports or import-inside-function workarounds. The presence of
-these workarounds is itself a smell.
-
-**AST approach:** Build directed import graph, find strongly connected
-components. Additionally detect `TYPE_CHECKING`-guarded imports and
-function-level imports as circumstantial evidence. Note: pylint R0401 and
-pycycle partially cover this, but the "detect workarounds as architectural
-pressure" angle is novel.
+Dropped — see [DECISIONS.md](DECISIONS.md). Pylint R0401 and pycycle cover this.

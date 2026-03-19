@@ -48,6 +48,12 @@ pysmelly's differentiator is cross-file call-graph analysis. Adding single-file 
 
 **Rationale:** Test file naming conventions vary across projects — `test_*.py`, `*_test.py`, `tests/`, `test/`, `spec/`, framework-specific patterns, etc. A hardcoded `--exclude-tests` bakes in assumptions that won't be universal. The existing `--exclude` flag is flexible enough (`--exclude 'test_*' --exclude 'tests/'`). If discoverability is a concern, better `--help` examples are the right fix, not a new flag.
 
+## Don't add `circular-imports` check
+
+**Decision:** Don't implement it.
+
+**Rationale:** Pylint R0401 detects circular imports, and pycycle provides dedicated cycle analysis. While the "detect workarounds as architectural pressure" angle (TYPE_CHECKING guards, function-level imports as evidence of circular dependency pressure) is interesting, the core detection overlaps too much with existing tools. The workaround-detection angle alone isn't strong enough to justify a new check.
+
 ## Don't add speculative checks without clear cross-file value
 
 **Decision:** Don't implement `parallel-implementations`, `boolean-parameter-smell`, `stale-comments`, or `remainder-flags`.
