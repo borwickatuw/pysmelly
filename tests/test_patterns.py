@@ -2,9 +2,11 @@
 
 from pysmelly.checks.patterns import (
     check_constant_dispatch_dicts,
+    check_env_fallbacks,
     check_foo_equals_foo,
     check_suspicious_fallbacks,
     check_temp_accumulators,
+    check_trivial_wrappers,
 )
 
 
@@ -169,4 +171,120 @@ CONFIG = {
 }
 """)
         findings = check_constant_dispatch_dicts(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestTrivialWrappers:
+    def test_finds_dict_lookup(self, trees):
+        t = trees.code("""\
+def get_color(name):
+    return COLORS[name]
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+        assert "COLORS[...]" in findings[0].message
+
+    def test_finds_attribute_access(self, trees):
+        t = trees.code("""\
+def get_name(user):
+    return user.name
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+        assert "user.name" in findings[0].message
+
+    def test_finds_single_function_call(self, trees):
+        t = trees.code("""\
+def get_data(key):
+    return fetch(key)
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+        assert "fetch(...)" in findings[0].message
+
+    def test_finds_with_docstring(self, trees):
+        t = trees.code("""\
+def get_config(key):
+    \"\"\"Get a config value.\"\"\"
+    return CONFIG[key]
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_ignores_multi_statement(self, trees):
+        t = trees.code("""\
+def process(data):
+    result = transform(data)
+    return result
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_private_functions(self, trees):
+        t = trees.code("""\
+def _helper(key):
+    return CONFIG[key]
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_complex_return(self, trees):
+        t = trees.code("""\
+def compute(a, b):
+    return a + b
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestEnvFallbacks:
+    def test_finds_environ_get_with_default(self, trees):
+        t = trees.code("""\
+import os
+db = os.environ.get("DB_HOST", "localhost")
+""")
+        findings = check_env_fallbacks(t, verbose=False)
+        assert len(findings) == 1
+        assert "DB_HOST" in findings[0].message
+        assert "fail fast" in findings[0].message
+
+    def test_finds_getenv_with_default(self, trees):
+        t = trees.code("""\
+import os
+port = os.getenv("PORT", "8080")
+""")
+        findings = check_env_fallbacks(t, verbose=False)
+        assert len(findings) == 1
+        assert "PORT" in findings[0].message
+
+    def test_ignores_none_default(self, trees):
+        t = trees.code("""\
+import os
+val = os.environ.get("KEY", None)
+""")
+        findings = check_env_fallbacks(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_no_default(self, trees):
+        t = trees.code("""\
+import os
+val = os.environ.get("KEY")
+""")
+        findings = check_env_fallbacks(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_bracket_access(self, trees):
+        t = trees.code("""\
+import os
+val = os.environ["KEY"]
+""")
+        findings = check_env_fallbacks(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_finds_getenv_none_default_ignored(self, trees):
+        t = trees.code("""\
+import os
+val = os.getenv("KEY", None)
+""")
+        findings = check_env_fallbacks(t, verbose=False)
         assert len(findings) == 0

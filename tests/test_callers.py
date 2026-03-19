@@ -1,6 +1,7 @@
 """Tests for caller-aware checks (cross-file call-graph analysis)."""
 
 from pysmelly.checks.callers import (
+    check_constant_args,
     check_dead_code,
     check_internal_only,
     check_single_call_site,
@@ -213,4 +214,79 @@ def helper():
 helper()
 """)
         findings = check_internal_only(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestConstantArgs:
+    def test_finds_same_literal_every_call(self, trees):
+        t = trees.code("""\
+def deploy(app, env):
+    pass
+
+deploy("myapp", "production")
+deploy("myapp", "production")
+deploy("myapp", "production")
+""")
+        findings = check_constant_args(t, verbose=False)
+        assert len(findings) == 2
+        names = {f.message.split("'")[1] for f in findings}
+        assert names == {"app", "env"}
+
+    def test_ignores_varying_args(self, trees):
+        t = trees.code("""\
+def process(data, fmt):
+    pass
+
+process("a", "json")
+process("b", "csv")
+""")
+        findings = check_constant_args(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_finds_one_constant_one_varying(self, trees):
+        t = trees.code("""\
+def send(msg, channel):
+    pass
+
+send("hello", "general")
+send("world", "general")
+""")
+        findings = check_constant_args(t, verbose=False)
+        assert len(findings) == 1
+        assert "channel" in findings[0].message
+        assert "'general'" in findings[0].message
+
+    def test_ignores_single_caller(self, trees):
+        """Need 2+ callers to establish a pattern."""
+        t = trees.code("""\
+def process(data, fmt):
+    pass
+
+process("x", "json")
+""")
+        findings = check_constant_args(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_works_with_keyword_args(self, trees):
+        t = trees.code("""\
+def fetch(url, timeout):
+    pass
+
+fetch("http://a.com", timeout=30)
+fetch("http://b.com", timeout=30)
+""")
+        findings = check_constant_args(t, verbose=False)
+        assert len(findings) == 1
+        assert "timeout" in findings[0].message
+
+    def test_ignores_non_literal_args(self, trees):
+        t = trees.code("""\
+def process(data, fmt):
+    pass
+
+x = "json"
+process("a", x)
+process("b", x)
+""")
+        findings = check_constant_args(t, verbose=False)
         assert len(findings) == 0

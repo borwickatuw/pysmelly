@@ -239,3 +239,96 @@ def check_internal_only(all_trees: dict[Path, ast.Module], verbose: bool) -> lis
             )
 
     return findings
+
+
+@check(
+    "constant-args",
+    severity=Severity.MEDIUM,
+    description="Param always receives the same literal value from every caller",
+)
+def check_constant_args(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find parameters where every caller passes the same literal value.
+
+    If all callers pass the same constant, the value should be a default
+    or a module-level constant rather than repeated at each call site.
+    """
+    findings = []
+    func_defs = build_function_index(all_trees)
+
+    for func_name, defs in func_defs.items():
+        if len(defs) > 1:
+            continue
+
+        calls = find_calls_to_function(all_trees, func_name)
+        if len(calls) < 2:
+            continue
+
+        # Find the actual function node to get parameter names
+        func_node = _find_func_node(all_trees, func_name)
+        if func_node is None:
+            continue
+
+        params = [a.arg for a in func_node.args.args if a.arg not in ("self", "cls")]
+
+        for param_idx, param_name in enumerate(params):
+            values: list[str] = []
+            all_constant = True
+
+            for call in calls:
+                node = call["node"]
+                value = _get_arg_value(node, param_idx, param_name)
+                if value is None:
+                    all_constant = False
+                    break
+                values.append(value)
+
+            if all_constant and values and len(set(values)) == 1:
+                findings.append(
+                    Finding(
+                        file=defs[0]["file"],
+                        line=defs[0]["line"],
+                        check="constant-args",
+                        message=(
+                            f"{func_name}() param '{param_name}' always receives "
+                            f"{values[0]} from all {len(calls)} caller(s)"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings
+
+
+def _find_func_node(
+    all_trees: dict[Path, ast.Module], func_name: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Find the first function definition node matching func_name."""
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+                return node
+    return None
+
+
+def _get_arg_value(call_node: ast.Call, param_idx: int, param_name: str) -> str | None:
+    """Extract the constant value passed for a parameter, or None if not a constant."""
+    # Check positional args first
+    if param_idx < len(call_node.args):
+        arg = call_node.args[param_idx]
+        if isinstance(arg, ast.Constant):
+            return repr(arg.value)
+        return None
+
+    # Check keyword args
+    for kw in call_node.keywords:
+        if kw.arg == param_name:
+            if isinstance(kw.value, ast.Constant):
+                return repr(kw.value.value)
+            return None
+
+    # **kwargs — can't determine
+    if any(kw.arg is None for kw in call_node.keywords):
+        return None
+
+    # Parameter not passed at all (uses default) — not a constant-args case
+    return None

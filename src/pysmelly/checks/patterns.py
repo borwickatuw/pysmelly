@@ -273,3 +273,172 @@ def check_constant_dispatch_dicts(
             )
 
     return findings
+
+
+@check(
+    "trivial-wrappers",
+    severity=Severity.LOW,
+    description="Functions whose body is a single return (inline candidate)",
+)
+def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find functions whose only real statement is a return.
+
+    Functions that just return a dict lookup, attribute access, or single
+    function call are candidates for inlining at call sites.
+    """
+    findings = []
+
+    for filepath, tree in all_trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name.startswith("_"):
+                continue
+
+            # Strip docstring from body
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]
+
+            if len(body) != 1:
+                continue
+            stmt = body[0]
+            if not isinstance(stmt, ast.Return) or stmt.value is None:
+                continue
+
+            desc = _describe_trivial_return(stmt.value)
+            if desc is None:
+                continue
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="trivial-wrappers",
+                    message=(
+                        f"{node.name}() just returns {desc} — consider inlining at call sites"
+                    ),
+                    severity=Severity.LOW,
+                )
+            )
+
+    return findings
+
+
+def _describe_trivial_return(value: ast.expr) -> str | None:
+    """Describe a trivial return value, or None if it's not trivial."""
+    # dict[key] or dict.get(key)
+    if isinstance(value, ast.Subscript):
+        if isinstance(value.value, ast.Name):
+            return f"{value.value.id}[...]"
+    # obj.attr
+    if isinstance(value, ast.Attribute):
+        if isinstance(value.value, ast.Name):
+            return f"{value.value.id}.{value.attr}"
+    # single function call: func(...)
+    if isinstance(value, ast.Call):
+        if isinstance(value.func, ast.Name):
+            return f"{value.func.id}(...)"
+        if isinstance(value.func, ast.Attribute) and isinstance(value.func.value, ast.Name):
+            return f"{value.func.value.id}.{value.func.attr}(...)"
+    # constant
+    if isinstance(value, ast.Constant):
+        return repr(value.value)
+    return None
+
+
+@check(
+    "env-fallbacks",
+    severity=Severity.HIGH,
+    description="os.environ.get() or os.getenv() with non-None defaults",
+)
+def check_env_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find environment variable lookups with non-None fallback defaults.
+
+    If the config is required, it should fail fast on missing values rather
+    than silently falling back to a default that masks misconfiguration.
+    """
+    findings = []
+
+    for filepath, tree in all_trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+
+            key_name = _get_env_call_key(node)
+            if key_name is None:
+                continue
+
+            # Check for non-None default
+            default = _get_env_default(node)
+            if default is None:
+                continue
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="env-fallbacks",
+                    message=(
+                        f"os.environ.get('{key_name}', {default}) has a fallback default — "
+                        f"if this config is required, use os.environ['{key_name}'] and fail fast"
+                    ),
+                    severity=Severity.HIGH,
+                )
+            )
+
+    return findings
+
+
+def _get_env_call_key(node: ast.Call) -> str | None:
+    """Return the env var name if this is an os.environ.get() or os.getenv() call."""
+    # os.environ.get("KEY", ...)
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "environ"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "os"
+    ):
+        if node.args and isinstance(node.args[0], ast.Constant):
+            return str(node.args[0].value)
+    # os.getenv("KEY", ...)
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "getenv"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+    ):
+        if node.args and isinstance(node.args[0], ast.Constant):
+            return str(node.args[0].value)
+    return None
+
+
+def _get_env_default(node: ast.Call) -> str | None:
+    """Return repr of the default value if it's non-None, or None otherwise."""
+    # Second positional arg
+    if len(node.args) >= 2:
+        default = node.args[1]
+        if isinstance(default, ast.Constant) and default.value is None:
+            return None
+        if isinstance(default, ast.Constant):
+            return repr(default.value)
+        # Non-constant default (variable, call, etc.) — still suspicious
+        if isinstance(default, ast.Name):
+            return default.id
+        return "..."
+    # default= keyword arg
+    for kw in node.keywords:
+        if kw.arg == "default":
+            if isinstance(kw.value, ast.Constant) and kw.value.value is None:
+                return None
+            if isinstance(kw.value, ast.Constant):
+                return repr(kw.value.value)
+            return "..."
+    return None
