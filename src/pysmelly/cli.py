@@ -78,6 +78,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Skip this check (can be repeated)",
     )
     parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Exclude files matching this pattern (can be repeated, e.g. 'test_*')",
+    )
+    parser.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -114,10 +120,12 @@ def main(argv: list[str] | None = None) -> None:
     files = get_python_files(root)
     all_trees = {}
     for f in files:
+        rel = f.relative_to(root)
+        if any(rel.match(pattern) for pattern in args.exclude):
+            continue
         tree = parse_file(f)
         if tree:
-            # Use paths relative to target directory for cleaner output
-            all_trees[f.relative_to(root)] = tree
+            all_trees[rel] = tree
 
     # Determine which checks to run
     if args.check:

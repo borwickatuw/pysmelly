@@ -118,6 +118,20 @@ used()
         for f in data["findings"]:
             assert not f["file"].startswith("/"), f"Expected relative path, got: {f['file']}"
 
+    def test_exclude_pattern(self, tmp_path, capsys):
+        """--exclude filters out matching files."""
+        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
+        (tmp_path / "test_app.py").write_text("def another_unused():\n    pass\n")
+        try:
+            main(["--format", "json", "--exclude", "test_*", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        data = json.loads(output)
+        assert data["total_files"] == 1
+        for f in data["findings"]:
+            assert not f["file"].startswith("test_")
+
     def test_invalid_directory(self, capsys):
         """Non-existent directory prints error and exits 1."""
         try:
