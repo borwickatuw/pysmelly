@@ -257,6 +257,76 @@ def build(items, extra):
         assert len(findings) == 1
         assert findings[0].severity.value == "medium"
 
+    def test_names_dict_key_consumer(self, trees):
+        """Accumulator consumed by dict key assignment gets specific message."""
+        t = trees.code("""\
+def build():
+    entries = []
+    for item in items:
+        entries.append(item.name)
+    manifest["metadata"] = entries
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert "manifest['metadata']" in findings[0].message
+        assert "line 5" in findings[0].message
+
+    def test_names_attribute_consumer(self, trees):
+        """Accumulator consumed by attribute assignment gets specific message."""
+        t = trees.code("""\
+def build():
+    tags = []
+    tags.append("a")
+    tags.append("b")
+    result.tags = tags
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert "result.tags" in findings[0].message
+
+    def test_consumer_with_conditional_appends(self, trees):
+        """Conditional appends with single consumer still name the target."""
+        t = trees.code("""\
+def build(config):
+    flags = []
+    if config.verbose:
+        flags.append("--verbose")
+    if config.debug:
+        flags.append("--debug")
+    result.flags = flags
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert "result.flags" in findings[0].message
+
+    def test_no_consumer_naming_for_join(self, trees):
+        """Join is already clear — don't try to name a consumer."""
+        t = trees.code("""\
+def build():
+    parts = []
+    parts.append("a")
+    parts.append("b")
+    return ", ".join(parts)
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        assert "populate" not in findings[0].message
+
+    def test_multiple_consumers_no_naming(self, trees):
+        """Multiple assignment consumers — don't try to pick one."""
+        t = trees.code("""\
+def build():
+    items = []
+    for x in data:
+        items.append(x.name)
+    result.items = items
+    backup.items = items
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 1
+        # Should not name a specific consumer since there are two
+        assert "populate" not in findings[0].message
+
 
 class TestConstantDispatchDicts:
     def test_finds_dispatch_dict(self, trees):

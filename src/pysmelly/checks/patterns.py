@@ -264,6 +264,42 @@ def _classify_appends(siblings: list[ast.AST], var_name: str) -> tuple[int, int,
     return loop, conditional, bare
 
 
+def _find_consumer(siblings: list[ast.AST], var_name: str) -> tuple[str | None, int | None]:
+    """Find where an accumulator is consumed (assigned to dict/attr, returned, passed).
+
+    Returns (description, line) or (None, None) if no single consumer found.
+    """
+    consumers: list[tuple[str, int]] = []
+    for stmt in siblings:
+        for child in ast.walk(stmt):
+            # bar["key"] = foo or bar.attr = foo
+            if isinstance(child, ast.Assign):
+                if (
+                    isinstance(child.value, ast.Name)
+                    and child.value.id == var_name
+                    and len(child.targets) == 1
+                ):
+                    target = child.targets[0]
+                    if isinstance(target, ast.Subscript):
+                        if isinstance(target.value, ast.Name):
+                            if isinstance(target.slice, ast.Constant) and isinstance(
+                                target.slice.value, str
+                            ):
+                                consumers.append(
+                                    (
+                                        f"{target.value.id}[{target.slice.value!r}]",
+                                        child.lineno,
+                                    )
+                                )
+                            else:
+                                consumers.append((f"{target.value.id}[...]", child.lineno))
+                    elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                        consumers.append((f"{target.value.id}.{target.attr}", child.lineno))
+    if len(consumers) == 1:
+        return consumers[0]
+    return None, None
+
+
 @check(
     "temp-accumulators",
     severity=Severity.MEDIUM,
@@ -274,10 +310,11 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
 
     Pattern: name = [], then appends, then join() or 'if name:'.
 
-    Distinguishes two sub-patterns:
+    Distinguishes sub-patterns:
     - Loop appending a transform → high confidence, use a comprehension (MEDIUM)
     - Multiple independent conditional appends → low confidence, accumulator
       is often the right choice for heterogeneous conditions (LOW)
+    - Single consumer via assignment (bar["key"] = foo) → name the target (MEDIUM)
     """
     findings = []
 
@@ -304,6 +341,7 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
             append_count = 0
             other_uses = 0
             join_or_check = False
+            has_assignment_consumer = False
 
             for subsequent in siblings:
                 for child in ast.walk(subsequent):
@@ -334,6 +372,18 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
                         if isinstance(child.test, ast.Name) and child.test.id == var_name:
                             join_or_check = True
 
+                    # Detect assignment consumers: bar["key"] = foo, bar.attr = foo
+                    if isinstance(child, ast.Assign):
+                        if (
+                            isinstance(child.value, ast.Name)
+                            and child.value.id == var_name
+                            and len(child.targets) == 1
+                        ):
+                            target = child.targets[0]
+                            if isinstance(target, (ast.Subscript, ast.Attribute)):
+                                has_assignment_consumer = True
+                                join_or_check = True
+
             loop_appends, conditional_appends, bare_appends = _classify_appends(siblings, var_name)
 
             # Suppress batch-flush pattern: append + reset within same loop
@@ -344,27 +394,53 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
             min_appends = 1 if loop_appends > 0 else 2
 
             if append_count >= min_appends and join_or_check and other_uses == 0:
+                consumer_desc, consumer_line = None, None
+                if has_assignment_consumer:
+                    consumer_desc, consumer_line = _find_consumer(siblings, var_name)
 
                 if loop_appends > 0:
                     severity = Severity.MEDIUM
-                    message = (
-                        f"'{var_name}' is a loop-and-append accumulator "
-                        f"— replace with a comprehension"
-                    )
+                    if consumer_desc:
+                        message = (
+                            f"'{var_name}' is built by loop-and-append only to "
+                            f"populate {consumer_desc} (line {consumer_line}) "
+                            f"— inline with a comprehension"
+                        )
+                    else:
+                        message = (
+                            f"'{var_name}' is a loop-and-append accumulator "
+                            f"— replace with a comprehension"
+                        )
                 elif conditional_appends > 0 and bare_appends == 0:
                     severity = Severity.LOW
-                    message = (
-                        f"'{var_name}' is built from {conditional_appends} "
-                        f"independent conditions then joined/checked "
-                        f"— accumulator may be appropriate here"
-                    )
+                    if consumer_desc:
+                        message = (
+                            f"'{var_name}' is built from {conditional_appends} "
+                            f"independent conditions only to populate "
+                            f"{consumer_desc} (line {consumer_line}) "
+                            f"— accumulator may be appropriate here"
+                        )
+                    else:
+                        message = (
+                            f"'{var_name}' is built from {conditional_appends} "
+                            f"independent conditions then joined/checked "
+                            f"— accumulator may be appropriate here"
+                        )
                 else:
                     severity = Severity.MEDIUM
-                    message = (
-                        f"'{var_name}' is a temporary accumulator "
-                        f"({append_count} appends then join/check) — "
-                        f"consider a comprehension or direct approach"
-                    )
+                    if consumer_desc:
+                        message = (
+                            f"'{var_name}' is a temporary accumulator "
+                            f"({append_count} appends) only to populate "
+                            f"{consumer_desc} (line {consumer_line}) "
+                            f"— consider a comprehension or direct construction"
+                        )
+                    else:
+                        message = (
+                            f"'{var_name}' is a temporary accumulator "
+                            f"({append_count} appends then join/check) — "
+                            f"consider a comprehension or direct approach"
+                        )
 
                 findings.append(
                     Finding(
