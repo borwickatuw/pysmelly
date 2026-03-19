@@ -4,6 +4,7 @@ from pysmelly.checks.callers import (
     check_constant_args,
     check_dead_code,
     check_internal_only,
+    check_return_none_instead_of_raise,
     check_single_call_site,
     check_unused_defaults,
 )
@@ -443,4 +444,217 @@ process("a", x)
 process("b", x)
 """)
         findings = check_constant_args(t, verbose=False)
+        assert len(findings) == 0
+
+
+class TestReturnNoneInsteadOfRaise:
+    def test_basic_mixed_returns_with_guards(self, trees):
+        t = trees.code("""\
+def find_user(name):
+    for u in users:
+        if u.name == name:
+            return u
+    return None
+
+result = find_user("alice")
+if result is None:
+    handle_error()
+
+result = find_user("bob")
+if result is None:
+    handle_error()
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 1
+        assert "find_user()" in findings[0].message
+        assert "2 of 2" in findings[0].message
+        assert "consider raising instead" in findings[0].message
+
+    def test_bare_return_counts_as_none(self, trees):
+        t = trees.code("""\
+def lookup(key):
+    if key not in data:
+        return
+    return data[key]
+
+x = lookup("a")
+if x is None:
+    pass
+
+y = lookup("b")
+if y is None:
+    pass
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_is_not_none_guard(self, trees):
+        t = trees.code("""\
+def get_item(idx):
+    if idx < 0:
+        return None
+    return items[idx]
+
+val = get_item(0)
+if val is not None:
+    use(val)
+
+val = get_item(1)
+if val is not None:
+    use(val)
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_truthiness_guard(self, trees):
+        t = trees.code("""\
+def find(name):
+    if name in db:
+        return db[name]
+    return None
+
+r = find("x")
+if not r:
+    handle()
+
+r = find("y")
+if r:
+    use(r)
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_cross_file_callers(self, trees):
+        t = trees.files(
+            {
+                "lib.py": """\
+def resolve(name):
+    if name in registry:
+        return registry[name]
+    return None
+""",
+                "a.py": """\
+from lib import resolve
+val = resolve("x")
+if val is None:
+    raise KeyError("x")
+""",
+                "b.py": """\
+from lib import resolve
+val = resolve("y")
+if val is None:
+    raise KeyError("y")
+""",
+            }
+        )
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_ignores_void_function(self, trees):
+        """Functions that only return None are void — not mixed."""
+        t = trees.code("""\
+def log_it(msg):
+    print(msg)
+    return None
+
+x = log_it("hi")
+if x is None:
+    pass
+
+y = log_it("bye")
+if y is None:
+    pass
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_single_caller(self, trees):
+        t = trees.code("""\
+def find_user(name):
+    if name in users:
+        return users[name]
+    return None
+
+result = find_user("alice")
+if result is None:
+    pass
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_no_callers(self, trees):
+        t = trees.code("""\
+def find_user(name):
+    if name in users:
+        return users[name]
+    return None
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_unguarded_callers(self, trees):
+        """Callers that assign but don't guard — no pattern to report."""
+        t = trees.code("""\
+def find_user(name):
+    if name in users:
+        return users[name]
+    return None
+
+result = find_user("alice")
+use(result)
+
+result = find_user("bob")
+use(result)
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_generator(self, trees):
+        t = trees.code("""\
+def gen_items(data):
+    for item in data:
+        if item:
+            yield item
+    return None
+
+x = gen_items([])
+if x is None:
+    pass
+
+y = gen_items([1])
+if y is None:
+    pass
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_discarded_return(self, trees):
+        """Bare call statements (not assigned) are not counted."""
+        t = trees.code("""\
+def find_user(name):
+    if name in users:
+        return users[name]
+    return None
+
+find_user("alice")
+find_user("bob")
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_single_return(self, trees):
+        """Functions with only one return statement are not mixed."""
+        t = trees.code("""\
+def get_value(key):
+    return data.get(key)
+
+x = get_value("a")
+if x is None:
+    pass
+
+y = get_value("b")
+if y is None:
+    pass
+""")
+        findings = check_return_none_instead_of_raise(t, verbose=False)
         assert len(findings) == 0

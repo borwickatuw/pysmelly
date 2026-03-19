@@ -164,3 +164,159 @@ def _extract_statement_blocks(
                     )
 
     return blocks
+
+
+@check(
+    "duplicate-except-blocks",
+    severity=Severity.MEDIUM,
+    description="Identical except handlers with same error messages across files",
+)
+def check_duplicate_except_blocks(
+    all_trees: dict[Path, ast.Module], verbose: bool
+) -> list[Finding]:
+    """Find duplicate except handlers across different files.
+
+    Higher confidence than duplicate-blocks: matches exception type,
+    structure, AND string literals together.
+    """
+    findings = []
+
+    all_handlers: list[dict] = []
+    for filepath, tree in all_trees.items():
+        all_handlers.extend(_extract_except_handlers(tree, filepath))
+
+    by_sig: dict[str, list[dict]] = defaultdict(list)
+    for handler in all_handlers:
+        by_sig[handler["signature"]].append(handler)
+
+    reported: set[frozenset] = set()
+
+    for sig, handlers in by_sig.items():
+        if len(handlers) < 2:
+            continue
+
+        # Cross-file only
+        files = {h["file"] for h in handlers}
+        if len(files) < 2:
+            continue
+
+        locations_key = frozenset((h["file"], h["func"], h["line"]) for h in handlers)
+        if locations_key in reported:
+            continue
+        reported.add(locations_key)
+
+        # Deduplicate by (file, func) for display
+        seen: set[tuple[str, str]] = set()
+        deduped = []
+        for h in handlers:
+            key = (h["file"], h["func"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(h)
+
+        locations_str = ", ".join(
+            f"{h['file'].split('/')[-1]}:{h['func']}():{h['line']}" for h in deduped[:4]
+        )
+        if len(deduped) > 4:
+            locations_str += f" (+{len(deduped) - 4} more)"
+
+        first = deduped[0]
+        findings.append(
+            Finding(
+                file=first["file"],
+                line=first["line"],
+                check="duplicate-except-blocks",
+                message=(
+                    f"except {first['exc_type']}: {first['num_stmts']} duplicate handler "
+                    f"statements with same error messages in: {locations_str}"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+def _get_exception_type_name(handler: ast.ExceptHandler) -> str:
+    """Normalize exception type to a string for signature matching."""
+    if handler.type is None:
+        return "bare"
+    if isinstance(handler.type, ast.Name):
+        return handler.type.id
+    if isinstance(handler.type, ast.Attribute):
+        return handler.type.attr
+    if isinstance(handler.type, ast.Tuple):
+        names = []
+        for elt in handler.type.elts:
+            if isinstance(elt, ast.Name):
+                names.append(elt.id)
+            elif isinstance(elt, ast.Attribute):
+                names.append(elt.attr)
+            else:
+                names.append("?")
+        return ",".join(sorted(names))
+    return "?"
+
+
+def _extract_string_constants(nodes: list[ast.stmt]) -> list[str]:
+    """Collect all string constants in an AST subtree list."""
+    strings = []
+    for node in nodes:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                strings.append(child.value)
+    return sorted(strings)
+
+
+def _except_handler_signature(handler: ast.ExceptHandler) -> str | None:
+    """Build a signature combining exception type, structure, and string literals.
+
+    Returns None for trivial handlers (pass-only, bare-raise-only, or < 2 statements).
+    """
+    body = handler.body
+    if len(body) < 2:
+        return None
+
+    # Skip pass-only
+    if all(isinstance(s, ast.Pass) for s in body):
+        return None
+
+    # Skip bare-raise-only
+    if len(body) == 1 and isinstance(body[0], ast.Raise) and body[0].exc is None:
+        return None
+
+    exc_type = _get_exception_type_name(handler)
+    wrapper = ast.Module(body=body, type_ignores=[])
+    struct = _normalize_ast(wrapper)
+    strings = _extract_string_constants(body)
+
+    return f"exc:{exc_type}|struct:{struct}|strings:{'|'.join(strings)}"
+
+
+def _extract_except_handlers(tree: ast.Module, filepath: Path) -> list[dict]:
+    """Extract all except handlers from a file with their signatures."""
+    handlers = []
+
+    for func_node in ast.walk(tree):
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        for node in ast.walk(func_node):
+            if not isinstance(node, ast.Try):
+                continue
+            for handler in node.handlers:
+                sig = _except_handler_signature(handler)
+                if sig is None:
+                    continue
+                handlers.append(
+                    {
+                        "file": str(filepath),
+                        "func": func_node.name,
+                        "line": handler.lineno,
+                        "num_stmts": len(handler.body),
+                        "exc_type": _get_exception_type_name(handler),
+                        "signature": sig,
+                    }
+                )
+
+    return handlers

@@ -386,6 +386,191 @@ def _get_arg_value(call_node: ast.Call, param_idx: int, param_name: str) -> str 
     return None
 
 
+@check(
+    "return-none-instead-of-raise",
+    severity=Severity.MEDIUM,
+    description="Functions returning None on error where callers all guard against None",
+)
+def check_return_none_instead_of_raise(
+    all_trees: dict[Path, ast.Module], verbose: bool
+) -> list[Finding]:
+    """Find functions with mixed returns (None + non-None) where callers guard against None.
+
+    If a function returns None on error paths and most callers check
+    ``if result is None:``, the function should raise instead.
+    """
+    findings = []
+    func_defs = build_function_index(all_trees)
+
+    for func_name, defs in func_defs.items():
+        if len(defs) > 1:
+            continue
+
+        func_node = _find_func_node(all_trees, func_name)
+        if func_node is None:
+            continue
+
+        if not _has_mixed_returns(func_node):
+            continue
+
+        guarded, unguarded = _count_none_guards(all_trees, func_name)
+        if guarded >= 2:
+            total = guarded + unguarded
+            findings.append(
+                Finding(
+                    file=defs[0]["file"],
+                    line=defs[0]["line"],
+                    check="return-none-instead-of-raise",
+                    message=(
+                        f"{func_name}() returns None in some branches and "
+                        f"{guarded} of {total} caller(s) guard against None "
+                        f"— consider raising instead"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings
+
+
+def _walk_function_body(func_node: ast.FunctionDef | ast.AsyncFunctionDef):
+    """Walk the function body without descending into nested functions/classes."""
+    for node in func_node.body:
+        yield node
+        for child in ast.walk(node):
+            if child is node:
+                continue
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            yield child
+
+
+def _has_mixed_returns(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function has both None-returns and non-None-returns.
+
+    Skips generators, void functions, and single-return functions.
+    """
+    # Skip generators
+    for node in ast.walk(func_node):
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
+            return False
+
+    none_returns = 0
+    value_returns = 0
+
+    for node in _walk_function_body(func_node):
+        if not isinstance(node, ast.Return):
+            continue
+        if node.value is None:
+            # bare return
+            none_returns += 1
+        elif isinstance(node.value, ast.Constant) and node.value.value is None:
+            # return None
+            none_returns += 1
+        else:
+            value_returns += 1
+
+    return none_returns >= 1 and value_returns >= 1
+
+
+def _is_none_guard(stmt: ast.stmt, var_name: str) -> bool:
+    """Detect ``if x is None:`` / ``if x is not None:`` / ``if not x:`` / ``if x:`` patterns."""
+    if not isinstance(stmt, ast.If):
+        return False
+
+    test = stmt.test
+
+    # if x is None / if x is not None
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        if isinstance(test.ops[0], (ast.Is, ast.IsNot)):
+            left = test.left
+            comp = test.comparators[0]
+            if isinstance(left, ast.Name) and left.id == var_name:
+                if isinstance(comp, ast.Constant) and comp.value is None:
+                    return True
+            if isinstance(comp, ast.Name) and comp.id == var_name:
+                if isinstance(left, ast.Constant) and left.value is None:
+                    return True
+
+    # if not x (where x is the var_name)
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        if isinstance(test.operand, ast.Name) and test.operand.id == var_name:
+            return True
+
+    # if x (truthiness check)
+    if isinstance(test, ast.Name) and test.id == var_name:
+        return True
+
+    return False
+
+
+def _count_none_guards(all_trees: dict[Path, ast.Module], func_name: str) -> tuple[int, int]:
+    """Count callers that guard vs don't guard against None return.
+
+    Returns (guarded_count, unguarded_count). Callers that discard the
+    return value (bare call statements) are ignored.
+    """
+    guarded = 0
+    unguarded = 0
+
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            # Look for: var = func(...)
+            if not isinstance(node, ast.Assign):
+                continue
+            if len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            if not isinstance(node.value, ast.Call):
+                continue
+            call = node.value
+            if isinstance(call.func, ast.Name) and call.func.id == func_name:
+                pass
+            elif isinstance(call.func, ast.Attribute) and call.func.attr == func_name:
+                pass
+            else:
+                continue
+
+            var_name = target.id
+
+            # Find the containing block to check subsequent statements
+            found_guard = _find_guard_in_tree(tree, node, var_name)
+            if found_guard:
+                guarded += 1
+            else:
+                unguarded += 1
+
+    return guarded, unguarded
+
+
+def _find_guard_in_tree(tree: ast.Module, assign_node: ast.Assign, var_name: str) -> bool:
+    """Check if the assignment is followed by a None guard within 3 statements."""
+    for parent in ast.walk(tree):
+        for attr in ("body", "orelse", "finalbody"):
+            body = getattr(parent, attr, None)
+            if not isinstance(body, list):
+                continue
+            for i, stmt in enumerate(body):
+                if stmt is not assign_node:
+                    continue
+                # Check next 3 statements
+                for j in range(i + 1, min(i + 4, len(body))):
+                    if _is_none_guard(body[j], var_name):
+                        return True
+                return False
+        if isinstance(parent, ast.ExceptHandler) and parent.body:
+            for i, stmt in enumerate(parent.body):
+                if stmt is not assign_node:
+                    continue
+                for j in range(i + 1, min(i + 4, len(parent.body))):
+                    if _is_none_guard(parent.body[j], var_name):
+                        return True
+                return False
+    return False
+
+
 def _args_from_single_object(call_node: ast.Call) -> str | None:
     """Check if all call arguments are attributes of a single object.
 

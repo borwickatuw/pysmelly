@@ -128,6 +128,7 @@ CALLER_AWARE_CHECKS = {
     "dead-code",
     "single-call-site",
     "internal-only",
+    "return-none-instead-of-raise",
 }
 
 
