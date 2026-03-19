@@ -15,6 +15,21 @@ _TAGLINES = [
     ("You can't handle the smell!", "A Few Good Men"),
     ("This code doesn't pass the smell test.", None),
     ("Follow your nose -- it always knows the code that smells.", "Toucan Sam"),
+    ("Here's looking at you, cruft.", "Casablanca"),
+    ("What's that smell? Oh, it's technical debt.", None),
+    ("May the refactor be with you.", "Star Wars"),
+    ("After all, tomorrow is another sprint.", "Gone with the Wind"),
+    ("We're gonna need a bigger backlog.", "Jaws"),
+    ("To refactor, or not to refactor -- that is not the question. Refactor.", "Hamlet"),
+    ("Elementary, my dear developer. It's dead code.", "Sherlock Holmes"),
+    ("There's no place like a clean codebase.", "The Wizard of Oz"),
+    ("One does not simply ignore code smells.", "The Lord of the Rings"),
+    ("I'm gonna make you a refactor you can't refuse.", "The Godfather"),
+    ("It's alive! ... unfortunately.", "Frankenstein"),
+    ("In the room, the engineers come and go, talking of TODO.", "T.S. Eliot"),
+    ("The first rule of dead code: you do not commit dead code.", "Fight Club"),
+    ("All those abstractions will be lost in time, like tears in rain.", "Blade Runner"),
+    ("Toto, I've a feeling we're not in clean code anymore.", "The Wizard of Oz"),
 ]
 
 
