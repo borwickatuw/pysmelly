@@ -71,7 +71,6 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
             continue
 
         all_callers_pass = True
-        all_literal_non_none = True
         for call in calls:
             node = call["node"]
             param_index = None
@@ -93,25 +92,17 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
                 all_callers_pass = False
                 break
 
-            # Check if caller passes the param and whether it's a non-None literal
             if len(node.args) > param_index:
-                arg_value = node.args[param_index]
-                if not (isinstance(arg_value, ast.Constant) and arg_value.value is not None):
-                    all_literal_non_none = False
                 continue
-            kw_match = next((kw for kw in node.keywords if kw.arg == param_name), None)
-            if kw_match is not None:
-                if not (isinstance(kw_match.value, ast.Constant) and kw_match.value.value is not None):
-                    all_literal_non_none = False
+            if any(kw.arg == param_name for kw in node.keywords):
                 continue
             if any(kw.arg is None for kw in node.keywords):
-                all_literal_non_none = False
                 continue  # **kwargs — can't tell
 
             all_callers_pass = False
             break
 
-        if all_callers_pass and all_literal_non_none and len(calls) > 0:
+        if all_callers_pass and len(calls) > 0:
             findings.append(
                 Finding(
                     file=func_info["file"],
@@ -119,7 +110,7 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
                     check="unused-defaults",
                     message=(
                         f"{func_name}() param '{param_name}' defaults to None "
-                        f"but all {len(calls)} caller(s) pass a non-None value — "
+                        f"but all {len(calls)} caller(s) always pass it — "
                         f"make it required"
                     ),
                     severity=Severity.HIGH,
