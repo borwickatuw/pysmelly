@@ -2,9 +2,29 @@
 
 ## Current State
 
-13 checks, zero dependencies, installable via `uvx`. 76 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
+13 checks, zero dependencies, installable via `uvx`. 102 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
 
-## Potential new checks
+## Next up — from deployer real-world feedback
+
+These emerged from running pysmelly on a real production codebase. Prioritized by signal quality and fit with pysmelly's cross-file analysis strength.
+
+### `return-none-instead-of-raise`
+
+Functions that return None on error paths where every caller checks `if result is None: handle_error()`. The function should just raise — the None-return propagates complexity to every call site.
+
+Cross-file analysis: detect that a function has branches returning None, then verify all callers guard against it. High signal, actionable ("make the function raise instead"), leverages existing `find_calls_to_function` infrastructure.
+
+### `duplicate-except-blocks`
+
+Identical except blocks across files — same exception type, same error message string, same handling logic. Extension of existing `duplicate-blocks` check but narrowed to except blocks for high confidence. Catches copy-paste error handling across modules (e.g., "Push failed" duplicated in deploy.py and ci_deploy.py).
+
+### `pass-through-params` (upgraded)
+
+Parameter received by function A and threaded unchanged through a call chain (A → B → C) with no use in the intermediary. Example: `environment_type` passed through 3 functions unchanged. The intermediary's signature is vestigial — the caller should pass the value directly to the function that uses it.
+
+This was already in the ideas list but the deployer feedback provided concrete examples. Complex to implement (requires tracing params through call graph) and potentially noisy — stretch goal.
+
+## Other potential checks
 
 | Source | Proposed check |
 |---|---|
@@ -14,7 +34,6 @@
 | PYTHON.md | **`function-level-loggers`** — detect `logging.getLogger()` or `logging.basicConfig()` inside functions instead of at module level. |
 | PYTHON.md | **`remainder-flags`** — detect argparse patterns where REMAINDER is used alongside flags that will be swallowed. |
 | Ideas | **`write-only-variables`** — Variable assigned but never read in the same scope. Different from unused imports. |
-| Ideas | **`pass-through-params`** — Parameter received by function A and passed unchanged to exactly one function B, with no other use in A. Suggests the caller should call B directly. |
 | Ideas | **`boolean-parameter-smell`** — Functions with boolean parameters where the first statement is `if flag:` — suggests the function should be two functions. |
 | Ideas | **`stale-comments`** — Comments referencing function/variable names that no longer exist in the codebase. |
 | Ideas | **`immediately-overwritten`** — `x = "default"` immediately followed by `x = compute()`. The first assignment is dead. |
