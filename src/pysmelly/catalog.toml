@@ -10,8 +10,9 @@ suggest = "requests or httpx"
 
 [[patterns]]
 name = "argparse-to-click"
-description = "CLI argument parsing"
+description = "complex CLI argument parsing"
 imports = ["argparse"]
+condition_fn = "complex_argparse"
 suggest = "click or typer"
 
 [[patterns]]

@@ -79,12 +79,59 @@ class TestStdlibAlternatives:
         assert len(findings) == 1
         assert "requests or httpx" in findings[0].message
 
-    def test_flags_argparse(self, trees):
-        t = trees.code("import argparse\n")
+    def test_argparse_simple_not_flagged(self, trees):
+        """argparse with few arguments is fine — don't flag it."""
+        t = trees.code("""\
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("filename")
+parser.add_argument("--verbose", action="store_true")
+""")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "argparse" in f.message]
+        assert len(matching) == 0
+
+    def test_argparse_complex_flagged(self, trees):
+        """argparse with 5+ arguments suggests click/typer."""
+        t = trees.code("""\
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("input")
+parser.add_argument("output")
+parser.add_argument("--verbose", action="store_true")
+parser.add_argument("--format", choices=["json", "csv"])
+parser.add_argument("--limit", type=int, default=100)
+""")
         findings = check_stdlib_alternatives(t, verbose=False)
         matching = [f for f in findings if "argparse" in f.message]
         assert len(matching) == 1
         assert "click or typer" in matching[0].message
+
+    def test_argparse_subcommands_flagged(self, trees):
+        """argparse with subcommands suggests click/typer."""
+        t = trees.code("""\
+import argparse
+parser = argparse.ArgumentParser()
+subparsers = parser.add_subparsers()
+subparsers.add_parser("init")
+subparsers.add_parser("run")
+""")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "argparse" in f.message]
+        assert len(matching) == 1
+
+    def test_argparse_mutually_exclusive_flagged(self, trees):
+        """argparse with mutually exclusive groups suggests click/typer."""
+        t = trees.code("""\
+import argparse
+parser = argparse.ArgumentParser()
+group = parser.add_mutually_exclusive_group()
+group.add_argument("--json", action="store_true")
+group.add_argument("--csv", action="store_true")
+""")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "argparse" in f.message]
+        assert len(matching) == 1
 
     def test_flags_deprecated_stdlib(self, trees):
         t = trees.code("import cgi\n")

@@ -56,6 +56,44 @@ def _codebase_imports_module(all_imports: dict[Path, list[tuple[str, int]]], mod
     return False
 
 
+def _count_method_calls(tree: ast.Module, method_name: str) -> int:
+    """Count calls to a specific method name (e.g. parser.add_argument)."""
+    count = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == method_name
+        ):
+            count += 1
+    return count
+
+
+def _has_method_call(tree: ast.Module, method_name: str) -> bool:
+    """Check if a method name is called anywhere in the tree."""
+    return _count_method_calls(tree, method_name) > 0
+
+
+def _is_complex_argparse(all_trees: dict[Path, ast.Module], matched_files: set[Path]) -> bool:
+    """True if any matched file has subcommands or 5+ arguments."""
+    for filepath in matched_files:
+        tree = all_trees[filepath]
+        if _has_method_call(tree, "add_subparsers"):
+            return True
+        if _has_method_call(tree, "add_mutually_exclusive_group"):
+            return True
+        if _count_method_calls(tree, "add_argument") >= 5:
+            return True
+    return False
+
+
+# Registry of condition functions.
+# Each receives (all_trees, matched_files) and returns True if the finding should fire.
+CONDITION_FNS: dict[str, callable] = {
+    "complex_argparse": _is_complex_argparse,
+}
+
+
 def _format_locations(matches: list[tuple[Path, int]], max_shown: int = 3) -> str:
     """Format file:line locations for display."""
     parts = [f"{m[0]}:{m[1]}" for m in matches[:max_shown]]
@@ -93,6 +131,14 @@ def check_stdlib_alternatives(all_trees: dict[Path, ast.Module], verbose: bool) 
         if condition and condition.startswith("also-imports:"):
             required_module = condition[len("also-imports:") :]
             if not _codebase_imports_module(all_imports, required_module):
+                continue
+
+        # Check condition_fn if present
+        condition_fn_name = pattern.get("condition_fn")
+        if condition_fn_name:
+            matched_files = {filepath for filepath, _ in matches}
+            fn = CONDITION_FNS[condition_fn_name]
+            if not fn(all_trees, matched_files):
                 continue
 
         # Deduplicate by file — keep first occurrence per file
