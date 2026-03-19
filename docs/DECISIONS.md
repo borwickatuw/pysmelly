@@ -47,3 +47,13 @@ pysmelly's differentiator is cross-file call-graph analysis. Adding single-file 
 **Decision:** Don't implement it. Keep `--exclude` as the only mechanism.
 
 **Rationale:** Test file naming conventions vary across projects — `test_*.py`, `*_test.py`, `tests/`, `test/`, `spec/`, framework-specific patterns, etc. A hardcoded `--exclude-tests` bakes in assumptions that won't be universal. The existing `--exclude` flag is flexible enough (`--exclude 'test_*' --exclude 'tests/'`). If discoverability is a concern, better `--help` examples are the right fix, not a new flag.
+
+## Don't add speculative checks without clear cross-file value
+
+**Decision:** Don't implement `parallel-implementations`, `boolean-parameter-smell`, `stale-comments`, or `remainder-flags`.
+
+**Rationale:**
+- `parallel-implementations` — Functions with the same name/signature in different files. Hard to detect generically without a clear scope definition; too many legitimate cases (interface implementations, test doubles, overrides).
+- `boolean-parameter-smell` — Functions with boolean params where the first statement is `if flag:`. Too noisy — many legitimate uses of boolean parameters. The interesting case (function should be split) is hard to distinguish from the common case (feature toggle).
+- `stale-comments` — Comments referencing names that no longer exist. Comments aren't structured, so name matching produces false positives on partial matches, English words, etc. Fragile and low-confidence.
+- `remainder-flags` — Argparse REMAINDER swallowing flags. Extremely niche — only relevant to CLI-heavy codebases using `argparse.REMAINDER`.

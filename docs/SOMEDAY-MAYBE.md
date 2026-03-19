@@ -17,22 +17,6 @@ factory instead of raw boto3.client").
 - **Threshold overrides** — e.g., `--foo-equals-foo-threshold=5`.
 - **Entry-point plugins** — Allow third-party packages to register checks via `[project.entry-points."pysmelly.checks"]`.
 
-## `parallel-implementations`
-
-Functions with the same name/signature in different files, or if/else branches that both produce the same type. Hard to detect generically — needs a clearer scope before attempting.
-
-## `boolean-parameter-smell`
-
-Functions with boolean parameters where the first statement is `if flag:` — suggests the function should be two functions. Likely noisy in practice (many legitimate uses of boolean params).
-
-## `stale-comments`
-
-Comments referencing function/variable names that no longer exist in the codebase. Interesting idea but fragile — comments aren't structured, and name matching would produce false positives on partial matches, English words, etc.
-
-## `remainder-flags`
-
-Detect argparse patterns where REMAINDER is used alongside flags that will be swallowed. Very niche — only relevant to CLI-heavy codebases using argparse.REMAINDER.
-
 ## look for `dict-builder` function
 
   As for what pysmelly could detect: this is a "dict-builder function" smell — a function whose primary job is           
