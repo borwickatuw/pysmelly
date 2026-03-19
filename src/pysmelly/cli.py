@@ -118,7 +118,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--check",
         choices=list(CHECKS.keys()),
-        help="Run only this check",
+        metavar="CHECK",
+        help="Run only this check (see --list-checks)",
     )
     parser.add_argument(
         "--skip",
