@@ -8,7 +8,7 @@
 
 **Rationale:**
 - No standard tool flags this. Ruff, pylint, and bandit all miss it.
-- Found a real issue in the deployer project (`b93dbb7` "Remove tomllib fallback").
+- Found a real issue in a production codebase (a tomllib compatibility fallback that was no longer needed).
 - Small amount of code, low maintenance burden.
 - The pattern is specifically about vestigial code after `requires-python` changes — squarely in pysmelly's wheelhouse.
 

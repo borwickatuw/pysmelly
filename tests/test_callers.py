@@ -342,12 +342,12 @@ process(svc.name, config.count)
         """Cross-directory calls are public API boundaries, not inline candidates."""
         t = trees.files(
             {
-                "src/deployer/aws/rds.py": """\
+                "src/myapp/aws/rds.py": """\
 def stop():
     pass
 """,
                 "bin/manage_rds.py": """\
-from deployer.aws.rds import stop
+from myapp.aws.rds import stop
 stop()
 """,
             }
@@ -359,11 +359,11 @@ stop()
         """Same-directory calls are genuine inline candidates."""
         t = trees.files(
             {
-                "src/deployer/helpers.py": """\
+                "src/myapp/helpers.py": """\
 def format_row():
     pass
 """,
-                "src/deployer/status.py": """\
+                "src/myapp/status.py": """\
 import helpers
 helpers.format_row()
 """,

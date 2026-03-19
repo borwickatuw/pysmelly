@@ -28,12 +28,12 @@
 
 ## Phase 2: New Checks
 
-### Checks inspired by actual refactoring commits
+### Checks inspired by real-world refactoring patterns
 
-| Pattern observed in git history | Check |
+| Pattern observed | Check |
 |---|---|
-| `def0e34` "Make vestigial Optional params required" — params that are always the same value across all callers. | **`constant-args`** — param always receives the same literal value from every caller. Suggests the value should be a default or constant. |
-| `7babbd9` "Remove trivial config getter functions, inline at call sites" — functions that just returned a dict lookup or attribute access. | **`trivial-wrappers`** — functions whose body is a single return of a dict lookup, attribute access, or simple expression. Candidates for inlining. |
+| Vestigial Optional params that every caller always passes the same value. | **`constant-args`** — param always receives the same literal value from every caller. Suggests the value should be a default or constant. |
+| Trivial config getter functions that just returned a dict lookup or attribute access. | **`trivial-wrappers`** — functions whose body is a single return of a dict lookup, attribute access, or simple expression. Candidates for inlining. |
 
 ### Checks inspired by PYTHON.md best practices
 
@@ -43,14 +43,14 @@
 
 ### Already covered by existing checks (no new work needed)
 
-| Commit | Covered by |
+| Pattern | Covered by |
 |---|---|
-| `5547656` "Prefix internal-only functions with underscore" | `internal-only` |
-| `f3ab3d2` "Remove 6 dead functions with zero callers" | `dead-code` |
-| `be88fa0` "Move lazy imports to module level" | Removed — covered by pylint C0415 |
-| `b93dbb7` "Remove tomllib fallback and move lazy imports to module level" | `compat-shims` |
-| `21c56ba` "Simplify ServiceMetrics construction" | `foo-equals-foo` |
-| `c30caa1` "Use canonical FARGATE_VALID_MEMORY, fail fast on unknown CPU value" | `suspicious-fallbacks` |
+| Prefixing internal-only functions with underscore | `internal-only` |
+| Removing dead functions with zero callers | `dead-code` |
+| Moving lazy imports to module level | Removed — covered by pylint C0415 |
+| Removing compatibility fallbacks (e.g., tomllib) | `compat-shims` |
+| Simplifying object construction with many name=name kwargs | `foo-equals-foo` |
+| Using canonical constants and failing fast on unknown values | `suspicious-fallbacks` |
 
 ## Phase 3: Better Output for LLMs
 
@@ -58,9 +58,9 @@
 - [x] **Code context in JSON output** — Each finding includes a `source` field with the source line.
 - [x] **Inline suppression** — `# pysmelly: ignore` and `# pysmelly: ignore[check-name]` comments.
 
-## Phase 4: Deployer Real-World Feedback
+## Phase 4: Real-World Feedback
 
-Checks identified from running pysmelly on a real production codebase.
+Checks identified from running pysmelly on a production codebase.
 
 - [x] **`return-none-instead-of-raise`** — Functions with mixed returns (None + value) where 2+ callers guard against None. The function should raise instead of pushing error handling to every call site. Caller-aware check in `callers.py`.
 - [x] **`duplicate-except-blocks`** — Identical except handlers across files — same exception type, same error messages, same structure. Higher confidence than `duplicate-blocks` by including string literals and exception type in signature. Cross-file only (same-file handled by `duplicate-blocks`). Structural check in `structure.py`.
