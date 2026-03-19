@@ -557,8 +557,8 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
 
             ret_value = stmt.value
 
-            # Suppress: abstract method implementations (constant in subclass method)
-            if _is_subclass_method(node, subclass_methods) and isinstance(ret_value, ast.Constant):
+            # Suppress: subclass methods (protocol implementations can't be inlined)
+            if _is_subclass_method(node, subclass_methods):
                 continue
 
             # Suppress: self-method chains (return self.to_dict() etc.)

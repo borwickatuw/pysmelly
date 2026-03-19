@@ -13,6 +13,7 @@ from pysmelly.checks.helpers import (
     is_imported_elsewhere,
     is_referenced_as_dotted_string,
     is_referenced_as_value,
+    is_used_as_decorator,
 )
 from pysmelly.registry import Finding, Severity, check
 
@@ -145,6 +146,7 @@ def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Fi
             and not is_imported_elsewhere(func_name, def_file, all_trees)
             and not is_referenced_as_value(func_name, all_trees)
             and not is_referenced_as_dotted_string(func_name, all_trees)
+            and not is_used_as_decorator(func_name, all_trees)
         ):
             findings.append(
                 Finding(

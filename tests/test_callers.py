@@ -166,6 +166,38 @@ from lib import helper
         findings = check_dead_code(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_function_used_as_decorator(self, trees):
+        """@wrap_raw on other functions counts as a reference."""
+        t = trees.code("""\
+def wrap_raw(fn):
+    pass
+
+@wrap_raw
+def get_inbox():
+    pass
+
+@wrap_raw
+def get_calendar():
+    pass
+""")
+        findings = check_dead_code(t, verbose=False)
+        dead_names = {f.message.split("()")[0] for f in findings}
+        assert "wrap_raw" not in dead_names
+
+    def test_ignores_decorator_with_parens(self, trees):
+        """@decorator(...) form also counts as a reference."""
+        t = trees.code("""\
+def require_role(role):
+    pass
+
+@require_role("admin")
+def admin_view():
+    pass
+""")
+        findings = check_dead_code(t, verbose=False)
+        dead_names = {f.message.split("()")[0] for f in findings}
+        assert "require_role" not in dead_names
+
     def test_ignores_dotted_string_reference(self, trees):
         """Django context processors, middleware, etc. are referenced by dotted path."""
         t = trees.files(

@@ -131,6 +131,40 @@ def is_referenced_as_dotted_string(func_name: str, all_trees: dict[Path, ast.Mod
     return False
 
 
+def is_used_as_decorator(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if a function name is used as a decorator anywhere.
+
+    Handles both @func_name and @func_name(...) forms,
+    as well as @module.func_name variants.
+    """
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for deco in node.decorator_list:
+                # @func_name
+                if isinstance(deco, ast.Name) and deco.id == func_name:
+                    return True
+                # @func_name(...)
+                if (
+                    isinstance(deco, ast.Call)
+                    and isinstance(deco.func, ast.Name)
+                    and deco.func.id == func_name
+                ):
+                    return True
+                # @module.func_name
+                if isinstance(deco, ast.Attribute) and deco.attr == func_name:
+                    return True
+                # @module.func_name(...)
+                if (
+                    isinstance(deco, ast.Call)
+                    and isinstance(deco.func, ast.Attribute)
+                    and deco.func.attr == func_name
+                ):
+                    return True
+    return False
+
+
 def is_referenced_as_value(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
     """Check if a function name appears as a dict value, list element, or argument."""
     for tree in all_trees.values():

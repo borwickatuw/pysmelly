@@ -136,14 +136,23 @@ def _extract_statement_blocks(
         if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
 
+        # Walk function body without descending into nested functions/classes
+        # (they'll be processed as separate func_nodes)
         statement_lists = []
-        for node in ast.walk(func_node):
+        worklist = [func_node]
+        while worklist:
+            node = worklist.pop()
             for attr in ("body", "orelse", "finalbody"):
                 body = getattr(node, attr, None)
                 if isinstance(body, list) and body and isinstance(body[0], ast.stmt):
                     statement_lists.append(body)
             if isinstance(node, ast.ExceptHandler) and node.body:
                 statement_lists.append(node.body)
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if child is not func_node:
+                        continue
+                worklist.append(child)
 
         for body in statement_lists:
             for size in range(min_statements, min(len(body) + 1, 20)):

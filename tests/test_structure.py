@@ -47,6 +47,23 @@ def func_b():
         findings = check_duplicate_blocks(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_nested_function_same_code(self, trees):
+        """Nested function body should not be double-counted as outer function duplicate."""
+        t = trees.code("""\
+def can_manage_list(view_func):
+    def _wrapped_view(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            messages.error(request, "Not authenticated")
+            logger.warning("Unauthenticated access attempt")
+            audit.log(request, "denied")
+            return redirect("login")
+            next_url = request.get_full_path()
+        return view_func(request, *args, **kwargs)
+    return _wrapped_view
+""")
+        findings = check_duplicate_blocks(t, verbose=False)
+        assert len(findings) == 0
+
     def test_ignores_unique_blocks(self, trees):
         t = trees.code("""\
 def func_a():

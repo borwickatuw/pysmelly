@@ -396,6 +396,19 @@ class MyHandler(BaseHandler):
         findings = check_trivial_wrappers(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_subclass_method_with_attr_return(self, trees):
+        """Subclass methods are protocol implementations — can't inline."""
+        t = trees.code("""\
+class EventSitemap(Sitemap):
+    def lastmod(self, obj):
+        return obj.modified_date
+
+    def location(self, obj):
+        return obj.get_absolute_url()
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
     def test_flags_constant_return_without_base(self, trees):
         """Constant return in a class without bases is still flagged."""
         t = trees.code("""\
