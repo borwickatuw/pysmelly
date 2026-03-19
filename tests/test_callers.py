@@ -7,6 +7,7 @@ from pysmelly.checks.callers import (
     check_single_call_site,
     check_unused_defaults,
 )
+from pysmelly.registry import Severity
 
 
 class TestUnusedDefaults:
@@ -175,6 +176,58 @@ helper()
         findings = check_single_call_site(t, verbose=False)
         assert len(findings) == 1
         assert "exactly 1 call site" in findings[0].message
+        assert findings[0].severity == Severity.LOW
+
+    def test_includes_param_count(self, trees):
+        t = trees.code("""\
+def format_row(name, age, role):
+    pass
+
+format_row("Alice", 30, "admin")
+""")
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 1
+        assert "3 params" in findings[0].message
+        assert findings[0].severity == Severity.LOW
+
+    def test_bumps_severity_for_many_params(self, trees):
+        """Functions with 4+ params and 1 caller are likely bad extractions."""
+        t = trees.code("""\
+def format_row(name, age, role, dept):
+    pass
+
+format_row("Alice", 30, "admin", "eng")
+""")
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 1
+        assert "4 params" in findings[0].message
+        assert findings[0].severity == Severity.MEDIUM
+
+    def test_detects_single_object_args(self, trees):
+        """All args from one object = decomposing a data structure."""
+        t = trees.code("""\
+def format_row(name, cpu, mem):
+    pass
+
+format_row(svc.name, svc.cpu, svc.mem)
+""")
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 1
+        assert "all args from 'svc'" in findings[0].message
+        assert findings[0].severity == Severity.MEDIUM
+
+    def test_no_single_object_for_mixed_sources(self, trees):
+        """Args from different objects shouldn't trigger single-object hint."""
+        t = trees.code("""\
+def process(name, count):
+    pass
+
+process(svc.name, config.count)
+""")
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 1
+        assert "all args from" not in findings[0].message
+        assert findings[0].severity == Severity.LOW
 
     def test_ignores_multiple_callers(self, trees):
         t = trees.code("""\

@@ -166,6 +166,10 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
 
     Functions with 5+ statements are skipped — those were likely extracted
     for readability, not by accident.
+
+    Severity is bumped to MEDIUM when the function has many parameters (4+)
+    or when all arguments come from a single object (decomposing then
+    recomposing a data structure).
     """
     findings = []
     func_defs = build_function_index(all_trees)
@@ -189,17 +193,43 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             continue
 
         call = calls[0]
+        call_node = call["node"]
+
+        # Count non-self/cls params
+        param_count = 0
+        if func_node:
+            param_count = len(
+                [a for a in func_node.args.args if a.arg not in ("self", "cls")]
+            )
+
+        # Detect when all args come from a single object
+        single_source = _args_from_single_object(call_node)
+
+        # Bump severity when heuristics suggest a bad extraction
+        severity = Severity.LOW
+        if param_count >= 4 or single_source:
+            severity = Severity.MEDIUM
+
+        # Build message with context for triage
+        parts = [f"{func_name}()"]
+        if param_count > 0:
+            parts.append(f"has {param_count} params and")
+        parts.append(
+            f"exactly 1 call site "
+            f"({call['file'].split('/')[-1]}:{call['line']})"
+        )
+        if single_source:
+            parts.append(f"— all args from '{single_source}'")
+        parts.append("— consider inlining")
+        msg = " ".join(parts)
+
         findings.append(
             Finding(
                 file=def_file,
                 line=defs[0]["line"],
                 check="single-call-site",
-                message=(
-                    f"{func_name}() has exactly 1 call site "
-                    f"({call['file'].split('/')[-1]}:{call['line']}) — "
-                    f"consider inlining"
-                ),
-                severity=Severity.LOW,
+                message=msg,
+                severity=severity,
             )
         )
 
@@ -343,3 +373,36 @@ def _get_arg_value(call_node: ast.Call, param_idx: int, param_name: str) -> str 
 
     # Parameter not passed at all (uses default) — not a constant-args case
     return None
+
+
+def _args_from_single_object(call_node: ast.Call) -> str | None:
+    """Check if all call arguments are attributes of a single object.
+
+    Returns the object name (e.g. 'svc') when all args are like
+    svc.field1, svc.field2 — a sign that the function is just
+    decomposing a data structure.  Returns None otherwise.
+    """
+    sources: list[str] = []
+    for arg in call_node.args:
+        if isinstance(arg, ast.Starred):
+            return None
+        if isinstance(arg, ast.Attribute):
+            sources.append(ast.dump(arg.value))
+        else:
+            return None
+    for kw in call_node.keywords:
+        if kw.arg is None:  # **kwargs
+            return None
+        if isinstance(kw.value, ast.Attribute):
+            sources.append(ast.dump(kw.value.value))
+        else:
+            return None
+
+    if len(sources) < 2 or len(set(sources)) != 1:
+        return None
+
+    # Extract a readable name for the message
+    first = call_node.args[0] if call_node.args else call_node.keywords[0].value
+    if isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name):
+        return first.value.id
+    return "one object"
