@@ -48,11 +48,7 @@ that require cross-file analysis.
 
 
 def _get_version() -> str:
-    """Get version from package metadata, falling back to git describe."""
-    try:
-        return version("pysmelly")
-    except PackageNotFoundError:
-        pass
+    """Get version from git describe (live), falling back to package metadata."""
     try:
         result = subprocess.run(
             ["git", "describe", "--tags", "--always"],
@@ -62,6 +58,10 @@ def _get_version() -> str:
         )
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    try:
+        return version("pysmelly")
+    except PackageNotFoundError:
         return "unknown"
 
 
