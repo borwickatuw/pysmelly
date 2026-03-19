@@ -69,3 +69,8 @@ Checks identified from running pysmelly on a real production codebase.
 
 - [x] **`pass-through-params`** — Parameters that a function receives but only forwards to other known functions in the codebase. The intermediary's signature is vestigial — the caller should pass directly to the consumer, or a context/config object should be used. Caller-aware check in `callers.py`.
 - [x] **`param-clumps`** — Groups of 3+ parameters appearing together in 3+ function signatures. Strong signal for "extract a dataclass." Broader than `build_function_index` (includes methods, private, decorated functions). Filters noise params (verbose, debug, etc.). Structural check in `structure.py`.
+
+## Phase 6: Stdlib Alternatives
+
+- [x] **`stdlib-alternatives`** — Shipped TOML catalog (`catalog.toml`) of 22 patterns across four categories: unconditional alternatives (urllib, xml.minidom, configparser, xmlrpc, ftplib), conditional "already using the better thing" (os.path+pathlib, unittest+pytest, logging+structlog, sqlite3+sqlalchemy, threading+concurrent.futures), deprecated stdlib removed in 3.12/3.13 (cgi, imp, distutils, telnetlib, nntplib), and deprecated third-party (pkg_resources, nose, mock, six). One finding per catalog pattern (aggregated across files). LOW severity.
+- [x] **`condition_fn` support** — Catalog entries can name a Python-side function for AST-level condition checking. Used by `argparse-to-click` to only flag complex argparse usage (subcommands, mutually exclusive groups, or 5+ arguments).

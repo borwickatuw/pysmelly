@@ -2,7 +2,7 @@
 
 ## Current State
 
-17 checks, zero dependencies, installable via `uvx`. 145 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
+18 checks (including `stdlib-alternatives`), zero dependencies, installable via `uvx`. 186 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
 
 ## Other potential checks
 
