@@ -1,6 +1,8 @@
 """Output formatting for findings."""
 
-from pysmelly.registry import Finding
+from pysmelly.registry import Finding, Severity
+
+_SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}
 
 
 def format_text(
@@ -26,7 +28,11 @@ def format_text(
         by_check.setdefault(f.check, []).append(f)
 
     if summary:
-        for check_name, check_findings in by_check.items():
+        sorted_checks = sorted(
+            by_check.items(),
+            key=lambda item: (_SEVERITY_ORDER[item[1][0].severity], -len(item[1])),
+        )
+        for check_name, check_findings in sorted_checks:
             severity = check_findings[0].severity.value
             lines.append(f"  {check_name:<30} [{severity:<6}]  {len(check_findings)}")
         lines.append("")
