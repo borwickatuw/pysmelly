@@ -1,0 +1,63 @@
+[project]
+name = "pysmelly"
+dynamic = ["version"]
+description = "AST-based Python code smell detector for AI-assisted code review"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "John Borwick", email = "borwick@uw.edu" }]
+keywords = ["python", "lint", "code-smell", "ast", "refactoring", "code-review"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.scripts]
+pysmelly = "pysmelly.cli:main"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pysmelly"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pysmelly"]
+
+[dependency-groups]
+dev = [
+    "black>=24.0",
+    "isort>=5.13",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.uv]
+default-groups = ["dev", "test"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
