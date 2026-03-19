@@ -195,6 +195,21 @@ if __name__ == "__main__":
         findings = check_single_call_site(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_long_functions(self, trees):
+        """Functions with 5+ statements were extracted for readability."""
+        t = trees.code("""\
+def setup_logging():
+    logger = get_logger()
+    logger.setLevel(DEBUG)
+    handler = StreamHandler()
+    handler.setFormatter(Formatter("%(message)s"))
+    logger.addHandler(handler)
+
+setup_logging()
+""")
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 0
+
 
 class TestInternalOnly:
     def test_finds_internal_only_function(self, trees):

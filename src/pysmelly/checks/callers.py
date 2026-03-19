@@ -158,12 +158,17 @@ def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Fi
 @check(
     "single-call-site",
     severity=Severity.LOW,
-    description="Public functions called exactly once (inline candidate)",
+    description="Short functions called exactly once (inline candidate)",
 )
 def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
-    """Find public functions called exactly once (candidate for inlining)."""
+    """Find short public functions called exactly once (candidate for inlining).
+
+    Functions with 5+ statements are skipped — those were likely extracted
+    for readability, not by accident.
+    """
     findings = []
     func_defs = build_function_index(all_trees)
+    max_body_stmts = 4
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
@@ -175,6 +180,11 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             continue
 
         if is_imported_elsewhere(func_name, def_file, all_trees):
+            continue
+
+        # Skip functions with 5+ statements — extracted for readability
+        func_node = _find_func_node(all_trees, func_name)
+        if func_node and len(func_node.body) > max_body_stmts:
             continue
 
         call = calls[0]
