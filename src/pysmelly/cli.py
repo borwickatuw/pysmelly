@@ -1,6 +1,6 @@
 """CLI entry point for pysmelly."""
 
-import argparse
+import argparse  # pysmelly: ignore[stdlib-alternatives] — zero-dependency design
 import fnmatch
 import os
 import subprocess

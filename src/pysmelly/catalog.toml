@@ -1,3 +1,7 @@
+# =============================================================================
+# Unconditional — better alternatives exist
+# =============================================================================
+
 [[patterns]]
 name = "urllib-to-requests"
 description = "HTTP client"
@@ -5,11 +9,10 @@ imports = ["urllib.request", "http.client"]
 suggest = "requests or httpx"
 
 [[patterns]]
-name = "os-path-vs-pathlib"
-description = "path manipulation"
-imports = ["os.path"]
-condition = "also-imports:pathlib"
-suggest = "pathlib (already used in codebase)"
+name = "argparse-to-click"
+description = "CLI argument parsing"
+imports = ["argparse"]
+suggest = "click or typer"
 
 [[patterns]]
 name = "xml-minidom"
@@ -22,3 +25,116 @@ name = "configparser-to-toml"
 description = "config file parsing"
 imports = ["configparser"]
 suggest = "tomllib (stdlib) + tomli-w, or pydantic-settings"
+
+[[patterns]]
+name = "xmlrpc-obsolete"
+description = "XML-RPC protocol"
+imports = ["xmlrpc.client", "xmlrpc.server"]
+suggest = "HTTP + JSON via requests/httpx (XML-RPC is effectively dead)"
+
+[[patterns]]
+name = "ftplib-insecure"
+description = "FTP file transfer"
+imports = ["ftplib"]
+suggest = "paramiko (SFTP) or cloud storage SDKs"
+
+# =============================================================================
+# Conditional — already using the better thing in this codebase
+# =============================================================================
+
+[[patterns]]
+name = "os-path-vs-pathlib"
+description = "path manipulation"
+imports = ["os.path"]
+condition = "also-imports:pathlib"
+suggest = "pathlib (already used in codebase)"
+
+[[patterns]]
+name = "unittest-vs-pytest"
+description = "test framework"
+imports = ["unittest"]
+condition = "also-imports:pytest"
+suggest = "pytest (already used in codebase)"
+
+[[patterns]]
+name = "logging-vs-structlog"
+description = "structured logging"
+imports = ["logging"]
+condition = "also-imports:structlog"
+suggest = "structlog (already used in codebase)"
+
+[[patterns]]
+name = "sqlite3-vs-sqlalchemy"
+description = "database access"
+imports = ["sqlite3"]
+condition = "also-imports:sqlalchemy"
+suggest = "sqlalchemy (already used in codebase)"
+
+[[patterns]]
+name = "threading-vs-futures"
+description = "concurrency primitives"
+imports = ["threading", "multiprocessing"]
+condition = "also-imports:concurrent.futures"
+suggest = "concurrent.futures (already used in codebase)"
+
+# =============================================================================
+# Deprecated stdlib — removed in recent Python versions
+# =============================================================================
+
+[[patterns]]
+name = "cgi-removed"
+description = "CGI scripting"
+imports = ["cgi", "cgitb"]
+suggest = "flask, fastapi, or any WSGI/ASGI framework (removed in Python 3.13)"
+
+[[patterns]]
+name = "imp-removed"
+description = "import machinery"
+imports = ["imp"]
+suggest = "importlib (removed in Python 3.12)"
+
+[[patterns]]
+name = "distutils-removed"
+description = "package building"
+imports = ["distutils"]
+suggest = "setuptools or hatchling (removed in Python 3.12)"
+
+[[patterns]]
+name = "telnetlib-removed"
+description = "Telnet client"
+imports = ["telnetlib"]
+suggest = "paramiko or asyncssh (removed in Python 3.13)"
+
+[[patterns]]
+name = "nntplib-removed"
+description = "NNTP client"
+imports = ["nntplib"]
+suggest = "HTTP-based APIs (removed in Python 3.13)"
+
+# =============================================================================
+# Deprecated third-party — superseded or obsolete
+# =============================================================================
+
+[[patterns]]
+name = "pkg-resources-deprecated"
+description = "package metadata"
+imports = ["pkg_resources"]
+suggest = "importlib.metadata + importlib.resources (pkg_resources is deprecated)"
+
+[[patterns]]
+name = "nose-deprecated"
+description = "test runner"
+imports = ["nose"]
+suggest = "pytest (nose is unmaintained)"
+
+[[patterns]]
+name = "mock-standalone"
+description = "test mocking"
+imports = ["mock"]
+suggest = "unittest.mock (stdlib) or pytest-mock"
+
+[[patterns]]
+name = "six-obsolete"
+description = "Python 2/3 compatibility"
+imports = ["six"]
+suggest = "native Python 3 (six is unnecessary on Python 3)"

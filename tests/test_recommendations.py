@@ -78,3 +78,63 @@ class TestStdlibAlternatives:
         findings = check_stdlib_alternatives(t, verbose=False)
         assert len(findings) == 1
         assert "requests or httpx" in findings[0].message
+
+    def test_flags_argparse(self, trees):
+        t = trees.code("import argparse\n")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "argparse" in f.message]
+        assert len(matching) == 1
+        assert "click or typer" in matching[0].message
+
+    def test_flags_deprecated_stdlib(self, trees):
+        t = trees.code("import cgi\n")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "cgi" in f.message]
+        assert len(matching) == 1
+        assert "removed" in matching[0].message.lower()
+
+    def test_flags_deprecated_third_party(self, trees):
+        t = trees.code("import six\n")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "six" in f.message]
+        assert len(matching) == 1
+        assert "Python 3" in matching[0].message
+
+    def test_flags_pkg_resources(self, trees):
+        t = trees.code("from pkg_resources import get_distribution\n")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "pkg_resources" in f.message]
+        assert len(matching) == 1
+        assert "importlib" in matching[0].message
+
+    def test_unittest_conditional_on_pytest(self, trees):
+        """unittest alone is fine; only flag when pytest is also used."""
+        t = trees.code("import unittest\n")
+        findings = check_stdlib_alternatives(t, verbose=False)
+        unittest_findings = [f for f in findings if "unittest" in f.message]
+        assert len(unittest_findings) == 0
+
+    def test_unittest_flagged_with_pytest(self, trees):
+        t = trees.files(
+            {
+                "test_old.py": "import unittest\n",
+                "test_new.py": "import pytest\n",
+            }
+        )
+        findings = check_stdlib_alternatives(t, verbose=False)
+        matching = [f for f in findings if "unittest" in f.message]
+        assert len(matching) == 1
+        assert "pytest" in matching[0].message
+
+    def test_catalog_has_all_categories(self):
+        """Catalog includes unconditional, conditional, deprecated stdlib, and deprecated third-party."""
+        catalog = _load_catalog()
+        names = {e["name"] for e in catalog}
+        # Unconditional
+        assert "argparse-to-click" in names
+        # Conditional
+        assert "unittest-vs-pytest" in names
+        # Deprecated stdlib
+        assert "cgi-removed" in names
+        # Deprecated third-party
+        assert "six-obsolete" in names
