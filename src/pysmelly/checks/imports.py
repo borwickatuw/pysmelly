@@ -6,10 +6,12 @@ from pathlib import Path
 from pysmelly.registry import Finding, Severity, check
 
 
-@check("lazy-imports", severity=Severity.LOW)
-def check_lazy_imports(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "lazy-imports",
+    severity=Severity.LOW,
+    description="Imports inside functions instead of at module level",
+)
+def check_lazy_imports(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find imports inside functions (not at module level).
 
     Function-level imports are occasionally necessary to avoid circular
@@ -29,9 +31,7 @@ def check_lazy_imports(
                                 file=str(filepath),
                                 line=child.lineno,
                                 check="lazy-imports",
-                                message=(
-                                    f"lazy import '{alias.name}' inside {node.name}()"
-                                ),
+                                message=(f"lazy import '{alias.name}' inside {node.name}()"),
                                 severity=Severity.LOW,
                             )
                         )
@@ -54,10 +54,12 @@ def check_lazy_imports(
     return findings
 
 
-@check("compat-shims", severity=Severity.HIGH)
-def check_compat_shims(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "compat-shims",
+    severity=Severity.HIGH,
+    description="try/except ImportError patterns from old Python support",
+)
+def check_compat_shims(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find try/except ImportError patterns (compatibility shims).
 
     These are often left over from supporting older Python versions

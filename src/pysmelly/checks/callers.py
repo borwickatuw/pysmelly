@@ -45,10 +45,12 @@ def _find_function_defaults(tree: ast.Module, filepath: Path) -> list[dict]:
     return results
 
 
-@check("unused-defaults", severity=Severity.HIGH)
-def check_unused_defaults(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "unused-defaults",
+    severity=Severity.HIGH,
+    description="Params defaulting to None that every caller always passes",
+)
+def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find Optional params where every caller always passes a value.
 
     If a parameter defaults to None but no caller ever relies on that
@@ -117,7 +119,9 @@ def check_unused_defaults(
     return findings
 
 
-@check("dead-code", severity=Severity.HIGH)
+@check(
+    "dead-code", severity=Severity.HIGH, description="Public functions with zero callers anywhere"
+)
 def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find public functions with no callers at all.
 
@@ -151,10 +155,12 @@ def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Fi
     return findings
 
 
-@check("single-call-site", severity=Severity.LOW)
-def check_single_call_site(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "single-call-site",
+    severity=Severity.LOW,
+    description="Public functions called exactly once (inline candidate)",
+)
+def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find public functions called exactly once (candidate for inlining)."""
     findings = []
     func_defs = build_function_index(all_trees)
@@ -189,10 +195,12 @@ def check_single_call_site(
     return findings
 
 
-@check("internal-only", severity=Severity.LOW)
-def check_internal_only(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "internal-only",
+    severity=Severity.LOW,
+    description="Public functions only called within their own file",
+)
+def check_internal_only(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find public functions only called within their own file (2+ calls).
 
     These are candidates for renaming to _private.

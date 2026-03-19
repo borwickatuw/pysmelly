@@ -4,29 +4,37 @@ import argparse
 import sys
 from pathlib import Path
 
-from pysmelly.discovery import get_python_files, parse_file
-from pysmelly.output import format_json, format_text
-from pysmelly.registry import CHECKS, Finding
-
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
-
+from pysmelly.discovery import get_python_files, parse_file
+from pysmelly.output import format_json, format_text
+from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding
 
 EPILOG = """\
 pysmelly finds code smells that survive after design changes — vestigial
 patterns that accumulate as code evolves. It performs cross-file call-graph
 analysis to detect patterns that single-file linters miss.
 
+Install:  uvx pysmelly (zero dependencies, no setup required)
+
 Severity levels:
   high    Act on this or explicitly justify keeping it
   medium  Review each finding, fix what makes sense
   low     Informational — skim for surprises
 
+Exit codes:
+  0       No findings
+  1       One or more findings reported
+
 For LLM-assisted code review, use --format=json for structured output.
+Each finding includes file, line, check name, message, and severity
+for programmatic consumption. Use --list-checks to see available checks
+with descriptions.
 
 Complementary tools to run alongside pysmelly:
   vulture     Dead code detection (name-matching, no call graph)
   ruff        Fast single-file linting (style, bugs, complexity)
+  pylint      Broad static analysis and code quality
   mypy        Static type checking
   bandit      Security-focused static analysis
 
@@ -34,6 +42,15 @@ pysmelly does NOT check formatting, types, or security — use the tools
 above for those. pysmelly focuses on design smells and refactoring signals
 that require cross-file analysis.
 """
+
+
+def _print_check_list() -> None:
+    """Print all registered checks with severity and description."""
+    name_width = max(len(name) for name in CHECKS)
+    for name in CHECKS:
+        severity = CHECK_SEVERITY[name].value
+        description = CHECK_DESCRIPTIONS.get(name, "")
+        print(f"  {name:<{name_width}}  [{severity:<6}]  {description}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -72,7 +89,16 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Show additional detail",
     )
+    parser.add_argument(
+        "--list-checks",
+        action="store_true",
+        help="List all available checks with descriptions and exit",
+    )
     args = parser.parse_args(argv)
+
+    if args.list_checks:
+        _print_check_list()
+        return
 
     root = Path(args.target).resolve()
     if not root.is_dir():
@@ -90,9 +116,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.check:
         checks_to_run = {args.check: CHECKS[args.check]}
     else:
-        checks_to_run = {
-            name: fn for name, fn in CHECKS.items() if name not in args.skip
-        }
+        checks_to_run = {name: fn for name, fn in CHECKS.items() if name not in args.skip}
 
     # Run checks
     all_findings: list[Finding] = []

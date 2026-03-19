@@ -32,14 +32,16 @@ CheckFn = Callable[[dict[Path, ast.Module], bool], list[Finding]]
 # Global registry
 CHECKS: dict[str, CheckFn] = {}
 CHECK_SEVERITY: dict[str, Severity] = {}
+CHECK_DESCRIPTIONS: dict[str, str] = {}
 
 
-def check(name: str, severity: Severity = Severity.MEDIUM):
-    """Register a lint check function by name and severity."""
+def check(name: str, severity: Severity = Severity.MEDIUM, description: str = ""):
+    """Register a lint check function by name, severity, and description."""
 
     def decorator(fn: CheckFn) -> CheckFn:
         CHECKS[name] = fn
         CHECK_SEVERITY[name] = severity
+        CHECK_DESCRIPTIONS[name] = description
         return fn
 
     return decorator

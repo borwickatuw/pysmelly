@@ -7,10 +7,12 @@ from pathlib import Path
 from pysmelly.registry import Finding, Severity, check
 
 
-@check("too-many-params", severity=Severity.MEDIUM)
-def check_too_many_params(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "too-many-params",
+    severity=Severity.MEDIUM,
+    description="Functions with 6+ parameters (group into dataclass)",
+)
+def check_too_many_params(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find functions with too many parameters (consider a dataclass)."""
     findings = []
     threshold = 6
@@ -40,10 +42,12 @@ def check_too_many_params(
     return findings
 
 
-@check("duplicate-blocks", severity=Severity.MEDIUM)
-def check_duplicate_blocks(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "duplicate-blocks",
+    severity=Severity.MEDIUM,
+    description="Structurally identical code blocks across functions",
+)
+def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find duplicate code blocks across functions.
 
     Uses AST normalization to match structurally identical code
@@ -107,9 +111,7 @@ def check_duplicate_blocks(
                 file=first["file"],
                 line=first["line_start"],
                 check="duplicate-blocks",
-                message=(
-                    f"{finding_data['num_stmts']} duplicate statements at: {locations_str}"
-                ),
+                message=(f"{finding_data['num_stmts']} duplicate statements at: {locations_str}"),
                 severity=Severity.MEDIUM,
             )
         )

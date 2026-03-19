@@ -65,9 +65,7 @@ def build_function_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[di
     return func_defs
 
 
-def is_imported_elsewhere(
-    func_name: str, def_file: str, all_trees: dict[Path, ast.Module]
-) -> bool:
+def is_imported_elsewhere(func_name: str, def_file: str, all_trees: dict[Path, ast.Module]) -> bool:
     """Check if a function is imported in any other file."""
     for filepath, tree in all_trees.items():
         if str(filepath) == def_file:

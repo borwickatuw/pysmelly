@@ -6,10 +6,12 @@ from pathlib import Path
 from pysmelly.registry import Finding, Severity, check
 
 
-@check("foo-equals-foo", severity=Severity.MEDIUM)
-def check_foo_equals_foo(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "foo-equals-foo",
+    severity=Severity.MEDIUM,
+    description="Calls with many name=name kwargs (bundle into dataclass)",
+)
+def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find constructor calls where many kwargs have name=name pattern.
 
     When a function call has 4+ arguments of the form foo=foo, it suggests
@@ -60,10 +62,12 @@ def check_foo_equals_foo(
     return findings
 
 
-@check("suspicious-fallbacks", severity=Severity.HIGH)
-def check_suspicious_fallbacks(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "suspicious-fallbacks",
+    severity=Severity.HIGH,
+    description="dict.get() with non-trivial defaults on constant dicts",
+)
+def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find .get() on module-level constant dicts with non-trivial defaults.
 
     A default of None/0/False/"" is normal. A non-trivial default suggests
@@ -117,10 +121,12 @@ def check_suspicious_fallbacks(
     return findings
 
 
-@check("temp-accumulators", severity=Severity.MEDIUM)
-def check_temp_accumulators(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+@check(
+    "temp-accumulators",
+    severity=Severity.MEDIUM,
+    description="Lists built by append then joined (use comprehension)",
+)
+def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find temporary lists used only to accumulate and join/check.
 
     Pattern: name = [], then conditional appends, then join() or 'if name:'.
@@ -212,7 +218,11 @@ def _find_siblings_after(tree: ast.Module, target: ast.AST) -> list[ast.AST]:
     return []
 
 
-@check("constant-dispatch-dicts", severity=Severity.MEDIUM)
+@check(
+    "constant-dispatch-dicts",
+    severity=Severity.MEDIUM,
+    description="Module-level string-to-function dispatch tables",
+)
 def check_constant_dispatch_dicts(
     all_trees: dict[Path, ast.Module], verbose: bool
 ) -> list[Finding]:
