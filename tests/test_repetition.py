@@ -73,6 +73,64 @@ class TestScatteredConstants:
         findings = check_scattered_constants(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_migration_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": "max_length = 255",
+                "app/migrations/0001_initial.py": "max_length = 255",
+                "app/migrations/0002_update.py": "max_length = 255",
+                "b.py": "max_length = 255",
+            }
+        )
+        findings = check_scattered_constants(t, verbose=False)
+        # Only a.py and b.py count — 2 files, below threshold
+        assert len(findings) == 0
+
+    def test_non_django_migrations_dir_not_skipped(self, trees):
+        """A 'migrations' dir without numbered files is not skipped."""
+        t = trees.files(
+            {
+                "a.py": 'x = "special"',
+                "b.py": 'x = "special"',
+                "migrations/helpers.py": 'x = "special"',
+            }
+        )
+        findings = check_scattered_constants(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_ignores_common_round_numbers(self, trees):
+        t = trees.files(
+            {
+                "a.py": "limit = 100",
+                "b.py": "limit = 100",
+                "c.py": "limit = 100",
+            }
+        )
+        findings = check_scattered_constants(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_http_headers(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'h = d["Content-Type"]',
+                "b.py": 'h = d["Content-Type"]',
+                "c.py": 'h = d["Content-Type"]',
+            }
+        )
+        findings = check_scattered_constants(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_media_types(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'ct = "application/json"',
+                "b.py": 'ct = "application/json"',
+                "c.py": 'ct = "application/json"',
+            }
+        )
+        findings = check_scattered_constants(t, verbose=False)
+        assert len(findings) == 0
+
     def test_ignores_test_files(self, trees):
         t = trees.files(
             {

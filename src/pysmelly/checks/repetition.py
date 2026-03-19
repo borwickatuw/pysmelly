@@ -11,11 +11,13 @@ TRIVIAL_VALUES = frozenset({None, True, False, 0, 1, -1, 2, 0.0, 1.0, "", b""})
 
 TRIVIAL_STRINGS = frozenset(
     {
+        # Encodings
         "utf-8",
         "utf8",
         "ascii",
         "latin-1",
         "latin1",
+        # HTTP methods
         "GET",
         "POST",
         "PUT",
@@ -23,11 +25,76 @@ TRIVIAL_STRINGS = frozenset(
         "DELETE",
         "HEAD",
         "OPTIONS",
+        # HTTP headers
+        "Content-Type",
+        "content-type",
+        "Content-Length",
+        "content-length",
+        "Authorization",
+        "authorization",
+        "Accept",
+        "accept",
+        "Cache-Control",
+        "cache-control",
+        "ETag",
+        "etag",
+        "Location",
+        "location",
+        "Content-Disposition",
+        "content-disposition",
+        "X-Requested-With",
+        # Common media types
+        "application/json",
+        "application/ld+json",
+        "application/xml",
+        "application/octet-stream",
+        "application/pdf",
+        "text/html",
+        "text/plain",
+        "text/xml",
+        "text/csv",
+        "multipart/form-data",
+        "image/png",
+        "image/jpeg",
     }
 )
 
-TRIVIAL_HTTP_STATUS_CODES = frozenset(
-    {200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 500, 502, 503}
+# Numbers too common to be interesting across files
+TRIVIAL_NUMBERS = frozenset(
+    {
+        # HTTP status codes
+        200,
+        201,
+        204,
+        301,
+        302,
+        304,
+        400,
+        401,
+        403,
+        404,
+        500,
+        502,
+        503,
+        # Common powers of 2 (buffer sizes, field lengths)
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        # Round numbers (pagination, limits)
+        10,
+        100,
+        1000,
+        10000,
+        # Common timeouts/durations in seconds
+        60,
+        300,
+        3600,
+        86400,
+    }
 )
 
 STDLIB_TYPES = frozenset(
@@ -80,6 +147,16 @@ STDLIB_TYPES = frozenset(
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "critical", "exception", "log"})
 
 
+def _is_migration_file(filepath: Path) -> bool:
+    """Check if a file is a Django migration (migrations/0001_*.py pattern)."""
+    parts = filepath.parts
+    for i, part in enumerate(parts):
+        if part == "migrations" and i + 1 < len(parts):
+            # Next part is the filename — Django migrations start with digits
+            return parts[i + 1][:1].isdigit()
+    return False
+
+
 def _is_trivial(value: object) -> bool:
     """Check if a constant value is too common to be interesting."""
     if value in TRIVIAL_VALUES:
@@ -89,7 +166,7 @@ def _is_trivial(value: object) -> bool:
             return True
         if value in TRIVIAL_STRINGS:
             return True
-    if isinstance(value, int) and value in TRIVIAL_HTTP_STATUS_CODES:
+    if isinstance(value, int) and value in TRIVIAL_NUMBERS:
         return True
     return False
 
@@ -178,7 +255,7 @@ def check_scattered_constants(all_trees: dict[Path, ast.Module], verbose: bool) 
     occurrences: dict[tuple[str, str], list[tuple[Path, int]]] = defaultdict(list)
 
     for filepath, tree in all_trees.items():
-        if is_test_file(filepath):
+        if is_test_file(filepath) or _is_migration_file(filepath):
             continue
 
         parents = build_parent_map(tree)
