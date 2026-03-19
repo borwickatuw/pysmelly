@@ -8,7 +8,7 @@ from pathlib import Path
 import pysmelly.checks  # noqa: F401
 from pysmelly.discovery import get_python_files, parse_file
 from pysmelly.output import format_json, format_text
-from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding
+from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding, Severity
 
 EPILOG = """\
 pysmelly finds code smells that survive after design changes — vestigial
@@ -90,6 +90,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Show additional detail",
     )
     parser.add_argument(
+        "--min-severity",
+        choices=["low", "medium", "high"],
+        default="low",
+        help="Minimum severity to report (default: low)",
+    )
+    parser.add_argument(
         "--list-checks",
         action="store_true",
         help="List all available checks with descriptions and exit",
@@ -110,7 +116,8 @@ def main(argv: list[str] | None = None) -> None:
     for f in files:
         tree = parse_file(f)
         if tree:
-            all_trees[f] = tree
+            # Use paths relative to target directory for cleaner output
+            all_trees[f.relative_to(root)] = tree
 
     # Determine which checks to run
     if args.check:
@@ -122,6 +129,11 @@ def main(argv: list[str] | None = None) -> None:
     all_findings: list[Finding] = []
     for name, check_fn in checks_to_run.items():
         all_findings.extend(check_fn(all_trees, args.verbose))
+
+    # Filter by minimum severity
+    severity_order = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2}
+    min_level = severity_order[Severity(args.min_severity)]
+    all_findings = [f for f in all_findings if severity_order[f.severity] >= min_level]
 
     # Output
     if args.format == "json":

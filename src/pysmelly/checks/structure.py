@@ -1,45 +1,10 @@
-"""Structural checks — function signatures, duplicate code blocks."""
+"""Structural checks — duplicate code blocks."""
 
 import ast
 from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.registry import Finding, Severity, check
-
-
-@check(
-    "too-many-params",
-    severity=Severity.MEDIUM,
-    description="Functions with 6+ parameters (group into dataclass)",
-)
-def check_too_many_params(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
-    """Find functions with too many parameters (consider a dataclass)."""
-    findings = []
-    threshold = 6
-
-    for filepath, tree in all_trees.items():
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-
-            params = [a.arg for a in node.args.args if a.arg not in ("self", "cls")]
-            count = len(params)
-
-            if count >= threshold:
-                findings.append(
-                    Finding(
-                        file=str(filepath),
-                        line=node.lineno,
-                        check="too-many-params",
-                        message=(
-                            f"{node.name}() takes {count} parameters — "
-                            f"consider grouping into a dataclass"
-                        ),
-                        severity=Severity.MEDIUM,
-                    )
-                )
-
-    return findings
 
 
 @check(
