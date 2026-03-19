@@ -4,6 +4,7 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+from pysmelly.checks.helpers import is_test_file
 from pysmelly.registry import Finding, Severity, check
 
 NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "log", "quiet"})
@@ -370,17 +371,6 @@ def check_param_clumps(all_trees: dict[Path, ast.Module], verbose: bool) -> list
     return findings
 
 
-def _is_test_file(filepath: Path) -> bool:
-    """Check if a file path looks like a test file."""
-    name = filepath.name
-    if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
-        return True
-    for part in filepath.parts:
-        if part in ("tests", "test"):
-            return True
-    return False
-
-
 def _get_meaningful_params(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> frozenset[str]:
@@ -402,7 +392,7 @@ def _extract_all_signatures(all_trees: dict[Path, ast.Module]) -> list[dict]:
     signatures = []
 
     for filepath, tree in all_trees.items():
-        if _is_test_file(filepath):
+        if is_test_file(filepath):
             continue
 
         file_str = str(filepath)

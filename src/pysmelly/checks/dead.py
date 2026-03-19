@@ -1,0 +1,275 @@
+"""Dead code extension checks — exceptions, dispatch entries, test helpers."""
+
+import ast
+from pathlib import Path
+
+from pysmelly.checks.helpers import (
+    build_exception_index,
+    build_test_function_index,
+    find_calls_to_function,
+    is_caught_anywhere,
+    is_imported_elsewhere,
+    is_in_dunder_all,
+    is_isinstance_target,
+    is_raised_anywhere,
+    is_referenced_as_dotted_string,
+    is_referenced_as_value,
+    is_subclassed,
+    is_test_file,
+)
+from pysmelly.registry import Finding, Severity, check
+
+
+@check(
+    "dead-exceptions",
+    severity=Severity.HIGH,
+    description="Custom exception classes never raised or caught anywhere",
+)
+def check_dead_exceptions(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find custom exception classes never raised, caught, imported, subclassed, or referenced."""
+    findings = []
+    exc_defs = build_exception_index(all_trees)
+
+    for exc_name, defs in exc_defs.items():
+        if len(defs) > 1:
+            continue
+
+        def_file = defs[0]["file"]
+        def_tree = all_trees[Path(def_file)]
+
+        if is_raised_anywhere(exc_name, all_trees):
+            continue
+        if is_caught_anywhere(exc_name, all_trees):
+            continue
+        if is_imported_elsewhere(exc_name, def_file, all_trees):
+            continue
+        if is_subclassed(exc_name, all_trees):
+            continue
+        if is_isinstance_target(exc_name, all_trees):
+            continue
+        if is_referenced_as_value(exc_name, all_trees):
+            continue
+        if is_referenced_as_dotted_string(exc_name, all_trees):
+            continue
+        if is_in_dunder_all(exc_name, def_tree):
+            continue
+
+        findings.append(
+            Finding(
+                file=def_file,
+                line=defs[0]["line"],
+                check="dead-exceptions",
+                message=f"{exc_name} (exception class) has no raise/except references",
+                severity=Severity.HIGH,
+            )
+        )
+
+    return findings
+
+
+def _find_dispatch_dicts(
+    all_trees: dict[Path, ast.Module],
+) -> list[dict]:
+    """Find dispatch dicts: top-level Assign -> Dict with all string keys and Name values, 3+ entries."""
+    min_entries = 3
+    results = []
+    for filepath, tree in all_trees.items():
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not isinstance(node.value, ast.Dict):
+                continue
+            d = node.value
+            if not d.keys:
+                continue
+            if len(d.keys) < min_entries:
+                continue
+            if not all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in d.keys):
+                continue
+            if not all(isinstance(v, ast.Name) for v in d.values):
+                continue
+            # Skip when all values are UPPER_CASE — constants/config, not dispatch
+            if all(v.id.isupper() for v in d.values):  # type: ignore[union-attr]
+                continue
+
+            var_name = None
+            if isinstance(node.targets[0], ast.Name):
+                var_name = node.targets[0].id
+
+            results.append(
+                {
+                    "file": str(filepath),
+                    "filepath": filepath,
+                    "line": node.lineno,
+                    "var_name": var_name,
+                    "dict_node": d,
+                    "assign_node": node,
+                }
+            )
+    return results
+
+
+def _is_dict_passed_or_returned(var_name: str, tree: ast.Module, assign_node: ast.Assign) -> bool:
+    """Check if the dict variable is passed to a function, returned, or assigned to another name."""
+    for node in ast.walk(tree):
+        if node is assign_node:
+            continue
+        # Passed as argument
+        if isinstance(node, ast.Call):
+            for arg in node.args:
+                if isinstance(arg, ast.Name) and arg.id == var_name:
+                    return True
+            for kw in node.keywords:
+                if isinstance(kw.value, ast.Name) and kw.value.id == var_name:
+                    return True
+        # Returned
+        if isinstance(node, ast.Return) and node.value is not None:
+            if isinstance(node.value, ast.Name) and node.value.id == var_name:
+                return True
+        # Assigned to another name
+        if isinstance(node, ast.Assign) and node is not assign_node:
+            if isinstance(node.value, ast.Name) and node.value.id == var_name:
+                return True
+    return False
+
+
+def _count_string_occurrences(
+    key_value: str,
+    all_trees: dict[Path, ast.Module],
+    exclude_file: Path,
+    exclude_lines: set[int],
+) -> int:
+    """Count occurrences of an exact string constant across all files, excluding the dict definition."""
+    count = 0
+    for filepath, tree in all_trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant):
+                continue
+            if not isinstance(node.value, str):
+                continue
+            if node.value != key_value:
+                continue
+            # Exclude the dict definition key lines
+            if filepath == exclude_file and node.lineno in exclude_lines:
+                continue
+            count += 1
+    return count
+
+
+@check(
+    "dead-dispatch-entries",
+    severity=Severity.MEDIUM,
+    description="Dispatch dict entries whose key strings appear nowhere else",
+)
+def check_dead_dispatch_entries(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find entries in dispatch dicts whose key strings appear nowhere else in the codebase."""
+    findings = []
+    dispatch_dicts = _find_dispatch_dicts(all_trees)
+
+    for dd in dispatch_dicts:
+        var_name = dd["var_name"]
+        filepath = dd["filepath"]
+        tree = all_trees[filepath]
+
+        # Suppress if the dict is passed to a function, returned, or reassigned
+        if var_name and _is_dict_passed_or_returned(var_name, tree, dd["assign_node"]):
+            continue
+
+        d = dd["dict_node"]
+        key_lines = {k.lineno for k in d.keys if hasattr(k, "lineno")}
+        for key_node in d.keys:
+            key_value = key_node.value  # type: ignore[union-attr]
+            occurrences = _count_string_occurrences(key_value, all_trees, filepath, key_lines)
+            if occurrences == 0:
+                display_name = var_name or "dict"
+                findings.append(
+                    Finding(
+                        file=dd["file"],
+                        line=dd["line"],
+                        check="dead-dispatch-entries",
+                        message=(
+                            f'{display_name}["{key_value}"] key never appears '
+                            f"as a string elsewhere — dead entry?"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings
+
+
+def _collect_fixture_param_names(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Collect all parameter names from all functions in test files.
+
+    This is the set of "requested" fixture names.
+    """
+    names: set[str] = set()
+    for filepath, tree in all_trees.items():
+        if not is_test_file(filepath):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for arg in node.args.args:
+                if arg.arg not in ("self", "cls"):
+                    names.add(arg.arg)
+            for arg in node.args.kwonlyargs:
+                names.add(arg.arg)
+    return names
+
+
+@check(
+    "orphaned-test-helpers",
+    severity=Severity.MEDIUM,
+    description="Test helper functions and unused fixtures with zero callers",
+)
+def check_orphaned_test_helpers(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+    """Find helper functions and unused fixtures in test files with zero callers."""
+    findings = []
+    test_funcs = build_test_function_index(all_trees)
+    fixture_params = _collect_fixture_param_names(all_trees)
+
+    for func_info in test_funcs:
+        name = func_info["name"]
+        def_file = func_info["file"]
+        is_fixture = func_info["is_fixture"]
+
+        if is_fixture:
+            # Fixtures are "called" by appearing as parameter names
+            if name in fixture_params:
+                continue
+            findings.append(
+                Finding(
+                    file=def_file,
+                    line=func_info["line"],
+                    check="orphaned-test-helpers",
+                    message=(
+                        f"{name} fixture in {Path(def_file).name} "
+                        f"is never requested — unused fixture?"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+        else:
+            # Non-fixture helpers: check calls, imports, value references
+            calls = find_calls_to_function(all_trees, name)
+            if calls:
+                continue
+            if is_imported_elsewhere(name, def_file, all_trees):
+                continue
+            if is_referenced_as_value(name, all_trees):
+                continue
+            findings.append(
+                Finding(
+                    file=def_file,
+                    line=func_info["line"],
+                    check="orphaned-test-helpers",
+                    message=(
+                        f"{name}() in {Path(def_file).name} has no callers "
+                        f"— orphaned test helper?"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings

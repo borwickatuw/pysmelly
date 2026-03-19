@@ -4,6 +4,29 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+_EXCEPTION_BASES = frozenset(
+    {
+        "Exception",
+        "BaseException",
+        "ValueError",
+        "TypeError",
+        "RuntimeError",
+        "KeyError",
+        "AttributeError",
+        "IOError",
+        "OSError",
+        "LookupError",
+        "IndexError",
+        "NotImplementedError",
+        "StopIteration",
+        "ArithmeticError",
+        "PermissionError",
+        "FileNotFoundError",
+        "ConnectionError",
+        "TimeoutError",
+    }
+)
+
 
 def find_calls_to_function(all_trees: dict[Path, ast.Module], func_name: str) -> list[dict]:
     """Find all call sites for a function name across the codebase."""
@@ -197,4 +220,207 @@ def is_referenced_as_value(func_name: str, all_trees: dict[Path, ast.Module]) ->
                 for kw in node.keywords:
                     if _is_name_or_attr(kw.value, func_name):
                         return True
+    return False
+
+
+def is_test_file(filepath: Path) -> bool:
+    """Check if a file path looks like a test file."""
+    name = filepath.name
+    if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
+        return True
+    for part in filepath.parts:
+        if part in ("tests", "test"):
+            return True
+    return False
+
+
+def is_in_dunder_all(name: str, tree: ast.Module) -> bool:
+    """Check if a name is listed in the module's ``__all__``."""
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Name) and target.id == "__all__"):
+                continue
+            if isinstance(node.value, (ast.List, ast.Tuple)):
+                for elt in node.value.elts:
+                    if isinstance(elt, ast.Constant) and elt.value == name:
+                        return True
+    return False
+
+
+def _is_exception_base(name: str) -> bool:
+    """Check if a class name looks like an exception base class."""
+    if name in _EXCEPTION_BASES:
+        return True
+    return name.endswith("Error") or name.endswith("Exception")
+
+
+def build_exception_index(
+    all_trees: dict[Path, ast.Module],
+) -> dict[str, list[dict]]:
+    """Build map of custom exception class definitions across the codebase.
+
+    Returns classes whose bases include known exception types or names
+    ending in Error/Exception.
+    """
+    exc_defs: dict[str, list[dict]] = defaultdict(list)
+    for filepath, tree in all_trees.items():
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not node.bases:
+                continue
+            is_exc = False
+            for base in node.bases:
+                if isinstance(base, ast.Name) and _is_exception_base(base.id):
+                    is_exc = True
+                    break
+                if isinstance(base, ast.Attribute) and _is_exception_base(base.attr):
+                    is_exc = True
+                    break
+            if is_exc:
+                exc_defs[node.name].append({"file": str(filepath), "line": node.lineno})
+    return exc_defs
+
+
+def is_raised_anywhere(exc_name: str, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if an exception class is raised anywhere."""
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Raise):
+                continue
+            if node.exc is None:
+                continue
+            # raise ExcName(...) or raise ExcName
+            exc = node.exc
+            if isinstance(exc, ast.Call):
+                exc = exc.func
+            if isinstance(exc, ast.Name) and exc.id == exc_name:
+                return True
+            if isinstance(exc, ast.Attribute) and exc.attr == exc_name:
+                return True
+    return False
+
+
+def is_caught_anywhere(exc_name: str, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if an exception class is caught in any except handler."""
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if node.type is None:
+                continue
+            # except ExcName:
+            if isinstance(node.type, ast.Name) and node.type.id == exc_name:
+                return True
+            if isinstance(node.type, ast.Attribute) and node.type.attr == exc_name:
+                return True
+            # except (ExcA, ExcB):
+            if isinstance(node.type, ast.Tuple):
+                for elt in node.type.elts:
+                    if isinstance(elt, ast.Name) and elt.id == exc_name:
+                        return True
+                    if isinstance(elt, ast.Attribute) and elt.attr == exc_name:
+                        return True
+    return False
+
+
+def is_subclassed(class_name: str, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if a class is used as a base class anywhere."""
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for base in node.bases:
+                if isinstance(base, ast.Name) and base.id == class_name:
+                    # Don't count the class itself
+                    if node.name != class_name:
+                        return True
+                if isinstance(base, ast.Attribute) and base.attr == class_name:
+                    return True
+    return False
+
+
+def is_isinstance_target(class_name: str, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if a class is used as a target of isinstance() or issubclass()."""
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Name) and node.func.id in ("isinstance", "issubclass")
+            ):
+                continue
+            if len(node.args) < 2:
+                continue
+            target = node.args[1]
+            if isinstance(target, ast.Name) and target.id == class_name:
+                return True
+            if isinstance(target, ast.Tuple):
+                for elt in target.elts:
+                    if isinstance(elt, ast.Name) and elt.id == class_name:
+                        return True
+    return False
+
+
+def build_test_function_index(
+    all_trees: dict[Path, ast.Module],
+) -> list[dict]:
+    """Index non-test functions in test files, noting fixture status.
+
+    Returns a list of dicts with keys: name, file, line, is_fixture.
+    Skips test_ functions, methods, and decorated functions (except @pytest.fixture).
+    """
+    results: list[dict] = []
+    for filepath, tree in all_trees.items():
+        if not is_test_file(filepath):
+            continue
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Skip test functions — pytest runs them
+            if node.name.startswith("test"):
+                continue
+            # Check for pytest.fixture decorator
+            fixture = False
+            other_decorator = False
+            for deco in node.decorator_list:
+                if _is_pytest_fixture(deco):
+                    fixture = True
+                else:
+                    other_decorator = True
+            # Skip decorated non-fixture functions (framework-registered)
+            if other_decorator and not fixture:
+                continue
+            results.append(
+                {
+                    "name": node.name,
+                    "file": str(filepath),
+                    "line": node.lineno,
+                    "is_fixture": fixture,
+                }
+            )
+    return results
+
+
+def _is_pytest_fixture(deco: ast.expr) -> bool:
+    """Check if a decorator is @pytest.fixture or @pytest.fixture(...)."""
+    # @pytest.fixture
+    if (
+        isinstance(deco, ast.Attribute)
+        and deco.attr == "fixture"
+        and isinstance(deco.value, ast.Name)
+        and deco.value.id == "pytest"
+    ):
+        return True
+    # @pytest.fixture(...)
+    if (
+        isinstance(deco, ast.Call)
+        and isinstance(deco.func, ast.Attribute)
+        and deco.func.attr == "fixture"
+        and isinstance(deco.func.value, ast.Name)
+        and deco.func.value.id == "pytest"
+    ):
+        return True
     return False
