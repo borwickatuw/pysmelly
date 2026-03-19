@@ -2,7 +2,9 @@
 
 import argparse
 import os
+import subprocess
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 # Import checks to trigger registration
@@ -43,6 +45,24 @@ pysmelly does NOT check formatting, types, or security — use the tools
 above for those. pysmelly focuses on design smells and refactoring signals
 that require cross-file analysis.
 """
+
+
+def _get_version() -> str:
+    """Get version from package metadata, falling back to git describe."""
+    try:
+        return version("pysmelly")
+    except PackageNotFoundError:
+        pass
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
 
 def _is_suppressed(finding: Finding, source_lines: dict[str, list[str]]) -> bool:
@@ -88,6 +108,7 @@ def main(argv: list[str] | None = None) -> None:
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
     parser.add_argument(
         "targets",
         nargs="*",
