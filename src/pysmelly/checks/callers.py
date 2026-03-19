@@ -11,6 +11,7 @@ from pysmelly.checks.helpers import (
     build_function_index,
     find_calls_to_function,
     is_imported_elsewhere,
+    is_referenced_as_dotted_string,
     is_referenced_as_value,
 )
 from pysmelly.registry import Finding, Severity, check
@@ -126,7 +127,8 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
 def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find public functions with no callers at all.
 
-    Checks direct calls, imports, dict/list references, and callback passing.
+    Checks direct calls, imports, dict/list references, callback passing,
+    and dotted-path string references (e.g., Django settings).
     """
     findings = []
     func_defs = build_function_index(all_trees)
@@ -142,6 +144,7 @@ def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Fi
             not calls
             and not is_imported_elsewhere(func_name, def_file, all_trees)
             and not is_referenced_as_value(func_name, all_trees)
+            and not is_referenced_as_dotted_string(func_name, all_trees)
         ):
             findings.append(
                 Finding(

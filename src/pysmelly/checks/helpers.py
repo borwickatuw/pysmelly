@@ -112,6 +112,25 @@ def is_imported_elsewhere(func_name: str, def_file: str, all_trees: dict[Path, a
     return False
 
 
+def is_referenced_as_dotted_string(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if a function name appears as the final component of a dotted-path string.
+
+    Frameworks like Django reference functions by dotted paths in settings:
+    ``"myapp.context_processors.site_url"`` references ``site_url``.
+    """
+    suffix = f".{func_name}"
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and "." in node.value
+                and node.value.endswith(suffix)
+            ):
+                return True
+    return False
+
+
 def is_referenced_as_value(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
     """Check if a function name appears as a dict value, list element, or argument."""
     for tree in all_trees.values():

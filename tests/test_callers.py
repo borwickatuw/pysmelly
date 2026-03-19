@@ -166,6 +166,44 @@ from lib import helper
         findings = check_dead_code(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_dotted_string_reference(self, trees):
+        """Django context processors, middleware, etc. are referenced by dotted path."""
+        t = trees.files(
+            {
+                "context_processors.py": """\
+def site_url(request):
+    pass
+""",
+                "settings.py": """\
+TEMPLATES = [{"OPTIONS": {"context_processors": ["myapp.context_processors.site_url"]}}]
+""",
+            }
+        )
+        findings = check_dead_code(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_dotted_string_in_same_file(self, trees):
+        """Dotted-path string in the same file also suppresses."""
+        t = trees.code("""\
+def my_middleware(get_response):
+    pass
+
+MIDDLEWARE = ["myapp.middleware.my_middleware"]
+""")
+        findings = check_dead_code(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_plain_string_does_not_suppress(self, trees):
+        """A bare function name in a string (no dots) is not a dotted-path reference."""
+        t = trees.code("""\
+def unused():
+    pass
+
+x = "unused"
+""")
+        findings = check_dead_code(t, verbose=False)
+        assert len(findings) == 1
+
 
 class TestSingleCallSite:
     def test_finds_single_caller(self, trees):
