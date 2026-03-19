@@ -1,0 +1,24 @@
+[[patterns]]
+name = "urllib-to-requests"
+description = "HTTP client"
+imports = ["urllib.request", "http.client"]
+suggest = "requests or httpx"
+
+[[patterns]]
+name = "os-path-vs-pathlib"
+description = "path manipulation"
+imports = ["os.path"]
+condition = "also-imports:pathlib"
+suggest = "pathlib (already used in codebase)"
+
+[[patterns]]
+name = "xml-minidom"
+description = "XML DOM parsing"
+imports = ["xml.dom.minidom"]
+suggest = "xml.etree.ElementTree or lxml"
+
+[[patterns]]
+name = "configparser-to-toml"
+description = "config file parsing"
+imports = ["configparser"]
+suggest = "tomllib (stdlib) + tomli-w, or pydantic-settings"
