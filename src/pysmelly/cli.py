@@ -1,6 +1,7 @@
 """CLI entry point for pysmelly."""
 
 import argparse
+import fnmatch
 import os
 import subprocess
 import sys
@@ -62,6 +63,35 @@ def _get_version() -> str:
         return version("pysmelly")
     except PackageNotFoundError:
         return "unknown"
+
+
+def _is_excluded(rel: Path, patterns: list[str]) -> bool:
+    """Check if a relative path matches any exclude pattern.
+
+    Patterns without / match filenames only (like .gitignore).
+    Patterns with / match the full relative path.
+    Trailing / means "everything under matching directories".
+    """
+    rel_str = str(rel)
+    name = rel.name
+    for pattern in patterns:
+        if "/" in pattern:
+            if pattern.endswith("/"):
+                # Directory pattern: exclude everything under matching dirs
+                dir_pattern = pattern.rstrip("/")
+                for i in range(1, len(rel.parts)):
+                    subpath = str(Path(*rel.parts[:i]))
+                    if fnmatch.fnmatch(subpath, dir_pattern):
+                        return True
+            else:
+                # Full path pattern
+                if fnmatch.fnmatch(rel_str, pattern):
+                    return True
+        else:
+            # Filename-only pattern
+            if fnmatch.fnmatch(name, pattern):
+                return True
+    return False
 
 
 def _is_suppressed(finding: Finding, source_lines: dict[str, list[str]]) -> bool:
@@ -177,7 +207,7 @@ def main(argv: list[str] | None = None) -> None:
         "--exclude",
         action="append",
         default=[],
-        help="Exclude files matching this pattern (can be repeated, e.g. 'test_*')",
+        help="Exclude files matching pattern (repeatable; 'test_*' for names, 'path/to/dir/' for directories)",
     )
     parser.add_argument(
         "--verbose",
@@ -231,7 +261,7 @@ def main(argv: list[str] | None = None) -> None:
     for root in roots:
         for f in get_python_files(root):
             rel = f.relative_to(base)
-            if any(rel.match(pattern) for pattern in args.exclude):
+            if _is_excluded(rel, args.exclude):
                 continue
             tree = parse_file(f)
             if tree:

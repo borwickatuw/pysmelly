@@ -96,6 +96,36 @@ used()
         assert "Parsed 1 Python files" in output
         assert "test_app" not in output
 
+    def test_exclude_directory_pattern(self, tmp_path, capsys):
+        """--exclude with trailing / excludes entire directories."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "app.py").write_text("def unused_func():\n    pass\n")
+        lam = tmp_path / "modules" / "auth" / "lambda"
+        lam.mkdir(parents=True)
+        (lam / "handler.py").write_text("def lambda_handler():\n    pass\n")
+        try:
+            main(["--no-context", "--exclude", "modules/*/lambda/", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        assert "Parsed 1 Python files" in output
+        assert "handler" not in output
+
+    def test_exclude_path_glob(self, tmp_path, capsys):
+        """--exclude with / in pattern matches full relative path."""
+        sub = tmp_path / "vendor" / "lib"
+        sub.mkdir(parents=True)
+        (sub / "mod.py").write_text("def vendored():\n    pass\n")
+        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
+        try:
+            main(["--no-context", "--exclude", "vendor/lib/*.py", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        assert "Parsed 1 Python files" in output
+        assert "vendored" not in output
+
     def test_multiple_targets(self, tmp_path, capsys):
         """Multiple target directories are analyzed together."""
         dir_a = tmp_path / "a"
