@@ -7,14 +7,14 @@ from pysmelly.registry import Finding, Severity
 _SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}
 
 _TAGLINES = [
-    "Whoever smelt it, committed it.",
-    "I love the smell of refactoring in the morning.",
-    "I smell dead code.",
-    "Something is rotten in the state of your codebase.",
-    "Houston, we have a code smell.",
-    "You can't handle the smell!",
-    "This code doesn't pass the smell test.",
-    "Follow your nose -- it always knows the code that smells.",
+    ("Whoever smelt it, committed it.", None),
+    ("I love the smell of refactoring in the morning.", "Apocalypse Now"),
+    ("I smell dead code.", "The Sixth Sense"),
+    ("Something is rotten in the state of your codebase.", "Hamlet"),
+    ("Houston, we have a code smell.", "Apollo 13"),
+    ("You can't handle the smell!", "A Few Good Men"),
+    ("This code doesn't pass the smell test.", None),
+    ("Follow your nose -- it always knows the code that smells.", "Toucan Sam"),
 ]
 
 
@@ -61,6 +61,8 @@ def format_text(
     else:
         lines.append("All checks passed.")
 
-    lines.append(f"\n  -- {random.choice(_TAGLINES)}")
+    quote, source = random.choice(_TAGLINES)
+    attribution = f" ({source})" if source else ""
+    lines.append(f"\n  -- {quote}{attribution}")
 
     return "\n".join(lines)
