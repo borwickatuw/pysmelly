@@ -164,8 +164,10 @@ def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Fi
 def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
     """Find short public functions called exactly once (candidate for inlining).
 
-    Functions with 5+ statements are skipped — those were likely extracted
-    for readability, not by accident.
+    Filters:
+    - Functions with 5+ top-level statements are skipped
+    - Functions spanning 30+ lines are skipped
+    - Cross-directory calls are suppressed (public API boundaries)
 
     Severity is bumped to MEDIUM when the function has many parameters (4+)
     or when all arguments come from a single object (decomposing then
@@ -174,6 +176,7 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
     findings = []
     func_defs = build_function_index(all_trees)
     max_body_stmts = 4
+    max_body_lines = 30
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
@@ -187,12 +190,25 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
         if is_imported_elsewhere(func_name, def_file, all_trees):
             continue
 
-        # Skip functions with 5+ statements — extracted for readability
         func_node = _find_func_node(all_trees, func_name)
+
+        # Skip functions with 5+ statements — extracted for readability
         if func_node and len(func_node.body) > max_body_stmts:
             continue
 
+        # Skip functions spanning 30+ lines — too large to inline
+        if func_node and hasattr(func_node, "end_lineno") and func_node.end_lineno:
+            if func_node.end_lineno - func_node.lineno + 1 > max_body_lines:
+                continue
+
         call = calls[0]
+
+        # Skip cross-directory calls — these are public API boundaries
+        def_dir = str(Path(def_file).parent)
+        call_dir = str(Path(call["file"]).parent)
+        if def_dir != call_dir:
+            continue
+
         call_node = call["node"]
 
         # Count non-self/cls params

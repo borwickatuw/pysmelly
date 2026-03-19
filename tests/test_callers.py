@@ -229,6 +229,56 @@ process(svc.name, config.count)
         assert "all args from" not in findings[0].message
         assert findings[0].severity == Severity.LOW
 
+    def test_ignores_cross_directory_calls(self, trees):
+        """Cross-directory calls are public API boundaries, not inline candidates."""
+        t = trees.files(
+            {
+                "src/deployer/aws/rds.py": """\
+def stop():
+    pass
+""",
+                "bin/manage_rds.py": """\
+from deployer.aws.rds import stop
+stop()
+""",
+            }
+        )
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_finds_same_directory_calls(self, trees):
+        """Same-directory calls are genuine inline candidates."""
+        t = trees.files(
+            {
+                "src/deployer/helpers.py": """\
+def format_row():
+    pass
+""",
+                "src/deployer/status.py": """\
+import helpers
+helpers.format_row()
+""",
+            }
+        )
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_ignores_long_functions_by_line_count(self, trees):
+        """Functions spanning 30+ lines should be skipped even with few statements."""
+        # 3 top-level statements but many lines (nested logic)
+        body_lines = "\n".join(f"        x = {i}" for i in range(28))
+        code = f"""\
+def wait_for_task():
+    while True:
+{body_lines}
+        break
+
+wait_for_task()
+"""
+        t = trees.code(code)
+        findings = check_single_call_site(t, verbose=False)
+        assert len(findings) == 0
+
     def test_ignores_multiple_callers(self, trees):
         t = trees.code("""\
 def helper():
