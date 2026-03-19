@@ -142,10 +142,10 @@ def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> li
 @check(
     "suspicious-fallbacks",
     severity=Severity.HIGH,
-    description="dict.get() with non-trivial defaults on constant dicts",
+    description="dict.get()/setdefault() with non-trivial defaults on constant dicts",
 )
 def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
-    """Find .get() on module-level constant dicts with non-trivial defaults.
+    """Find .get()/.setdefault() on module-level constant dicts with non-trivial defaults.
 
     A default of None/0/False/"" is normal. A non-trivial default suggests
     the caller expects a miss — which may mean the constant dict is incomplete
@@ -169,7 +169,7 @@ def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool)
                 continue
             if not isinstance(node.func, ast.Attribute):
                 continue
-            if node.func.attr != "get":
+            if node.func.attr not in ("get", "setdefault"):
                 continue
             if not isinstance(node.func.value, ast.Name):
                 continue
@@ -182,13 +182,14 @@ def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool)
             if isinstance(default, ast.Constant) and default.value in (None, 0, False, ""):
                 continue
 
+            method = node.func.attr
             findings.append(
                 Finding(
                     file=str(filepath),
                     line=node.lineno,
                     check="suspicious-fallbacks",
                     message=(
-                        f"{node.func.value.id}.get() has a non-trivial fallback default — "
+                        f"{node.func.value.id}.{method}() has a non-trivial fallback default — "
                         f"if the key should always exist, use [] indexing and fail fast"
                     ),
                     severity=Severity.HIGH,

@@ -131,6 +131,26 @@ x = colors.get("green", "#000")
         findings = check_suspicious_fallbacks(t, verbose=False)
         assert len(findings) == 0
 
+    def test_finds_setdefault_nontrivial(self, trees):
+        t = trees.code("""\
+COLORS = {"red": "#f00", "blue": "#00f"}
+
+x = COLORS.setdefault("green", "#000")
+""")
+        findings = check_suspicious_fallbacks(t, verbose=False)
+        assert len(findings) == 1
+        assert "setdefault()" in findings[0].message
+        assert "non-trivial fallback" in findings[0].message
+
+    def test_ignores_setdefault_none(self, trees):
+        t = trees.code("""\
+COLORS = {"red": "#f00"}
+
+x = COLORS.setdefault("green", None)
+""")
+        findings = check_suspicious_fallbacks(t, verbose=False)
+        assert len(findings) == 0
+
 
 class TestTempAccumulators:
     def test_finds_append_then_join(self, trees):
