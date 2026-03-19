@@ -38,8 +38,14 @@ pysmelly --diff HEAD
 # Exclude test files
 pysmelly --exclude 'test_*' --exclude 'tests/'
 
+# Summary counts by check (no individual findings)
+pysmelly --summary
+
 # Verbose output
 pysmelly -v
+
+# Set up AI review guidance for a project
+pysmelly init
 ```
 
 ## Checks
@@ -105,7 +111,18 @@ pysmelly focuses on the gap: **cross-file call-graph analysis** and **design-lev
 
 ## Using with Claude Code
 
-pysmelly is designed to work well as a code review tool invoked by Claude Code or similar AI assistants:
+### Setup
+
+Run `pysmelly init` in your project to set up AI review guidance:
+
+```bash
+pysmelly init                    # creates PYSMELLY.md + adds reference to CLAUDE.md
+pysmelly init docs/PYSMELLY.md   # custom path for the guidance file
+```
+
+This creates a guidance file that tells Claude Code what pysmelly is, how to run it, and — critically — how to interpret findings without dismissing them. Re-running `pysmelly init` safely overwrites the guidance file without duplicating the CLAUDE.md reference.
+
+### Review workflow
 
 ```bash
 pysmelly src/
