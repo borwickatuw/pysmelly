@@ -165,23 +165,36 @@ def is_used_as_decorator(func_name: str, all_trees: dict[Path, ast.Module]) -> b
     return False
 
 
+def _is_name_or_attr(node: ast.expr, name: str) -> bool:
+    """Check if a node is a reference to ``name`` (bare or via attribute access).
+
+    Matches ``func_name`` (ast.Name) and ``obj.func_name`` (ast.Attribute),
+    e.g. ``views.home`` in Django URL confs.
+    """
+    if isinstance(node, ast.Name) and node.id == name:
+        return True
+    if isinstance(node, ast.Attribute) and node.attr == name:
+        return True
+    return False
+
+
 def is_referenced_as_value(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
     """Check if a function name appears as a dict value, list element, or argument."""
     for tree in all_trees.values():
         for node in ast.walk(tree):
             if isinstance(node, ast.Dict):
                 for val in node.values:
-                    if isinstance(val, ast.Name) and val.id == func_name:
+                    if val is not None and _is_name_or_attr(val, func_name):
                         return True
             if isinstance(node, (ast.List, ast.Tuple)):
                 for elt in node.elts:
-                    if isinstance(elt, ast.Name) and elt.id == func_name:
+                    if _is_name_or_attr(elt, func_name):
                         return True
             if isinstance(node, ast.Call):
                 for arg in node.args:
-                    if isinstance(arg, ast.Name) and arg.id == func_name:
+                    if _is_name_or_attr(arg, func_name):
                         return True
                 for kw in node.keywords:
-                    if isinstance(kw.value, ast.Name) and kw.value.id == func_name:
+                    if _is_name_or_attr(kw.value, func_name):
                         return True
     return False

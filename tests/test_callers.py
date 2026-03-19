@@ -236,6 +236,43 @@ x = "unused"
         findings = check_dead_code(t, verbose=False)
         assert len(findings) == 1
 
+    def test_ignores_attribute_reference_in_call(self, trees):
+        """views.func_name in a call (Django URL routing) counts as a reference."""
+        t = trees.files(
+            {
+                "views.py": """\
+def home(request):
+    pass
+""",
+                "urls.py": """\
+from django.urls import path
+from myapp import views
+urlpatterns = [
+    path("", views.home, name="home"),
+]
+""",
+            }
+        )
+        findings = check_dead_code(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_attribute_reference_in_list(self, trees):
+        """obj.func in a list counts as a reference."""
+        t = trees.files(
+            {
+                "handlers.py": """\
+def process():
+    pass
+""",
+                "registry.py": """\
+import handlers
+STEPS = [handlers.process]
+""",
+            }
+        )
+        findings = check_dead_code(t, verbose=False)
+        assert len(findings) == 0
+
 
 class TestSingleCallSite:
     def test_finds_single_caller(self, trees):
