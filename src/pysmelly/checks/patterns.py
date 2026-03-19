@@ -3,6 +3,7 @@
 import ast
 from pathlib import Path
 
+from pysmelly.checks.helpers import find_calls_to_function
 from pysmelly.registry import Finding, Severity, check
 
 
@@ -430,6 +431,52 @@ def check_constant_dispatch_dicts(
     return findings
 
 
+def _is_subclass_method(func_node: ast.AST, subclass_methods: set[int]) -> bool:
+    """Check if a function node is a method in a class with base classes."""
+    return id(func_node) in subclass_methods
+
+
+def _is_self_method_chain(value: ast.expr) -> bool:
+    """Check if the return is self.method(...) — part of a deliberate API chain."""
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id == "self"
+    )
+
+
+def _call_has_complex_args(call_node: ast.Call) -> bool:
+    """Check if a Call's arguments involve real computation (not just pass-throughs).
+
+    Returns True when any argument is more than a simple Name or Constant,
+    indicating the function is doing real mapping/transformation work
+    (e.g., from_dict() with data.get() calls).
+    """
+    for arg in call_node.args:
+        if isinstance(arg, ast.Starred):
+            continue  # *args pass-through
+        if not isinstance(arg, (ast.Name, ast.Constant)):
+            return True
+    for kw in call_node.keywords:
+        if kw.arg is None:
+            continue  # **kwargs pass-through
+        if not isinstance(kw.value, (ast.Name, ast.Constant)):
+            return True
+    return False
+
+
+def _collect_subclass_methods(tree: ast.Module) -> set[int]:
+    """Collect ids of methods defined in classes that have base classes."""
+    methods: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.bases:
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods.add(id(item))
+    return methods
+
+
 @check(
     "trivial-wrappers",
     severity=Severity.LOW,
@@ -440,10 +487,19 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
 
     Functions that just return a dict lookup, attribute access, or single
     function call are candidates for inlining at call sites.
+
+    Suppresses:
+    - Abstract method implementations (constant returns in subclass methods)
+    - Self-method chains (return self.other_method())
+    - Calls with complex args (from_dict doing data.get() mapping)
+    - Multi-caller wrappers (3+ callers = intentional abstraction point)
     """
     findings = []
+    multi_caller_threshold = 3
 
     for filepath, tree in all_trees.items():
+        subclass_methods = _collect_subclass_methods(tree)
+
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -466,8 +522,27 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             if not isinstance(stmt, ast.Return) or stmt.value is None:
                 continue
 
-            desc = _describe_trivial_return(stmt.value)
+            ret_value = stmt.value
+
+            # Suppress: abstract method implementations (constant in subclass method)
+            if _is_subclass_method(node, subclass_methods) and isinstance(ret_value, ast.Constant):
+                continue
+
+            # Suppress: self-method chains (return self.to_dict() etc.)
+            if _is_self_method_chain(ret_value):
+                continue
+
+            # Suppress: calls with complex args (from_dict doing real mapping)
+            if isinstance(ret_value, ast.Call) and _call_has_complex_args(ret_value):
+                continue
+
+            desc = _describe_trivial_return(ret_value)
             if desc is None:
+                continue
+
+            # Suppress: multi-caller wrappers (central point for change)
+            callers = find_calls_to_function(all_trees, node.name)
+            if len(callers) >= multi_caller_threshold:
                 continue
 
             findings.append(

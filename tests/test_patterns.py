@@ -330,6 +330,86 @@ def compute(a, b):
         findings = check_trivial_wrappers(t, verbose=False)
         assert len(findings) == 0
 
+    def test_ignores_abstract_method_impl(self, trees):
+        """Constant return in a subclass method = abstract method implementation."""
+        t = trees.code("""\
+class MyHandler(BaseHandler):
+    def name(self):
+        return "my-handler"
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_flags_constant_return_without_base(self, trees):
+        """Constant return in a class without bases is still flagged."""
+        t = trees.code("""\
+class MyHandler:
+    def name(self):
+        return "my-handler"
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_ignores_self_method_chain(self, trees):
+        """return self.to_dict() is part of a deliberate API chain."""
+        t = trees.code("""\
+class Config:
+    def to_json(self):
+        return self.to_dict()
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_from_dict_with_complex_args(self, trees):
+        """from_dict doing data.get() mapping is real work, not trivial."""
+        t = trees.code("""\
+class Config:
+    @classmethod
+    def from_dict(cls, data):
+        return cls(name=data.get("name", ""), port=data.get("port", 8080))
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_flags_call_with_simple_passthrough(self, trees):
+        """return func(name) with simple Name args is still trivial."""
+        t = trees.code("""\
+def get_data(key):
+    return fetch(key)
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_ignores_multi_caller_wrapper(self, trees):
+        """Wrappers with 3+ callers provide a central point for change."""
+        t = trees.files(
+            {
+                "client.py": """\
+def get_client():
+    return boto3.client("rds")
+""",
+                "a.py": "from client import get_client\nget_client()\n",
+                "b.py": "from client import get_client\nget_client()\n",
+                "c.py": "from client import get_client\nget_client()\n",
+            }
+        )
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_flags_single_caller_wrapper(self, trees):
+        """Wrappers with few callers are still flagged."""
+        t = trees.files(
+            {
+                "client.py": """\
+def get_client():
+    return boto3.client("rds")
+""",
+                "a.py": "from client import get_client\nget_client()\n",
+            }
+        )
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 1
+
 
 class TestEnvFallbacks:
     def test_finds_environ_get_with_default(self, trees):
