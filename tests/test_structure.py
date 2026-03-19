@@ -32,7 +32,10 @@ def func_b(things):
 """)
         findings = check_duplicate_blocks(t, verbose=False)
         assert len(findings) >= 1
-        assert "duplicate statements repeated in these places:" in findings[0].message
+        assert "duplicate statements" in findings[0].message
+        assert "repeated in:" in findings[0].message
+        # Verify line ranges are included
+        assert "lines" in findings[0].message
 
     def test_ignores_short_blocks(self, trees):
         t = trees.code("""\

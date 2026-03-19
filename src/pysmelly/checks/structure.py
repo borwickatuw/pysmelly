@@ -11,7 +11,12 @@ NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "l
 
 
 def _dedup_and_format_locations(
-    items: list[dict], file_key: str, func_key: str, line_key: str, max_display: int = 4
+    items: list[dict],
+    file_key: str,
+    func_key: str,
+    line_key: str,
+    line_end_key: str | None = None,
+    max_display: int = 4,
 ) -> tuple[list[dict], str]:
     """Deduplicate items by (file, func) and format a locations string."""
     seen: set[tuple[str, str]] = set()
@@ -22,10 +27,17 @@ def _dedup_and_format_locations(
             seen.add(key)
             deduped.append(item)
 
-    locations_str = ", ".join(
-        f"{item[file_key].split('/')[-1]}:{item[func_key]}():{item[line_key]}"
-        for item in deduped[:max_display]
-    )
+    parts = []
+    for item in deduped[:max_display]:
+        filename = item[file_key].split("/")[-1]
+        func = item[func_key]
+        line_start = item[line_key]
+        if line_end_key and line_end_key in item:
+            line_end = item[line_end_key]
+            parts.append(f"{filename}:{func}():{line_start}-{line_end}")
+        else:
+            parts.append(f"{filename}:{func}():{line_start}")
+    locations_str = ", ".join(parts)
     if len(deduped) > max_display:
         locations_str += f" (+{len(deduped) - max_display} more)"
 
@@ -81,7 +93,7 @@ def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> 
 
     for finding_data in sorted(best_per_pair.values(), key=lambda f: -f["num_stmts"]):
         deduped, locations_str = _dedup_and_format_locations(
-            finding_data["blocks"], "file", "func", "line_start"
+            finding_data["blocks"], "file", "func", "line_start", line_end_key="line_end"
         )
         first = deduped[0]
         findings.append(
@@ -91,7 +103,8 @@ def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> 
                 check="duplicate-blocks",
                 message=(
                     f"{finding_data['num_stmts']} duplicate statements "
-                    f"repeated in these places: {locations_str}"
+                    f"(lines {first['line_start']}-{first['line_end']}) "
+                    f"repeated in: {locations_str}"
                 ),
                 severity=Severity.MEDIUM,
             )
