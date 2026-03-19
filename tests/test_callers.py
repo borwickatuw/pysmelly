@@ -21,7 +21,31 @@ greet("Bob", title="Mr")
         findings = check_unused_defaults(t, verbose=False)
         assert len(findings) == 1
         assert "title" in findings[0].message
-        assert "defaults to None" in findings[0].message
+        assert "pass a non-None value" in findings[0].message
+
+    def test_ignores_when_callers_pass_variable(self, trees):
+        """Callers pass a variable that could be None at runtime — default is meaningful."""
+        t = trees.code("""\
+def get_run_command(extra_args=None):
+    pass
+
+get_run_command(args.extra_args)
+get_run_command(extra_args=config.args)
+""")
+        findings = check_unused_defaults(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_when_callers_pass_none_literal(self, trees):
+        """Caller explicitly passes None — default is semantically correct."""
+        t = trees.code("""\
+def process(data, fmt=None):
+    pass
+
+process("a", None)
+process("b", "json")
+""")
+        findings = check_unused_defaults(t, verbose=False)
+        assert len(findings) == 0
 
     def test_ignores_when_default_is_used(self, trees):
         t = trees.code("""\
