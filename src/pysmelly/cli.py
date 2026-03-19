@@ -1,6 +1,7 @@
 """CLI entry point for pysmelly."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -61,10 +62,10 @@ def main(argv: list[str] | None = None) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "target",
-        nargs="?",
-        default=".",
-        help="Directory to analyze (default: current directory)",
+        "targets",
+        nargs="*",
+        default=["."],
+        help="Directories to analyze (default: current directory)",
     )
     parser.add_argument(
         "--check",
@@ -112,20 +113,27 @@ def main(argv: list[str] | None = None) -> None:
         _print_check_list()
         return
 
-    root = Path(args.target).resolve()
-    if not root.is_dir():
-        print(f"Error: {root} is not a directory", file=sys.stderr)
-        sys.exit(1)
+    roots = [Path(t).resolve() for t in args.targets]
+    for root in roots:
+        if not root.is_dir():
+            print(f"Error: {root} is not a directory", file=sys.stderr)
+            sys.exit(1)
 
-    files = get_python_files(root)
+    # Common ancestor for relative paths
+    if len(roots) == 1:
+        base = roots[0]
+    else:
+        base = Path(os.path.commonpath(roots))
+
     all_trees = {}
-    for f in files:
-        rel = f.relative_to(root)
-        if any(rel.match(pattern) for pattern in args.exclude):
-            continue
-        tree = parse_file(f)
-        if tree:
-            all_trees[rel] = tree
+    for root in roots:
+        for f in get_python_files(root):
+            rel = f.relative_to(base)
+            if any(rel.match(pattern) for pattern in args.exclude):
+                continue
+            tree = parse_file(f)
+            if tree:
+                all_trees[rel] = tree
 
     # Determine which checks to run
     if args.check:

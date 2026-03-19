@@ -132,6 +132,25 @@ used()
         for f in data["findings"]:
             assert not f["file"].startswith("test_")
 
+    def test_multiple_targets(self, tmp_path, capsys):
+        """Multiple target directories are analyzed together."""
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        (dir_a / "mod_a.py").write_text("def unused_a():\n    pass\n")
+        (dir_b / "mod_b.py").write_text("def unused_b():\n    pass\n")
+        try:
+            main(["--format", "json", str(dir_a), str(dir_b)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        data = json.loads(output)
+        assert data["total_files"] == 2
+        files = {f["file"] for f in data["findings"]}
+        assert any("mod_a" in f for f in files)
+        assert any("mod_b" in f for f in files)
+
     def test_invalid_directory(self, capsys):
         """Non-existent directory prints error and exits 1."""
         try:
