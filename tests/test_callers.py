@@ -695,6 +695,23 @@ outer(1, "test")
         params = {f.message.split("'")[1] for f in findings}
         assert params == {"x", "mode"}
 
+    def test_suppresses_substantial_function_body(self, trees):
+        """Functions with 3+ statements do real work — forwarding is incidental."""
+        t = trees.code("""\
+def get_access_token(request):
+    pass
+
+def get_graph_root(request):
+    token = get_access_token(request)
+    root = GraphRoot(token)
+    root.authenticate()
+    return root
+
+get_graph_root(req)
+""")
+        findings = check_pass_through_params(t, verbose=False)
+        assert len(findings) == 0
+
     def test_param_used_beyond_forwarding(self, trees):
         """Param used in condition + forwarding is not forwarding-only."""
         t = trees.code("""\

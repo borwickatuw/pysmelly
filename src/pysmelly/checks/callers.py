@@ -351,6 +351,25 @@ def check_constant_args(all_trees: dict[Path, ast.Module], verbose: bool) -> lis
     return findings
 
 
+def _count_meaningful_stmts(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    """Count non-trivial top-level statements in a function body.
+
+    Skips docstrings and pass statements.
+    """
+    count = 0
+    for stmt in func_node.body:
+        if (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        ):
+            continue
+        if isinstance(stmt, ast.Pass):
+            continue
+        count += 1
+    return count
+
+
 def _find_func_node(
     all_trees: dict[Path, ast.Module], func_name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
@@ -598,6 +617,10 @@ def check_pass_through_params(all_trees: dict[Path, ast.Module], verbose: bool) 
         # Skip orphan functions — dead-code handles those
         calls = find_calls_to_function(all_trees, func_name)
         if not calls:
+            continue
+
+        # Skip functions with substantial bodies — forwarding is incidental
+        if _count_meaningful_stmts(func_node) > 2:
             continue
 
         classifications = _classify_param_uses(func_node, known_funcs)

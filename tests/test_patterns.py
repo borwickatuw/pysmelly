@@ -50,8 +50,8 @@ def build(name):
         assert "4 are single-use locals" in findings[0].message
         assert "name" not in findings[0].message.split("single-use locals")[1]
 
-    def test_multi_use_locals_are_low_severity(self, trees):
-        """Locals used elsewhere too are less clear-cut — LOW severity."""
+    def test_suppresses_multi_use_locals(self, trees):
+        """Locals used elsewhere too are standard Python style — suppressed."""
         t = trees.code("""\
 def build():
     name = get_name()
@@ -62,8 +62,7 @@ def build():
     return Thing(name=name, age=age, email=email, role=role)
 """)
         findings = check_foo_equals_foo(t, verbose=False)
-        assert len(findings) == 1
-        assert findings[0].severity.value == "low"
+        assert len(findings) == 0
 
     def test_ignores_below_threshold(self, trees):
         t = trees.code("""\
@@ -210,6 +209,38 @@ def build(config):
         assert findings[0].severity.value == "low"
         assert "independent conditions" in findings[0].message
 
+    def test_suppresses_batch_flush_with_reassign(self, trees):
+        """Batch-flush pattern: append + reassign to [] within loop."""
+        t = trees.code("""\
+def process(items):
+    batch = []
+    for item in items:
+        batch.append(item)
+        if len(batch) >= 10:
+            send(batch)
+            batch = []
+    if batch:
+        send(batch)
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_suppresses_batch_flush_with_clear(self, trees):
+        """Batch-flush pattern: append + .clear() within loop."""
+        t = trees.code("""\
+def process(items):
+    batch = []
+    for item in items:
+        batch.append(item)
+        if len(batch) >= 10:
+            send(batch)
+            batch.clear()
+    if batch:
+        send(batch)
+""")
+        findings = check_temp_accumulators(t, verbose=False)
+        assert len(findings) == 0
+
     def test_mixed_loop_and_conditional_is_medium(self, trees):
         """When loop appends are present, stays MEDIUM even with conditionals."""
         t = trees.code("""\
@@ -266,6 +297,30 @@ CONFIG = {
 """)
         findings = check_constant_dispatch_dicts(t, verbose=False)
         assert len(findings) == 0
+
+    def test_ignores_uppercase_constant_values(self, trees):
+        """Dict mapping strings to UPPER_CASE names is config, not dispatch."""
+        t = trees.code("""\
+_o365_settings = {
+    "O365_CLIENTID": O365_CLIENTID,
+    "O365_CLIENTSECRET": O365_CLIENTSECRET,
+    "O365_TENANT_ID": O365_TENANT_ID,
+}
+""")
+        findings = check_constant_dispatch_dicts(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_still_flags_mixed_case_values(self, trees):
+        """Mixed case values (some functions, some constants) still flagged."""
+        t = trees.code("""\
+HANDLERS = {
+    "a": handle_a,
+    "b": FALLBACK,
+    "c": handle_c,
+}
+""")
+        findings = check_constant_dispatch_dicts(t, verbose=False)
+        assert len(findings) == 1
 
 
 class TestTrivialWrappers:
@@ -379,6 +434,27 @@ def get_data(key):
 """)
         findings = check_trivial_wrappers(t, verbose=False)
         assert len(findings) == 1
+
+    def test_ignores_decorated_function(self, trees):
+        """Decorated functions have framework-defined purpose — not trivial."""
+        t = trees.code("""\
+@pytest.fixture
+def client():
+    return Client()
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_property_decorator(self, trees):
+        """@property returns are part of the class API."""
+        t = trees.code("""\
+class Config:
+    @property
+    def name(self):
+        return self._name
+""")
+        findings = check_trivial_wrappers(t, verbose=False)
+        assert len(findings) == 0
 
     def test_ignores_multi_caller_wrapper(self, trees):
         """Wrappers with 3+ callers provide a central point for change."""

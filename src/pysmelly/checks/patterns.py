@@ -114,26 +114,19 @@ def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> li
                     n for n in foo_foo_names if n not in param_names and load_counts.get(n, 0) > 1
                 ]
 
-                # Pure forwarding — not a smell
-                if not single_use and not multi_use:
+                # Only report when there are single-use locals to inline
+                if not single_use:
                     continue
 
-                if single_use:
-                    names_str = ", ".join(single_use[:5])
-                    if len(single_use) > 5:
-                        names_str += "..."
-                    message = (
-                        f"{call_name}() has {len(foo_foo_names)} foo=foo args, "
-                        f"{len(single_use)} are single-use locals "
-                        f"({names_str}) that could be inlined"
-                    )
-                    severity = Severity.MEDIUM
-                else:
-                    message = (
-                        f"{call_name}() has {len(foo_foo_names)} foo=foo args "
-                        f"— consider whether intermediate variables are needed"
-                    )
-                    severity = Severity.LOW
+                names_str = ", ".join(single_use[:5])
+                if len(single_use) > 5:
+                    names_str += "..."
+                message = (
+                    f"{call_name}() has {len(foo_foo_names)} foo=foo args, "
+                    f"{len(single_use)} are single-use locals "
+                    f"({names_str}) that could be inlined"
+                )
+                severity = Severity.MEDIUM
             else:
                 # Module-level call — no function context for classification
                 message = (
@@ -225,6 +218,36 @@ def _has_append_to(node: ast.AST, var_name: str) -> bool:
             and child.func.attr == "append"
         ):
             return True
+    return False
+
+
+def _has_batch_flush_in_loop(siblings: list[ast.AST], var_name: str) -> bool:
+    """Check if any loop body both appends to and resets var_name (batch-flush pattern)."""
+    for sibling in siblings:
+        if not isinstance(sibling, (ast.For, ast.AsyncFor)):
+            continue
+        if not _has_append_to(sibling, var_name):
+            continue
+        for child in ast.walk(sibling):
+            # var_name = []
+            if (
+                isinstance(child, ast.Assign)
+                and len(child.targets) == 1
+                and isinstance(child.targets[0], ast.Name)
+                and child.targets[0].id == var_name
+                and isinstance(child.value, ast.List)
+                and not child.value.elts
+            ):
+                return True
+            # var_name.clear()
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and isinstance(child.func.value, ast.Name)
+                and child.func.value.id == var_name
+                and child.func.attr == "clear"
+            ):
+                return True
     return False
 
 
@@ -322,6 +345,10 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
 
             loop_appends, conditional_appends, bare_appends = _classify_appends(siblings, var_name)
 
+            # Suppress batch-flush pattern: append + reset within same loop
+            if _has_batch_flush_in_loop(siblings, var_name):
+                continue
+
             # A loop body runs N times, so 1 append in a loop is sufficient
             min_appends = 1 if loop_appends > 0 else 2
 
@@ -406,6 +433,10 @@ def check_constant_dispatch_dicts(
             if not all(isinstance(v, ast.Name) for v in d.values):
                 continue
             if len(d.keys) < min_entries:
+                continue
+
+            # Skip when all values are UPPER_CASE — constants/config, not dispatch
+            if all(v.id.isupper() for v in d.values):  # type: ignore[union-attr]
                 continue
 
             if isinstance(node.targets[0], ast.Name):
@@ -504,6 +535,8 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if node.name.startswith("_"):
+                continue
+            if node.decorator_list:
                 continue
 
             # Strip docstring from body
