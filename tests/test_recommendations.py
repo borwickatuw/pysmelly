@@ -173,6 +173,42 @@ group.add_argument("--csv", action="store_true")
         assert len(matching) == 1
         assert "pytest" in matching[0].message
 
+    def test_unittest_mock_not_flagged(self, trees):
+        """unittest.mock is a standalone mocking library, not the test runner."""
+        t = trees.files(
+            {
+                "app.py": "from unittest.mock import patch\n",
+                "test_app.py": "import pytest\n",
+            }
+        )
+        findings = check_stdlib_alternatives(t, verbose=False)
+        unittest_findings = [f for f in findings if "unittest" in f.message]
+        assert len(unittest_findings) == 0
+
+    def test_unittest_mock_import_not_flagged(self, trees):
+        """import unittest.mock should not trigger unittest-vs-pytest."""
+        t = trees.files(
+            {
+                "app.py": "import unittest.mock\n",
+                "test_app.py": "import pytest\n",
+            }
+        )
+        findings = check_stdlib_alternatives(t, verbose=False)
+        unittest_findings = [f for f in findings if "unittest" in f.message]
+        assert len(unittest_findings) == 0
+
+    def test_unittest_flagged_even_with_mock(self, trees):
+        """import unittest (test runner) still flagged alongside unittest.mock."""
+        t = trees.files(
+            {
+                "test_old.py": "import unittest\nfrom unittest.mock import patch\n",
+                "test_new.py": "import pytest\n",
+            }
+        )
+        findings = check_stdlib_alternatives(t, verbose=False)
+        unittest_findings = [f for f in findings if "unittest" in f.message]
+        assert len(unittest_findings) == 1
+
     def test_catalog_has_all_categories(self):
         """Catalog includes unconditional, conditional, deprecated stdlib, and deprecated third-party."""
         catalog = _load_catalog()

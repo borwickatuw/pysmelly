@@ -114,10 +114,15 @@ def check_stdlib_alternatives(all_trees: dict[Path, ast.Module], verbose: bool) 
     findings = []
 
     for pattern in catalog:
+        excludes = pattern.get("exclude_imports", [])
+
         # Collect all (file, line) matches for this pattern's imports
         matches: list[tuple[Path, int]] = []
         for filepath in sorted(all_imports):
             for recorded, lineno in all_imports[filepath]:
+                # Skip excluded imports (e.g., unittest.mock is not unittest)
+                if any(_matches_catalog_import(recorded, exc) for exc in excludes):
+                    continue
                 for catalog_import in pattern["imports"]:
                     if _matches_catalog_import(recorded, catalog_import):
                         matches.append((filepath, lineno))

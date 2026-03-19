@@ -54,6 +54,7 @@ suggest = "pathlib (already used in codebase)"
 name = "unittest-vs-pytest"
 description = "test framework"
 imports = ["unittest"]
+exclude_imports = ["unittest.mock"]
 condition = "also-imports:pytest"
 suggest = "pytest (already used in codebase)"
 
