@@ -74,3 +74,24 @@ Checks identified from running pysmelly on a production codebase.
 
 - [x] **`stdlib-alternatives`** — Shipped TOML catalog (`catalog.toml`) of 22 patterns across four categories: unconditional alternatives (urllib, xml.minidom, configparser, xmlrpc, ftplib), conditional "already using the better thing" (os.path+pathlib, unittest+pytest, logging+structlog, sqlite3+sqlalchemy, threading+concurrent.futures), deprecated stdlib removed in 3.12/3.13 (cgi, imp, distutils, telnetlib, nntplib), and deprecated third-party (pkg_resources, nose, mock, six). One finding per catalog pattern (aggregated across files). LOW severity.
 - [x] **`condition_fn` support** — Catalog entries can name a Python-side function for AST-level condition checking. Used by `argparse-to-click` to only flag complex argparse usage (subcommands, mutually exclusive groups, or 5+ arguments).
+
+## Phase 7: Dead Code Extensions
+
+Three new checks in `checks/dead.py` building on existing dead-code infrastructure.
+
+- [x] **`dead-exceptions`** (HIGH) — Custom exception classes defined but never raised, caught, imported, subclassed, or referenced anywhere. Accumulate after error handling refactors.
+- [x] **`dead-dispatch-entries`** (MEDIUM) — Entries in dispatch dicts whose key strings appear nowhere else in the codebase. Extension of `constant-dispatch-dicts`.
+- [x] **`orphaned-test-helpers`** (MEDIUM) — Utility functions and unused fixtures in test files with zero callers. Pytest fixture detection via parameter name matching.
+
+## Phase 8: Cross-file Repetition
+
+Two new checks in `checks/repetition.py` using collect-group-flag pattern. Moved `build_parent_map` from patterns.py to helpers.py as shared utility.
+
+- [x] **`scattered-constants`** (LOW) — Same literal value in 3+ files in assignment/comparison/subscript contexts. Filters trivial values, docstrings, raise messages, log calls, `__all__` entries. 117 findings on havoc.
+- [x] **`scattered-isinstance`** (MEDIUM) — isinstance/issubclass checks for project-defined types scattered across 3+ non-test files. Skips stdlib types and ambiguously-defined classes. Anchored at class definition.
+
+### Also completed (not in original plan)
+
+- [x] **`--summary` flag** — Shows finding counts per check without individual findings. Sorted by severity (high first), then count descending.
+- [x] **`pysmelly init`** — Creates AI review guidance file (PYSMELLY.md) + CLAUDE.md reference for Claude Code adoption.
+- [x] **`temp-accumulators` consumer naming** — When an accumulator's only consumer is a dict key or attribute assignment, the message names the target (e.g., "only to populate manifest['metadata']").
