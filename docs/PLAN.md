@@ -2,10 +2,10 @@
 
 See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions, [SOMEDAY-MAYBE.md](SOMEDAY-MAYBE.md) for future ideas.
 
-## Candidates for new checks
+## Phase 7: Dead code extensions
 
-Cross-file patterns that no existing tool catches well. All require
-analyzing multiple files together — single-file linters can't do these.
+Builds on existing dead-code infrastructure (function index, call graph,
+cross-file scanning). Three new checks that find different kinds of dead code.
 
 ### dead-exceptions
 
@@ -29,15 +29,20 @@ entries whose key never appears elsewhere. Conservative — only flag when
 lookups use traceable constant strings (keys from external input won't match,
 which is the right default).
 
-### inconsistent-error-handling
+### orphaned-test-helpers
 
-The same function is called from multiple sites, but some catch specific
-exceptions while others catch broad `Exception` or don't handle errors at all.
-Suggests the error contract is unclear or has drifted.
+Utility functions in test files (conftest.py, test helpers) with zero callers.
+Test codebases accumulate dead helpers faster than production code. Vulture
+catches some via name-matching but is imprecise with pytest fixtures.
 
-**AST approach:** For each function with 3+ callers, find the enclosing `Try`
-node at each call site. Compare exception types caught. Flag when callers
-diverge significantly (some catch specific, some catch broad, some don't catch).
+**AST approach:** Build function index for test files. For non-fixture
+functions, check for callers. For `@pytest.fixture` functions, check if the
+fixture name appears as a parameter in any test function across the test suite.
+
+## Phase 8: Cross-file repetition
+
+New "collect, group, flag" pattern — both checks share infrastructure for
+finding repeated values/patterns across files.
 
 ### scattered-constants
 
@@ -60,6 +65,21 @@ the type hierarchy (method dispatch) rather than scattered across consumers.
 Flag project-defined types (those appearing as `ClassDef` in the scanned files)
 checked in 3+ distinct files. Ignore stdlib types.
 
+## Phase 9: Architectural smells
+
+More complex analysis, higher noise risk. Benefits from real-world tuning
+learned in phases 7-8.
+
+### inconsistent-error-handling
+
+The same function is called from multiple sites, but some catch specific
+exceptions while others catch broad `Exception` or don't handle errors at all.
+Suggests the error contract is unclear or has drifted.
+
+**AST approach:** For each function with 3+ callers, find the enclosing `Try`
+node at each call site. Compare exception types caught. Flag when callers
+diverge significantly (some catch specific, some catch broad, some don't catch).
+
 ### shared-mutable-module-state
 
 Module-level mutable variables (lists, dicts, sets) that are both read and
@@ -69,16 +89,6 @@ written from multiple files. "Spooky action at a distance."
 variable name. Search other files for imports of that module + attribute writes
 (`module.var.append(...)`, `module.var[key] = ...`, etc.). Flag variables with
 cross-module mutation.
-
-### orphaned-test-helpers
-
-Utility functions in test files (conftest.py, test helpers) with zero callers.
-Test codebases accumulate dead helpers faster than production code. Vulture
-catches some via name-matching but is imprecise with pytest fixtures.
-
-**AST approach:** Build function index for test files. For non-fixture
-functions, check for callers. For `@pytest.fixture` functions, check if the
-fixture name appears as a parameter in any test function across the test suite.
 
 ### circular-imports
 
