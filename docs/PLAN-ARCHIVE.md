@@ -64,3 +64,8 @@ Checks identified from running pysmelly on a real production codebase.
 
 - [x] **`return-none-instead-of-raise`** — Functions with mixed returns (None + value) where 2+ callers guard against None. The function should raise instead of pushing error handling to every call site. Caller-aware check in `callers.py`.
 - [x] **`duplicate-except-blocks`** — Identical except handlers across files — same exception type, same error messages, same structure. Higher confidence than `duplicate-blocks` by including string literals and exception type in signature. Cross-file only (same-file handled by `duplicate-blocks`). Structural check in `structure.py`.
+
+## Phase 5: Cross-File Parameter Checks
+
+- [x] **`pass-through-params`** — Parameters that a function receives but only forwards to other known functions in the codebase. The intermediary's signature is vestigial — the caller should pass directly to the consumer, or a context/config object should be used. Caller-aware check in `callers.py`.
+- [x] **`param-clumps`** — Groups of 3+ parameters appearing together in 3+ function signatures. Strong signal for "extract a dataclass." Broader than `build_function_index` (includes methods, private, decorated functions). Filters noise params (verbose, debug, etc.). Structural check in `structure.py`.

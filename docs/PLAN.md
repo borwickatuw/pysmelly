@@ -2,23 +2,11 @@
 
 ## Current State
 
-15 checks, zero dependencies, installable via `uvx`. 121 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
-
-## Next up — from deployer real-world feedback
-
-### `pass-through-params` (upgraded)
-
-Parameter received by function A and threaded unchanged through a call chain (A → B → C) with no use in the intermediary. Example: `environment_type` passed through 3 functions unchanged. The intermediary's signature is vestigial — the caller should pass the value directly to the function that uses it.
-
-This was already in the ideas list but the deployer feedback provided concrete examples. Complex to implement (requires tracing params through call graph) and potentially noisy — stretch goal.
+17 checks, zero dependencies, installable via `uvx`. 145 tests passing. See [PLAN-ARCHIVE.md](PLAN-ARCHIVE.md) for completed work, [DECISIONS.md](DECISIONS.md) for design decisions.
 
 ## Other potential checks
 
-| Source | Proposed check |
-|---|---|
-| Refactoring history | **`param-clumps`** — detect groups of 3+ parameters that appear together in multiple function signatures. Strong signal for "extract a dataclass." Cross-file, leverages existing function index. |
-
-Single-file checks (`stdlib-shadow`, `function-level-loggers`, `write-only-variables`, `immediately-overwritten`, `remainder-flags`) deliberately excluded — see [DECISIONS.md](DECISIONS.md). Speculative checks (`parallel-implementations`, `boolean-parameter-smell`, `stale-comments`) moved to [SOMEDAY-MAYBE.md](SOMEDAY-MAYBE.md).
+No cross-file checks currently queued. Single-file checks (`stdlib-shadow`, `function-level-loggers`, `write-only-variables`, `immediately-overwritten`, `remainder-flags`) deliberately excluded — see [DECISIONS.md](DECISIONS.md). Speculative checks (`parallel-implementations`, `boolean-parameter-smell`, `stale-comments`) moved to [SOMEDAY-MAYBE.md](SOMEDAY-MAYBE.md).
 
 ## Better Output for LLMs
 
