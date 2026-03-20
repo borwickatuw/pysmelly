@@ -120,4 +120,24 @@ Added from running pysmelly against the antipatterns corpus and real-world codeb
 - [x] **`temporal-coupling`** (MEDIUM) — Methods reading `self.x` only set by another non-`__init__` method. Architectural check in `architecture.py`.
 - [x] **`feature-envy`** (MEDIUM) — Methods accessing 3+ attributes of another parameter, more than `self`. Architectural check in `architecture.py`.
 - [x] **`anemic-domain`** (MEDIUM) — Classes with 5+ `__init__` attributes but zero non-dunder methods, with cross-file feature-envy evidence. Architectural check in `architecture.py`.
-- [x] **`shotgun-surgery`** (MEDIUM) — Same `obj.attr` accessed in 4+ files. Extensive noise suppression: COMMON_ATTRS skip list, stdlib module filtering, uppercase attribute filtering. Repetition check in `repetition.py`.
+- [x] **`shotgun-surgery`** (MEDIUM) — Same `obj.attr` accessed in 4+ files. Only flags attributes defined in project classes (self.X assignments or annotations) — framework/stdlib attributes are automatically excluded. Repetition check in `repetition.py`.
+
+### Phase 9c: Antipatterns corpus second pass (3 more checks)
+
+- [x] **`late-binding-closures`** (HIGH) — Lambda/closure in loop captures loop variable by reference instead of value. Detects both lambdas and nested function defs; correctly handles default-arg capture pattern (x=x). Pattern check in `patterns.py`.
+- [x] **`law-of-demeter`** (LOW) — Attribute chains 4+ deep (order.user.address.city). Skips fluent API method chains, stdlib module access, and AST/IR node navigation. Pattern check in `patterns.py`.
+- [x] **`god-dict`** (MEDIUM) — Functions returning dict literals with 4+ string keys. Cross-file evidence (callers accessing keys via subscript) enhances the message. Caller-aware check in `callers.py`.
+- [x] **`repeated-string-parsing`** (MEDIUM) — `.split(delim)[N]` patterns in 3+ locations, or same delimiter with 3+ different indices. Detects both direct chaining and intermediate variable patterns. Repetition check in `repetition.py`.
+
+### Phase 9d: Outscience feedback iterations
+
+False-positive reductions based on real-world Django codebase feedback:
+
+- [x] **`plaintext-passwords`** — Removed truthiness checks (`if SECRET_KEY:` is config presence, not secret comparison)
+- [x] **`scattered-constants`** — Removed dict subscript key context (`d["deleted"]` is an API contract)
+- [x] **`compat-shims`** — Skip `manage.py` (Django auto-generated boilerplate)
+- [x] **`getattr-strings`** — Skip `hasattr(self, ...)` (legitimate introspection, Django reverse OneToOneField)
+- [x] **`inconsistent-returns`** — Skip `@wraps`-decorated functions (decorators/middleware legitimately return different types)
+- [x] **`temporal-coupling`** — Treat `setUp`/`setUpClass` as `__init__` for TestCase subclasses
+- [x] **`feature-envy`** — Skip known framework hook methods; skip `request`/`response` params
+- [x] **`shotgun-surgery`** — Rewritten to only flag project-defined attributes (framework/stdlib automatically excluded)
