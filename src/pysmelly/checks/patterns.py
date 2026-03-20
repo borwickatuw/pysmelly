@@ -863,3 +863,260 @@ def _get_env_default(node: ast.Call) -> str | None:
                 return repr(kw.value.value)
             return "..."
     return None
+
+
+# --- fossilized-toggles helpers ---
+
+
+def _collect_module_constants(tree: ast.Module) -> dict[str, tuple[int, object]]:
+    """Find UPPER_CASE module-level names assigned literal values."""
+    constants: dict[str, tuple[int, object]] = {}
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        name = target.id
+        if not name.isupper() or name.startswith("_"):
+            continue
+        if not isinstance(node.value, ast.Constant):
+            continue
+        constants[name] = (node.lineno, node.value.value)
+    return constants
+
+
+def _is_constant_reassigned(tree: ast.Module, name: str, def_lineno: int) -> bool:
+    """Check if a module-level constant is reassigned in the same file.
+
+    Checks module-level Assign/AugAssign/Delete and global+assign inside functions.
+    Class body assignments are not considered reassignments (iter_child_nodes
+    only sees top-level statements).
+    """
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign) and node.lineno != def_lineno:
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    return True
+        if isinstance(node, ast.AugAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                return True
+        if isinstance(node, ast.Delete):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    return True
+
+    # global NAME + assignment inside any function (scope-aware: skip nested scopes)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_global = False
+        has_assign = False
+        todo = list(node.body)
+        while todo:
+            child = todo.pop()
+            if isinstance(child, ast.Global) and name in child.names:
+                has_global = True
+            if isinstance(child, ast.Assign):
+                for t in child.targets:
+                    if isinstance(t, ast.Name) and t.id == name:
+                        has_assign = True
+            if isinstance(child, ast.AugAssign):
+                if isinstance(child.target, ast.Name) and child.target.id == name:
+                    has_assign = True
+            for sub in ast.iter_child_nodes(child):
+                if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    todo.append(sub)
+        if has_global and has_assign:
+            return True
+
+    return False
+
+
+def _function_shadows_toggle(func: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
+    """Check if a function locally shadows a module-level name."""
+    if name in _get_param_names(func):
+        return True
+    has_global = False
+    has_assign = False
+    todo = list(func.body)
+    while todo:
+        child = todo.pop()
+        if isinstance(child, ast.Global) and name in child.names:
+            has_global = True
+        if isinstance(child, ast.Assign):
+            for t in child.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    has_assign = True
+        if isinstance(child, ast.AugAssign):
+            if isinstance(child.target, ast.Name) and child.target.id == name:
+                has_assign = True
+        for sub in ast.iter_child_nodes(child):
+            if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                todo.append(sub)
+    if has_global:
+        return False
+    return has_assign
+
+
+def _evaluate_toggle_condition(test: ast.expr, name: str, const_value: object) -> bool | None:
+    """Evaluate a conditional test given a constant's value.
+
+    Returns the boolean result, or None if the pattern is not recognized.
+    Handles: truthiness, negated truthiness, equality/inequality with literal.
+    """
+    # if FLAG:
+    if isinstance(test, ast.Name) and test.id == name:
+        return bool(const_value)
+
+    # if not FLAG:
+    if (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and isinstance(test.operand, ast.Name)
+        and test.operand.id == name
+    ):
+        return not bool(const_value)
+
+    # CONST == literal / CONST != literal / literal == CONST / literal != CONST
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+        op = test.ops[0]
+        left = test.left
+        right = test.comparators[0]
+
+        if isinstance(left, ast.Name) and left.id == name and isinstance(right, ast.Constant):
+            other_value = right.value
+        elif isinstance(right, ast.Name) and right.id == name and isinstance(left, ast.Constant):
+            other_value = left.value
+        else:
+            return None
+
+        if isinstance(op, ast.Eq):
+            return const_value == other_value
+        if isinstance(op, ast.NotEq):
+            return const_value != other_value
+
+    return None
+
+
+@check(
+    "fossilized-toggles",
+    severity=Severity.MEDIUM,
+    description="Module-level constant makes conditional branches statically determinable",
+)
+def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
+    """Find UPPER_CASE module-level constants that gate conditionals.
+
+    A constant like ENABLE_V2_API = False that is never reassigned makes
+    every ``if ENABLE_V2_API:`` always-False — the guarded branch is
+    permanently dead code.
+    """
+    findings = []
+
+    # Collect non-reassigned constants: {name: {filepath: (lineno, value)}}
+    const_defs: dict[str, dict[Path, tuple[int, object]]] = {}
+    for filepath, tree in ctx.all_trees.items():
+        for name, (lineno, value) in _collect_module_constants(tree).items():
+            if not _is_constant_reassigned(tree, name, lineno):
+                const_defs.setdefault(name, {})[filepath] = (lineno, value)
+
+    if not const_defs:
+        return findings
+
+    # Find conditional uses: {(def_filepath, name): [(use_filepath, lineno, result, kw)]}
+    uses: dict[tuple[Path, str], list[tuple[Path, int, bool, str]]] = {}
+
+    for filepath, tree in ctx.all_trees.items():
+        parents = ctx.parent_map(tree)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                test, keyword = node.test, "if"
+            elif isinstance(node, ast.While):
+                test, keyword = node.test, "while"
+            elif isinstance(node, ast.IfExp):
+                test, keyword = node.test, "ternary"
+            else:
+                continue
+
+            # Extract candidate constant names from the test expression
+            candidate_names: set[str] = set()
+            if isinstance(test, ast.Name):
+                candidate_names.add(test.id)
+            elif (
+                isinstance(test, ast.UnaryOp)
+                and isinstance(test.op, ast.Not)
+                and isinstance(test.operand, ast.Name)
+            ):
+                candidate_names.add(test.operand.id)
+            elif (
+                isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1
+            ):
+                if isinstance(test.left, ast.Name):
+                    candidate_names.add(test.left.id)
+                if isinstance(test.comparators[0], ast.Name):
+                    candidate_names.add(test.comparators[0].id)
+
+            for const_name in candidate_names:
+                if const_name not in const_defs:
+                    continue
+                definitions = const_defs[const_name]
+
+                # Determine which definition this conditional references
+                if filepath in definitions:
+                    def_file = filepath
+                elif len(definitions) == 1:
+                    def_file = next(iter(definitions))
+                else:
+                    continue  # ambiguous cross-file
+
+                value = definitions[def_file][1]
+                result = _evaluate_toggle_condition(test, const_name, value)
+                if result is None:
+                    continue
+
+                # Skip if inside a function that locally shadows the name
+                enclosing = _enclosing_function(node, parents)
+                if enclosing and _function_shadows_toggle(enclosing, const_name):
+                    continue
+
+                uses.setdefault((def_file, const_name), []).append(
+                    (filepath, node.lineno, result, keyword)
+                )
+
+    # Generate findings
+    for (def_filepath, const_name), use_list in uses.items():
+        def_lineno, const_value = const_defs[const_name][def_filepath]
+
+        if len(use_list) == 1:
+            _, use_line, always_val, kw = use_list[0]
+            msg = (
+                f"{const_name} = {const_value!r} is never reassigned — "
+                f"`{kw}` at line {use_line} is always {always_val}"
+            )
+            if not always_val:
+                msg += " (dead branch)"
+        else:
+            all_values = {r for _, _, r, _ in use_list}
+            if len(all_values) == 1:
+                always_str = f"always {next(iter(all_values))}"
+            else:
+                always_str = "statically determinable"
+            msg = (
+                f"{const_name} = {const_value!r} is never reassigned — "
+                f"controls {len(use_list)} conditionals ({always_str})"
+            )
+
+        findings.append(
+            Finding(
+                file=str(def_filepath),
+                line=def_lineno,
+                check="fossilized-toggles",
+                message=msg,
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings

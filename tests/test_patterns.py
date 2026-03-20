@@ -4,6 +4,7 @@ from pysmelly.checks.patterns import (
     check_constant_dispatch_dicts,
     check_env_fallbacks,
     check_foo_equals_foo,
+    check_fossilized_toggles,
     check_runtime_monkey_patch,
     check_suspicious_fallbacks,
     check_temp_accumulators,
@@ -742,4 +743,287 @@ def setup():
     admin.site.get_urls = my_func
 """)
         findings = check_runtime_monkey_patch(t)
+        assert len(findings) == 0
+
+
+class TestFossilizedToggles:
+    # --- positive cases ---
+
+    def test_boolean_false_in_if(self, trees):
+        """if FLAG: where FLAG = False is always False."""
+        t = trees.code("""\
+FLAG = False
+
+if FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "FLAG = False" in findings[0].message
+        assert "always False" in findings[0].message
+        assert "(dead branch)" in findings[0].message
+
+    def test_boolean_true_in_if(self, trees):
+        """if FLAG: where FLAG = True is always True."""
+        t = trees.code("""\
+ENABLED = True
+
+if ENABLED:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "always True" in findings[0].message
+
+    def test_if_not_false(self, trees):
+        """if not FLAG: where FLAG = False evaluates to True."""
+        t = trees.code("""\
+FLAG = False
+
+if not FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "always True" in findings[0].message
+
+    def test_while_loop(self, trees):
+        """while FLAG: where FLAG = False is always False."""
+        t = trees.code("""\
+ENABLED = False
+
+while ENABLED:
+    process()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "`while`" in findings[0].message
+
+    def test_ternary(self, trees):
+        """Ternary (IfExp) with constant condition."""
+        t = trees.code("""\
+DEBUG = False
+
+x = "debug" if DEBUG else "prod"
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "`ternary`" in findings[0].message
+
+    def test_equality_string(self, trees):
+        """if MODE == 'v2': where MODE = 'v1' is always False."""
+        t = trees.code("""\
+MODE = "v1"
+
+if MODE == "v2":
+    use_v2()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "always False" in findings[0].message
+
+    def test_inequality_int(self, trees):
+        """if LEVEL != 0: where LEVEL = 0 is always False."""
+        t = trees.code("""\
+LEVEL = 0
+
+if LEVEL != 0:
+    log_level()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "always False" in findings[0].message
+
+    def test_reversed_comparison(self, trees):
+        """Literal on the left: 'v2' == MODE."""
+        t = trees.code("""\
+MODE = "v1"
+
+if "v2" == MODE:
+    use_v2()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "always False" in findings[0].message
+
+    def test_cross_file(self, trees):
+        """Constant in one file, conditional in another."""
+        t = trees.files(
+            {
+                "config.py": "ENABLE_V2 = False\n",
+                "main.py": """\
+from config import ENABLE_V2
+
+if ENABLE_V2:
+    use_v2()
+""",
+            }
+        )
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert findings[0].file == "config.py"
+
+    def test_multiple_conditionals(self, trees):
+        """Multiple conditionals from one constant get aggregate message."""
+        t = trees.code("""\
+FLAG = False
+
+if FLAG:
+    a()
+if FLAG:
+    b()
+if FLAG:
+    c()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "controls 3 conditionals" in findings[0].message
+        assert "always False" in findings[0].message
+
+    def test_none_constant_truthiness(self, trees):
+        """None constant in truthiness test is always False."""
+        t = trees.code("""\
+HANDLER = None
+
+if HANDLER:
+    HANDLER.process()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+        assert "always False" in findings[0].message
+
+    # --- negative cases ---
+
+    def test_reassigned_same_file(self, trees):
+        """Constant reassigned later — not fossilized."""
+        t = trees.code("""\
+FLAG = False
+FLAG = True
+
+if FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_augmented_assignment(self, trees):
+        """Augmented assignment means it's mutable."""
+        t = trees.code("""\
+COUNT = 0
+COUNT += 1
+
+if COUNT:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_lowercase_ignored(self, trees):
+        """Lowercase names are not treated as constants."""
+        t = trees.code("""\
+flag = False
+
+if flag:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_private_constant_ignored(self, trees):
+        """_PRIVATE constants are skipped."""
+        t = trees.code("""\
+_FLAG = False
+
+if _FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_non_literal_value_ignored(self, trees):
+        """Non-literal values (function calls) are not constants."""
+        t = trees.code("""\
+FLAG = os.environ.get("FLAG", False)
+
+if FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_locally_shadowed_in_function(self, trees):
+        """Function that assigns to the name locally shadows it."""
+        t = trees.code("""\
+FLAG = False
+
+def process():
+    FLAG = compute_flag()
+    if FLAG:
+        do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_used_but_not_in_conditional(self, trees):
+        """Constant used in non-conditional context — no finding."""
+        t = trees.code("""\
+MAX_RETRIES = 3
+
+for i in range(MAX_RETRIES):
+    try_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_compound_boolean_skipped(self, trees):
+        """Compound expressions (if FLAG and other) are skipped."""
+        t = trees.code("""\
+FLAG = False
+
+if FLAG and other_condition():
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_class_body_not_reassignment(self, trees):
+        """Assignment in class body is not a reassignment of module constant."""
+        t = trees.code("""\
+FLAG = False
+
+class Config:
+    FLAG = True
+
+if FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 1
+
+    def test_global_reassignment_excluded(self, trees):
+        """global NAME + assignment inside function means it's mutable."""
+        t = trees.code("""\
+FLAG = False
+
+def toggle():
+    global FLAG
+    FLAG = True
+
+if FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+    def test_del_constant_excluded(self, trees):
+        """del of the constant means it's mutable."""
+        t = trees.code("""\
+FLAG = False
+
+del FLAG
+
+if FLAG:
+    do_something()
+""")
+        findings = check_fossilized_toggles(t)
         assert len(findings) == 0
