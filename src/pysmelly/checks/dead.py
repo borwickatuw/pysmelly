@@ -364,3 +364,89 @@ def check_dead_abstractions(ctx: AnalysisContext) -> list[Finding]:
             )
 
     return findings
+
+
+# --- broken-backends helpers ---
+
+
+def _body_is_raise_not_implemented(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a method body is just `raise NotImplementedError` (with optional docstring)."""
+    stmts = method.body
+    # Strip leading docstring
+    body = stmts
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+
+    if len(body) != 1:
+        return False
+
+    stmt = body[0]
+    if not isinstance(stmt, ast.Raise):
+        return False
+    exc = stmt.exc
+    if exc is None:
+        return False
+    # raise NotImplementedError
+    if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+        return True
+    # raise NotImplementedError(...)
+    if (
+        isinstance(exc, ast.Call)
+        and isinstance(exc.func, ast.Name)
+        and exc.func.id == "NotImplementedError"
+    ):
+        return True
+    return False
+
+
+@check(
+    "broken-backends",
+    severity=Severity.MEDIUM,
+    description="Non-abstract classes where every method raises NotImplementedError",
+)
+def check_broken_backends(ctx: AnalysisContext) -> list[Finding]:
+    """Find classes where all methods raise NotImplementedError but the class isn't abstract."""
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if _is_abstract_class(node):
+                continue
+
+            # Collect non-__init__ methods
+            methods = [
+                item
+                for item in node.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name != "__init__"
+            ]
+
+            if len(methods) < 2:
+                continue
+
+            if all(_body_is_raise_not_implemented(m) for m in methods):
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="broken-backends",
+                        message=(
+                            f"{node.name} has {len(methods)} methods all raising"
+                            f" NotImplementedError but is not abstract"
+                            f" — broken backend or missing ABC base?"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings

@@ -1,6 +1,7 @@
 """Tests for dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers)."""
 
 from pysmelly.checks.dead import (
+    check_broken_backends,
     check_dead_abstractions,
     check_dead_dispatch_entries,
     check_dead_exceptions,
@@ -713,4 +714,123 @@ class RegularClass:
         pass
 """)
         findings = check_dead_abstractions(t)
+        assert len(findings) == 0
+
+
+class TestBrokenBackends:
+    def test_finds_all_not_implemented(self, trees):
+        t = trees.code("""\
+class RedisBackend:
+    def get(self, key):
+        raise NotImplementedError
+
+    def set(self, key, value):
+        raise NotImplementedError
+
+    def delete(self, key):
+        raise NotImplementedError
+
+    def clear(self):
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 1
+        assert "RedisBackend" in findings[0].message
+        assert "4 methods" in findings[0].message
+
+    def test_skips_abc(self, trees):
+        t = trees.code("""\
+from abc import ABC
+
+class Backend(ABC):
+    def get(self, key):
+        raise NotImplementedError
+
+    def set(self, key, value):
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 0
+
+    def test_skips_abstractmethod(self, trees):
+        t = trees.code("""\
+from abc import abstractmethod
+
+class Backend:
+    @abstractmethod
+    def get(self, key):
+        raise NotImplementedError
+
+    def set(self, key, value):
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 0
+
+    def test_skips_one_real_method(self, trees):
+        t = trees.code("""\
+class Backend:
+    def get(self, key):
+        raise NotImplementedError
+
+    def set(self, key, value):
+        raise NotImplementedError
+
+    def ping(self):
+        return True
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 0
+
+    def test_skips_single_method(self, trees):
+        t = trees.code("""\
+class Backend:
+    def get(self, key):
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 0
+
+    def test_init_not_counted(self, trees):
+        t = trees.code("""\
+class Backend:
+    def __init__(self, url):
+        self.url = url
+
+    def get(self, key):
+        raise NotImplementedError
+
+    def set(self, key, value):
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 1
+        assert "2 methods" in findings[0].message
+
+    def test_docstring_plus_raise_still_flagged(self, trees):
+        t = trees.code("""\
+class Backend:
+    def get(self, key):
+        \"\"\"Get a value.\"\"\"
+        raise NotImplementedError
+
+    def set(self, key, value):
+        \"\"\"Set a value.\"\"\"
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
+        assert len(findings) == 1
+
+    def test_skips_abcmeta_metaclass(self, trees):
+        t = trees.code("""\
+from abc import ABCMeta
+
+class Backend(metaclass=ABCMeta):
+    def get(self, key):
+        raise NotImplementedError
+
+    def set(self, key, value):
+        raise NotImplementedError
+""")
+        findings = check_broken_backends(t)
         assert len(findings) == 0
