@@ -136,6 +136,7 @@ CALLER_AWARE_CHECKS = {
     "scattered-constants",
     "scattered-isinstance",
     "inconsistent-error-handling",
+    "shared-mutable-module-state",
 }
 
 
