@@ -89,6 +89,7 @@ pysmelly init
 | `inconsistent-error-handling` | Same function called with divergent error handling across callers. |
 | `shared-mutable-module-state` | Module-level mutable containers mutated from other files at import time. |
 | `orphaned-test-helpers` | Test helper functions and unused fixtures with zero callers. |
+| `shadowed-method` | Diamond inheritance where multiple parents define the same method — MRO silently picks one. |
 
 ### Low severity — informational
 
@@ -100,6 +101,9 @@ pysmelly init
 | `stdlib-alternatives` | Stdlib modules where well-known third-party libraries are better, deprecated stdlib/third-party modules, and mixed stdlib/modern usage in the same codebase. |
 | `scattered-constants` | Same string literal repeated across 3+ files — consider a named constant. |
 | `scattered-isinstance` | Same `isinstance` type-check pattern repeated across 3+ files. |
+| `large-class` | Classes with 20+ methods — review for single responsibility. |
+| `long-function` | Functions spanning 100+ lines — review for decomposition. |
+| `long-elif-chain` | 8+ branch if/elif chains comparing the same variable to literals — consider a dict or enum. |
 
 ## Output
 
