@@ -62,6 +62,7 @@ pysmelly init
 | `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults. Required config should fail fast, not silently fall back. |
 | `unreachable-after-return` | Code after `return`/`raise` or exhaustive `if/else` branches — dead tail code from refactoring. |
 | `plaintext-passwords` | `==`/`!=` comparison on password/secret/token variables — use `hmac.compare_digest()` or hash comparison. |
+| `late-binding-closures` | Lambda/closure in loop captures loop variable by reference — all closures see the final value. |
 
 ### Medium severity — review each, fix what makes sense
 
@@ -98,6 +99,7 @@ pysmelly init
 | `feature-envy` | Methods accessing 3+ attributes of another parameter, more than `self` — logic belongs elsewhere. |
 | `anemic-domain` | Classes with 5+ `__init__` attributes but zero non-dunder methods — data bag with no behavior. |
 | `shotgun-surgery` | Same `obj.attr` accessed in 4+ files — changes to that attribute require updating many files. |
+| `god-dict` | Functions returning dict literals with 4+ string keys — consider a dataclass or NamedTuple. |
 
 ### Low severity — informational
 
@@ -114,6 +116,7 @@ pysmelly init
 | `long-elif-chain` | 8+ branch if/elif chains comparing the same variable to literals — consider a dict or enum. |
 | `arrow-code` | Functions with nesting depth 5+ (if/for/while/try/with pyramid) — consider extracting inner blocks. |
 | `hungarian-notation` | Variables like `strName`, `intCount`, `lstItems` — use snake_case instead. |
+| `law-of-demeter` | Attribute chains 4+ deep (`a.b.c.d`) — reaching through object internals. |
 
 ## Output
 
