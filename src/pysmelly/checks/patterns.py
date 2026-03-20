@@ -2248,6 +2248,15 @@ _AST_NAV_ATTRS = frozenset(
 )
 
 
+def _is_migration_path(filepath: Path) -> bool:
+    """Check if a file is a Django migration (migrations/0001_*.py pattern)."""
+    parts = filepath.parts
+    for i, part in enumerate(parts):
+        if part == "migrations" and i + 1 < len(parts):
+            return parts[i + 1][:1].isdigit()
+    return False
+
+
 @check(
     "law-of-demeter",
     severity=Severity.LOW,
@@ -2261,6 +2270,9 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
     for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath):
             continue
+        # Migration files are auto-generated — fully-qualified paths are expected
+        if _is_migration_path(filepath):
+            continue
 
         # Dedup: only report the deepest chain per line
         line_findings: dict[int, tuple[int, str]] = {}  # line -> (depth, chain_str)
@@ -2270,9 +2282,6 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
                 continue
             if not isinstance(node.ctx, ast.Load):
                 continue
-
-            # Skip if parent is also an Attribute — we'll count from the outermost
-            # (This is handled by only recording the deepest per line)
 
             depth = _chain_length(node)
             if depth < threshold:
@@ -2321,6 +2330,10 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
                 "itertools",
                 "datetime",
             }:
+                continue
+
+            # Skip self.request.* chains — idiomatic in web framework views
+            if root == "self" and "request" in chain_attrs:
                 continue
 
             chain = _chain_str(node)

@@ -225,10 +225,14 @@ def _is_interesting_constant_context(
     node: ast.Constant, parent: ast.AST, grandparent: ast.AST | None
 ) -> bool:
     """Check if a constant is in a context worth flagging (assignment, comparison, etc.)."""
-    # Assignment value (but not __all__)
+    # Assignment value (but not __all__ or default_auto_field)
     if isinstance(parent, (ast.Assign, ast.AnnAssign)):
         if isinstance(parent, ast.Assign) and _is_assignment_to_all(parent):
             return False
+        if isinstance(parent, ast.Assign):
+            for target in parent.targets:
+                if isinstance(target, ast.Name) and target.id == "default_auto_field":
+                    return False
         return True
 
     # List/tuple element inside __all__ assignment
@@ -470,6 +474,7 @@ COMMON_ATTRS = frozenset(
     {
         "name",
         "id",
+        "pk",
         "value",
         "data",
         "key",
