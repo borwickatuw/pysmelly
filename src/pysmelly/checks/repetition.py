@@ -462,3 +462,230 @@ def check_scattered_isinstance(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+# --- shotgun-surgery ---
+
+# Common attribute names that are too generic to be meaningful
+COMMON_ATTRS = frozenset(
+    {
+        "name",
+        "id",
+        "value",
+        "data",
+        "key",
+        "type",
+        "path",
+        "status",
+        "result",
+        "error",
+        "message",
+        "code",
+        "text",
+        "title",
+        "label",
+        "description",
+        "url",
+        "file",
+        "line",
+        "index",
+        "count",
+        "size",
+        "length",
+        "width",
+        "height",
+        "start",
+        "end",
+        "args",
+        "kwargs",
+        "config",
+        "settings",
+        "options",
+        "params",
+        "body",
+        "content",
+        "items",
+        "values",
+        "keys",
+        "fields",
+        "attrs",
+        "info",
+        "meta",
+        "context",
+        "state",
+        "format",
+        "mode",
+        "level",
+        "version",
+        "default",
+        # AST node attributes (very common in AST-walking code)
+        "attr",
+        "func",
+        "lineno",
+        "ctx",
+        "targets",
+        "bases",
+        "keywords",
+        "handlers",
+        "decorator_list",
+        "ops",
+        "left",
+        "right",
+        "operand",
+        "op",
+        "arg",
+        "module",
+        "names",
+        "slice",
+        "elts",
+        "comparators",
+        "orelse",
+        "test",
+        "returns",
+        "parent",
+        # Method-like accesses too generic to be meaningful
+        "append",
+        "extend",
+        "get",
+        "set",
+        "update",
+        "add",
+        "remove",
+        "pop",
+        "clear",
+        "close",
+        "read",
+        "write",
+        "send",
+    }
+)
+
+
+_STDLIB_MODULES = frozenset(
+    {
+        "ast",
+        "os",
+        "sys",
+        "re",
+        "io",
+        "json",
+        "math",
+        "time",
+        "logging",
+        "pathlib",
+        "typing",
+        "collections",
+        "functools",
+        "itertools",
+        "operator",
+        "abc",
+        "enum",
+        "dataclasses",
+        "subprocess",
+        "shutil",
+        "tempfile",
+        "urllib",
+        "http",
+        "socket",
+        "threading",
+        "multiprocessing",
+        "datetime",
+        "hashlib",
+        "hmac",
+        "copy",
+        "inspect",
+        "importlib",
+        "contextlib",
+        "textwrap",
+        "string",
+        "struct",
+        "signal",
+        "asyncio",
+        "unittest",
+        "pytest",
+        "np",
+        "pd",
+        "tf",
+        "torch",
+    }
+)
+
+
+@check(
+    "shotgun-surgery",
+    severity=Severity.MEDIUM,
+    description="Same obj.attr accessed in 4+ files — change propagation risk",
+)
+def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
+    """Find attribute accesses repeated across many files."""
+    findings = []
+    min_files = 4
+
+    # Collect (var_name, attr_name) -> set of (file, line)
+    accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        # Track per-file to dedup
+        seen_in_file: set[tuple[str, str]] = set()
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            if not isinstance(node.ctx, ast.Load):
+                continue
+            if not isinstance(node.value, ast.Name):
+                continue
+
+            var_name = node.value.id
+            attr_name = node.attr
+
+            # Skip self/cls
+            if var_name in ("self", "cls"):
+                continue
+            # Skip private attrs
+            if attr_name.startswith("_"):
+                continue
+            # Skip common attrs
+            if attr_name in COMMON_ATTRS:
+                continue
+            # Skip stdlib module attrs (ast.Name, os.path, etc.)
+            if var_name in _STDLIB_MODULES:
+                continue
+            # Skip uppercase attr access (enum constants: Severity.HIGH)
+            if attr_name[0].isupper():
+                continue
+
+            key = (var_name, attr_name)
+            if key not in seen_in_file:
+                seen_in_file.add(key)
+                file_str = str(filepath)
+                if file_str not in accesses[key]:
+                    accesses[key][file_str] = node.lineno
+
+    for (var_name, attr_name), file_lines in sorted(accesses.items()):
+        if len(file_lines) < min_files:
+            continue
+
+        sorted_files = sorted(file_lines.items())
+        loc_strs = [f"{f}:{line}" for f, line in sorted_files[:5]]
+        if len(sorted_files) > 5:
+            loc_strs.append("...")
+
+        findings.append(
+            Finding(
+                file=sorted_files[0][0],
+                line=sorted_files[0][1],
+                check="shotgun-surgery",
+                message=(
+                    f"{var_name}.{attr_name} accessed in {len(file_lines)}"
+                    f" files ({', '.join(loc_strs)})"
+                    f" — changes to .{attr_name} require updating many files"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings

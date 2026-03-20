@@ -154,6 +154,7 @@ CALLER_AWARE_CHECKS = {
     "inconsistent-error-handling",
     "shared-mutable-module-state",
     "vestigial-params",
+    "shotgun-surgery",
 }
 
 

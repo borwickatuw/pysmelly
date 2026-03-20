@@ -1,6 +1,10 @@
 """Tests for cross-file repetition checks."""
 
-from pysmelly.checks.repetition import check_scattered_constants, check_scattered_isinstance
+from pysmelly.checks.repetition import (
+    check_scattered_constants,
+    check_scattered_isinstance,
+    check_shotgun_surgery,
+)
 from pysmelly.registry import Severity
 
 
@@ -517,3 +521,103 @@ class TestScatteredIsinstance:
         findings = check_scattered_isinstance(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
+
+
+class TestShotgunSurgery:
+    def test_finds_4_file_access(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "config.timeout" in findings[0].message
+        assert "4 files" in findings[0].message
+
+    def test_ignores_3_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_common_attrs(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = obj.name",
+                "b.py": "y = obj.name",
+                "c.py": "z = obj.name",
+                "d.py": "w = obj.name",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_self(self, trees):
+        t = trees.files(
+            {
+                "a.py": """\
+class A:
+    def f(self): return self.timeout
+""",
+                "b.py": """\
+class B:
+    def f(self): return self.timeout
+""",
+                "c.py": """\
+class C:
+    def f(self): return self.timeout
+""",
+                "d.py": """\
+class D:
+    def f(self): return self.timeout
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_private_attrs(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config._timeout",
+                "b.py": "y = config._timeout",
+                "c.py": "z = config._timeout",
+                "d.py": "w = config._timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "tests/test_c.py": "z = config.timeout",
+                "tests/test_d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        # Only 2 non-test files, below threshold
+        assert len(findings) == 0
+
+    def test_different_var_names_not_grouped(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config.timeout",
+                "b.py": "y = settings.timeout",
+                "c.py": "z = opts.timeout",
+                "d.py": "w = params.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
