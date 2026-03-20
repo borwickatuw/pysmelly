@@ -1727,6 +1727,32 @@ strName = "hello"
         findings = check_hungarian_notation(t)
         assert len(findings) == 0
 
+    def test_finds_systems_hungarian(self, trees):
+        """Systems Hungarian: szName, lpBuffer, dwFlags, fnCallback."""
+        t = trees.code("""\
+szName = "hello"
+lpBuffer = bytearray(1024)
+dwFlags = 0x01
+fnCallback = lambda: None
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 4
+        messages = " ".join(f.message for f in findings)
+        assert "szName" in messages
+        assert "lpBuffer" in messages
+        assert "dwFlags" in messages
+        assert "fnCallback" in messages
+
+    def test_finds_systems_hungarian_params(self, trees):
+        t = trees.code("""\
+def process(piTestFunc, cbBytes):
+    pass
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert "piTestFunc" in messages or "cbBytes" in messages
+
 
 class TestInconsistentReturns:
     def test_finds_mixed_returns(self, trees):

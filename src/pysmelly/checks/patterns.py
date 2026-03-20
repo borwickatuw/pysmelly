@@ -1609,20 +1609,12 @@ def check_arrow_code(ctx: AnalysisContext) -> list[Finding]:
 
 # --- hungarian-notation ---
 
-_HUNGARIAN_RE = re.compile(r"^(str|int|bool|lst|dict|arr|obj|flt|tpl|set)[A-Z]")
-
-_HUNGARIAN_SNAKE = {
-    "str": "str_",
-    "int": "int_",
-    "bool": "bool_",
-    "lst": "lst_",
-    "dict": "dict_",
-    "arr": "arr_",
-    "obj": "obj_",
-    "flt": "flt_",
-    "tpl": "tpl_",
-    "set": "set_",
-}
+# Apps Hungarian (type-as-prefix): strName, intCount, lstItems
+# Systems Hungarian (storage-as-prefix): szName, lpBuffer, dwFlags, fnCallback
+_HUNGARIAN_RE = re.compile(
+    r"^(str|int|bool|lst|dict|arr|obj|flt|tpl|set"  # Apps Hungarian
+    r"|sz|lp|dw|fn|cb|rg|pi|pf|pp|lpsz|pfn)[A-Z]"  # Systems Hungarian
+)
 
 
 def _to_snake_case(name: str) -> str:
