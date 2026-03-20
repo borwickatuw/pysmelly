@@ -141,3 +141,7 @@ False-positive reductions based on real-world Django codebase feedback:
 - [x] **`temporal-coupling`** — Treat `setUp`/`setUpClass` as `__init__` for TestCase subclasses
 - [x] **`feature-envy`** — Skip known framework hook methods; skip `request`/`response` params
 - [x] **`shotgun-surgery`** — Rewritten to only flag project-defined attributes (framework/stdlib automatically excluded)
+
+## Output pacing (`--more-please`)
+
+- [x] Default output capped at top 10 highest-confidence findings. Ranking: severity desc, then check hit-count asc (fewer hits = higher signal). `--more-please` shows all findings. Footer: "Showing top 10. Run with --more-please for all N." Summary mode always shows full counts.

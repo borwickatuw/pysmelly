@@ -159,37 +159,3 @@ directory) keep evolving. Likely dead, rotting, or forgotten.
   Creates a dependency on running the other checks first, but gives a
   richer signal than line count alone.
 
-## Output pacing (`--more-please`)
-
-Problem: when pysmelly produces 100+ findings, LLM consumers (Claude Code)
-batch-triage them as false positives without reading the code. Volume
-triggers dismissiveness. The outscience feedback confirmed this is the
-biggest adoption blocker.
-
-### Proposal
-
-By default, show only the top 10 highest-confidence findings (sorted by
-severity, then by check-specific confidence signals). Print a footer:
-
-```
-Showing 10 of 87 findings. Run with --more-please for the rest.
-```
-
-`--more-please` removes the cap and shows everything (current behavior).
-
-### Design notes
-
-- This is orthogonal to `--min-severity`, which filters by quality.
-  This is about volume/pacing — even HIGH findings overwhelm at scale.
-- Top N findings is better than top N check categories, since one noisy
-  category could eat the budget.
-- Sorting: HIGH first, then MEDIUM, then LOW. Within a severity, prefer
-  findings from checks with fewer total hits (a check with 2 findings is
-  higher signal than one with 40).
-- The `--no-context` flag already suppresses the guidance preamble.
-  `--more-please` is the inverse lever — it's about how much of the
-  output body to show.
-- The name is intentionally informal/memorable so Claude Code would
-  actually use it when asked to dig deeper.
-- Consider: should `pysmelly init` / PYSMELLY.md guidance tell the LLM
-  to re-run with `--more-please` after fixing the first batch?
