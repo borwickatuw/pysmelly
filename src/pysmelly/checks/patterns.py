@@ -1733,10 +1733,11 @@ def _infer_return_type(node: ast.Return) -> str | None:
         return "str"
 
     if isinstance(val, ast.Call):
+        # Constructor-like calls: int(x), str(x), MyClass() — use the name
         if isinstance(val.func, ast.Name):
             return val.func.id
-        if isinstance(val.func, ast.Attribute):
-            return val.func.attr
+        # Method calls: obj.method() — can't infer return type from name
+        # (e.g. result.strip() returns str, not "strip")
         return None
 
     if isinstance(val, ast.BoolOp):

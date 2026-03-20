@@ -45,10 +45,10 @@ class AnalysisContext:
         from pysmelly.checks.helpers import build_reference_indices
 
         indices = build_reference_indices(self.all_trees)
-        self._import_index = indices["import_index"]
-        self._value_references = indices["value_references"]
-        self._dotted_string_suffixes = indices["dotted_string_suffixes"]
-        self._decorator_names = indices["decorator_names"]
+        self._import_index = indices.import_index
+        self._value_references = indices.value_references
+        self._dotted_string_suffixes = indices.dotted_string_suffixes
+        self._decorator_names = indices.decorator_names
 
     @property
     def import_index(self) -> dict[str, set[str]]:

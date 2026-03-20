@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from pysmelly.context import AnalysisContext
@@ -145,15 +145,17 @@ def build_call_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[dict]]
     return calls
 
 
-def build_reference_indices(all_trees: dict[Path, ast.Module]) -> dict:
-    """Single-pass builder for import, value-reference, dotted-string, and decorator indices.
+class ReferenceIndices(NamedTuple):
+    """Indices built in a single pass over all AST trees."""
 
-    Returns a dict with keys:
-      import_index: dict[str, set[str]]  — name -> set of importing file paths
-      value_references: set[str]  — names used as dict values, list elements, or call args
-      dotted_string_suffixes: set[str]  — final components of dotted-path strings
-      decorator_names: set[str]  — names used as decorators
-    """
+    import_index: dict[str, set[str]]
+    value_references: set[str]
+    dotted_string_suffixes: set[str]
+    decorator_names: set[str]
+
+
+def build_reference_indices(all_trees: dict[Path, ast.Module]) -> ReferenceIndices:
+    """Single-pass builder for import, value-reference, dotted-string, and decorator indices."""
     import_index: dict[str, set[str]] = defaultdict(set)
     value_references: set[str] = set()
     dotted_string_suffixes: set[str] = set()
@@ -214,12 +216,12 @@ def build_reference_indices(all_trees: dict[Path, ast.Module]) -> dict:
                     elif isinstance(deco, ast.Call) and isinstance(deco.func, ast.Attribute):
                         decorator_names.add(deco.func.attr)
 
-    return {
-        "import_index": dict(import_index),
-        "value_references": value_references,
-        "dotted_string_suffixes": dotted_string_suffixes,
-        "decorator_names": decorator_names,
-    }
+    return ReferenceIndices(
+        import_index=dict(import_index),
+        value_references=value_references,
+        dotted_string_suffixes=dotted_string_suffixes,
+        decorator_names=decorator_names,
+    )
 
 
 def is_imported_elsewhere(func_name: str, def_file: str, ctx: "AnalysisContext") -> bool:
