@@ -297,10 +297,11 @@ def check_shared_mutable_module_state(
             continue
 
         # Format mutation locations
-        loc_parts = []
-        for mpath in sorted(external_files, key=str):
-            for mline, _ in mutation_files[mpath]:
-                loc_parts.append(f"{mpath}:{mline}")
+        loc_parts = [
+            f"{mpath}:{mline}"
+            for mpath in sorted(external_files, key=str)
+            for mline, _ in mutation_files[mpath]
+        ]
 
         # Anchor at first definition
         def_path, def_line = defs[0]

@@ -27,17 +27,15 @@ def _dedup_and_format_locations(
             seen.add(key)
             deduped.append(item)
 
-    parts = []
-    for item in deduped[:max_display]:
+    def _fmt(item: dict) -> str:
         filename = item[file_key].split("/")[-1]
         func = item[func_key]
-        line_start = item[line_key]
+        start = item[line_key]
         if line_end_key and line_end_key in item:
-            line_end = item[line_end_key]
-            parts.append(f"{filename}:{func}():{line_start}-{line_end}")
-        else:
-            parts.append(f"{filename}:{func}():{line_start}")
-    locations_str = ", ".join(parts)
+            return f"{filename}:{func}():{start}-{item[line_end_key]}"
+        return f"{filename}:{func}():{start}"
+
+    locations_str = ", ".join(_fmt(item) for item in deduped[:max_display])
     if len(deduped) > max_display:
         locations_str += f" (+{len(deduped) - max_display} more)"
 
