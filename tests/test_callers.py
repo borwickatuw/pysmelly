@@ -1388,6 +1388,32 @@ def abstract_method(data, options):
         findings = check_vestigial_params(t)
         assert len(findings) == 0
 
+    def test_skips_stub_body_bare_return(self, trees):
+        """bare return is a stub — often with a TODO comment."""
+        t = trees.code("""\
+def validate_css(value):
+    return
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_stub_body_return_none(self, trees):
+        t = trees.code("""\
+def validate_something(value):
+    return None
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_stub_body_docstring_plus_return(self, trees):
+        t = trees.code("""\
+def validate_css(value):
+    \"\"\"Validate CSS value.\"\"\"
+    return
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
     def test_skips_abstractmethod_decorated(self, trees):
         t = trees.code("""\
 from abc import abstractmethod

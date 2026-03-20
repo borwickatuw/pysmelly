@@ -989,9 +989,9 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
 
 
 def _is_stub_body(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """Check if a function body is a stub (pass, ..., raise NotImplementedError)."""
+    """Check if a function body is a stub (pass, ..., bare return, raise NotImplementedError)."""
     body = func_node.body
-    # Strip docstring
+    # Strip docstring and comment-only expressions
     if (
         body
         and isinstance(body[0], ast.Expr)
@@ -1008,6 +1008,12 @@ def _is_stub_body(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         return True
     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
         if stmt.value.value is ...:
+            return True
+    # bare return / return None — unimplemented function (often with # TODO)
+    if isinstance(stmt, ast.Return):
+        if stmt.value is None:
+            return True
+        if isinstance(stmt.value, ast.Constant) and stmt.value.value is None:
             return True
     if isinstance(stmt, ast.Raise) and stmt.exc:
         exc = stmt.exc

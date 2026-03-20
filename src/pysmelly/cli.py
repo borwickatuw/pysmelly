@@ -246,6 +246,13 @@ x = 1  # pysmelly: ignore              — suppress all checks on this line
 x = 1  # pysmelly: ignore[dead-code]   — suppress specific check(s)
 ```
 
+**Do not add suppression comments as a way to dismiss findings.** Suppression
+is for confirmed false positives (framework calls this via reflection, public
+API contract requires this signature). If a finding reveals unfinished code
+(TODO), finish it. If a finding reveals dead code, delete it. Adding
+`# pysmelly: ignore` to avoid fixing the code is not suppression — it's
+avoidance.
+
 ## Configuration
 
 Create `.pysmelly.toml` or add `[tool.pysmelly]` to `pyproject.toml`:
@@ -290,6 +297,11 @@ radius of the fix.
   convention, public API contract). State the reason if you skip one.
 - **LOW**: Review and fix where it makes sense. These are investigation
   pointers — look at the code and decide, but don't ignore them.
+
+**Work incrementally.** If there are many findings, fix the top 1-2 highest
+severity issues, commit, then re-run pysmelly. Don't try to address everything
+at once — focused changes are easier to review and less likely to introduce
+regressions.
 """
 
 CLAUDE_MD_REFERENCE = """\
