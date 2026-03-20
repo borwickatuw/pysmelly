@@ -137,6 +137,7 @@ The text output includes a guidance preamble that helps LLMs interpret findings 
 
 - Python 3.12+
 - No external dependencies (stdlib only)
+- Calls `git` (via subprocess, not shell) for `.gitignore`-aware file discovery, `--diff` mode, and version detection. Falls back gracefully when `git` is not available.
 
 ## License
 

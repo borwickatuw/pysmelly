@@ -33,7 +33,7 @@ make self-check                        # Run pysmelly on itself
 
 ## Architecture
 
-- **Zero dependencies** — stdlib `ast` module only
+- **Minimal dependencies** — currently stdlib only, but not a hard constraint
 - **Check registration** via `@check("name", severity=Severity.X)` decorator
 - **Each check** receives `dict[Path, ast.Module]` (all parsed files) and returns `list[Finding]`
 - **File discovery** uses `git ls-files` when in a repo, falls back to rglob
@@ -44,7 +44,8 @@ make self-check                        # Run pysmelly on itself
 - Cross-file analysis is the differentiator — don't reimplement what ruff/pylint already do well
 - Findings should be actionable, not just informative
 - Grey areas are fine — the consumer (Claude Code) can apply judgment
-- No external dependencies — this runs via `uvx` with zero setup
+- Minimal dependencies preferred — don't add deps without clear justification
+- Calls `git` via subprocess (list args, no shell) for file discovery and diff mode
 
 ## Complementary Tools
 
