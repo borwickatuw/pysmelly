@@ -59,13 +59,33 @@ _TAGLINES = [
 ]
 
 
+def _rank_findings(findings: list[Finding]) -> list[Finding]:
+    """Sort findings by confidence: severity desc, then check hit-count asc.
+
+    Within a severity tier, findings from checks with fewer hits are ranked
+    higher — a check that fired twice is higher signal than one that fired 40 times.
+    """
+    check_counts: dict[str, int] = {}
+    for f in findings:
+        check_counts[f.check] = check_counts.get(f.check, 0) + 1
+
+    return sorted(
+        findings,
+        key=lambda f: (_SEVERITY_ORDER[f.severity], check_counts[f.check]),
+    )
+
+
 def format_text(
     findings: list[Finding],
     total_files: int,
     context: list[str] | None,
     summary: bool = False,
+    max_findings: int = 0,
 ) -> str:
-    """Text output grouped by check, with optional guidance preamble."""
+    """Text output grouped by check, with optional guidance preamble.
+
+    max_findings: if > 0, show only the top N highest-confidence findings.
+    """
     lines = []
 
     if context:
@@ -77,13 +97,26 @@ def format_text(
 
     lines.extend([f"Parsed {total_files} Python files", ""])
 
+    # Determine which findings to display
+    total_count = len(findings)
+    if max_findings > 0 and total_count > max_findings:
+        display_findings = _rank_findings(findings)[:max_findings]
+        suppressed_count = total_count - max_findings
+    else:
+        display_findings = findings
+        suppressed_count = 0
+
     by_check: dict[str, list[Finding]] = {}
-    for f in findings:
+    for f in display_findings:
         by_check.setdefault(f.check, []).append(f)
 
     if summary:
+        # Summary mode uses all findings for counts, not truncated
+        all_by_check: dict[str, list[Finding]] = {}
+        for f in findings:
+            all_by_check.setdefault(f.check, []).append(f)
         sorted_checks = sorted(
-            by_check.items(),
+            all_by_check.items(),
             key=lambda item: (_SEVERITY_ORDER[item[1][0].severity], -len(item[1])),
         )
         for check_name, check_findings in sorted_checks:
@@ -98,7 +131,12 @@ def format_text(
             lines.append("")
 
     if findings:
-        lines.append(f"Total: {len(findings)} finding(s)")
+        lines.append(f"Total: {total_count} finding(s)")
+        if suppressed_count > 0:
+            lines.append(
+                f"Showing top {max_findings}."
+                f" Run with --more-please for all {total_count}."
+            )
     else:
         lines.append("All checks passed.")
 

@@ -42,6 +42,10 @@ Severity levels:
   medium  Review each finding, fix what makes sense
   low     Informational — skim for surprises
 
+Output pacing:
+  By default, shows top 10 highest-confidence findings.
+  pysmelly --more-please       Show all findings
+
 Exit codes:
   0       No findings
   1       One or more findings reported
@@ -446,6 +450,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="List all available checks with descriptions and exit",
     )
+    parser.add_argument(
+        "--more-please",
+        action="store_true",
+        help="Show all findings (default: top 10 highest-confidence)",
+    )
     args = parser.parse_args(argv)
 
     if args.list_checks:
@@ -541,7 +550,16 @@ def main(argv: list[str] | None = None) -> None:
         context = _build_guidance(args.exclude, checks_with_findings)
 
     # Output
-    print(format_text(all_findings, len(all_trees), context=context, summary=args.summary))
+    max_findings = 0 if args.more_please else 10
+    print(
+        format_text(
+            all_findings,
+            len(all_trees),
+            context=context,
+            summary=args.summary,
+            max_findings=max_findings,
+        )
+    )
 
     sys.exit(1 if all_findings else 0)
 
