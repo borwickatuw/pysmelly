@@ -1,4 +1,4 @@
-"""Structural checks — duplicate code blocks and parameter clumps."""
+"""Structural checks — duplicate code blocks, parameter clumps, class structure."""
 
 from __future__ import annotations
 
@@ -658,6 +658,121 @@ def check_middle_man(ctx: AnalysisContext) -> list[Finding]:
                             f"{node.name} delegates {best_count}/{len(methods)} "
                             f"methods to self.{best_attr} — consider removing "
                             f"the middleman"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings
+
+
+# --- shadowed-method helpers ---
+
+
+def _build_class_index(
+    all_trees: dict[Path, ast.Module],
+) -> dict[str, list[dict]]:
+    """Build index of class definitions with their methods and base names.
+
+    Returns {class_name: [{file, line, methods, bases}, ...]}.
+    Multiple entries per name handle classes defined in different files.
+    """
+    index: dict[str, list[dict]] = defaultdict(list)
+    for filepath, tree in all_trees.items():
+        if is_test_file(filepath):
+            continue
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            methods: set[str] = set()
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods.add(item.name)
+            bases: list[str] = []
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    bases.append(base.id)
+                elif isinstance(base, ast.Attribute):
+                    bases.append(base.attr)
+            index[node.name].append(
+                {
+                    "file": str(filepath),
+                    "line": node.lineno,
+                    "methods": methods,
+                    "bases": bases,
+                }
+            )
+    return dict(index)
+
+
+def _get_base_methods(base_name: str, class_index: dict[str, list[dict]]) -> set[str]:
+    """Get all methods defined directly on a base class."""
+    methods: set[str] = set()
+    for class_def in class_index.get(base_name, []):
+        methods |= class_def["methods"]
+    return methods
+
+
+@check(
+    "shadowed-method",
+    severity=Severity.MEDIUM,
+    description="Diamond inheritance where a method is defined in multiple parents",
+)
+def check_shadowed_methods(ctx: AnalysisContext) -> list[Finding]:
+    """Find diamond inheritance where multiple parents define the same method.
+
+    When a class inherits from A and B, and both define execute(), MRO
+    silently picks one — the other's implementation is dead code. This is
+    a common source of subtle bugs: ConditionalRecurringTask inherits from
+    both RecurringTask and ConditionalTask, both define execute(), and
+    MRO picks RecurringTask's — the condition check never runs.
+
+    This is an investigation pointer: Claude Code should verify that the
+    MRO resolution is intentional, not accidental.
+    """
+    findings = []
+    class_index = _build_class_index(ctx.all_trees)
+
+    for class_name, defs in class_index.items():
+        for class_info in defs:
+            bases = class_info["bases"]
+            if len(bases) < 2:
+                continue
+
+            # Collect methods defined on each base (direct only)
+            method_sources: dict[str, list[str]] = defaultdict(list)
+            for base_name in bases:
+                for method in _get_base_methods(base_name, class_index):
+                    method_sources[method].append(base_name)
+
+            child_methods = class_info["methods"]
+
+            for method_name, source_bases in method_sources.items():
+                if len(source_bases) < 2:
+                    continue
+                # Child overrides the method — conflict resolved
+                if method_name in child_methods:
+                    continue
+                # Skip dunders — commonly inherited from object/ABC
+                if method_name.startswith("__") and method_name.endswith("__"):
+                    continue
+
+                # MRO: leftmost base wins
+                winner = source_bases[0]
+                losers = [b for b in source_bases[1:] if b != winner]
+                if not losers:
+                    continue
+
+                findings.append(
+                    Finding(
+                        file=class_info["file"],
+                        line=class_info["line"],
+                        check="shadowed-method",
+                        message=(
+                            f"{class_name} inherits {method_name}() from "
+                            f"both {winner} and {', '.join(losers)} — "
+                            f"MRO uses {winner}'s version, "
+                            f"{', '.join(losers)}'s is silently shadowed"
                         ),
                         severity=Severity.MEDIUM,
                     )

@@ -5,6 +5,7 @@ from pysmelly.checks.structure import (
     check_duplicate_except_blocks,
     check_middle_man,
     check_param_clumps,
+    check_shadowed_methods,
 )
 
 
@@ -688,3 +689,166 @@ class Wrapper:
         findings = check_middle_man(t)
         # 3 out of 5 delegate = 60% < 75%
         assert len(findings) == 0
+
+
+class TestShadowedMethod:
+    def test_finds_diamond_with_shared_method(self, trees):
+        t = trees.code("""\
+class Task:
+    def execute(self):
+        pass
+
+class RecurringTask(Task):
+    def execute(self):
+        return "recurring"
+
+class ConditionalTask(Task):
+    def execute(self):
+        if self.condition():
+            return "conditional"
+
+class ConditionalRecurringTask(RecurringTask, ConditionalTask):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 1
+        assert "ConditionalRecurringTask" in findings[0].message
+        assert "execute()" in findings[0].message
+        assert "RecurringTask" in findings[0].message
+        assert "ConditionalTask" in findings[0].message
+        assert "silently shadowed" in findings[0].message
+
+    def test_no_finding_child_overrides(self, trees):
+        """If the child overrides the conflicting method, no issue."""
+        t = trees.code("""\
+class A:
+    def process(self):
+        pass
+
+class B:
+    def process(self):
+        pass
+
+class C(A, B):
+    def process(self):
+        return A.process(self) and B.process(self)
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 0
+
+    def test_no_finding_single_base(self, trees):
+        t = trees.code("""\
+class Base:
+    def run(self):
+        pass
+
+class Child(Base):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 0
+
+    def test_no_finding_different_methods(self, trees):
+        """Multiple bases with different method names — no conflict."""
+        t = trees.code("""\
+class A:
+    def method_a(self):
+        pass
+
+class B:
+    def method_b(self):
+        pass
+
+class C(A, B):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 0
+
+    def test_skips_dunder_methods(self, trees):
+        """__init__, __repr__ etc. are commonly inherited — skip them."""
+        t = trees.code("""\
+class A:
+    def __init__(self):
+        pass
+    def __repr__(self):
+        return "A"
+
+class B:
+    def __init__(self):
+        pass
+    def __repr__(self):
+        return "B"
+
+class C(A, B):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 0
+
+    def test_multiple_shadowed_methods(self, trees):
+        t = trees.code("""\
+class A:
+    def execute(self):
+        pass
+    def validate(self):
+        pass
+
+class B:
+    def execute(self):
+        pass
+    def validate(self):
+        pass
+
+class C(A, B):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 2
+        methods = {f.message.split("inherits ")[1].split("()")[0] for f in findings}
+        assert methods == {"execute", "validate"}
+
+    def test_cross_file_bases(self, trees):
+        t = trees.files(
+            {
+                "recurring.py": """\
+class RecurringTask:
+    def execute(self):
+        return "recurring"
+""",
+                "conditional.py": """\
+class ConditionalTask:
+    def execute(self):
+        return "conditional"
+""",
+                "combined.py": """\
+from recurring import RecurringTask
+from conditional import ConditionalTask
+
+class CombinedTask(RecurringTask, ConditionalTask):
+    pass
+""",
+            }
+        )
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 1
+        assert "CombinedTask" in findings[0].message
+
+    def test_mro_winner_is_leftmost_base(self, trees):
+        """Verify the message correctly identifies which base MRO picks."""
+        t = trees.code("""\
+class Alpha:
+    def run(self):
+        pass
+
+class Beta:
+    def run(self):
+        pass
+
+class Combined(Alpha, Beta):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 1
+        assert "MRO uses Alpha's version" in findings[0].message
+        assert "Beta's is silently shadowed" in findings[0].message
