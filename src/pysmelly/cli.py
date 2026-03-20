@@ -287,6 +287,7 @@ uvx pysmelly --min-severity medium     # filter noise
 uvx pysmelly --exclude tests/ test_*   # exclude test files
 uvx pysmelly --diff                    # findings in uncommitted changes only
 uvx pysmelly --diff main              # findings in changes since main
+uvx pysmelly --git-history             # enable git history checks
 uvx pysmelly --list-checks             # see all available checks
 ```
 
@@ -303,6 +304,40 @@ API contract requires this signature). If a finding reveals unfinished code
 (TODO), finish it. If a finding reveals dead code, delete it. Adding
 `# pysmelly: ignore` to avoid fixing the code is not suppression — it's
 avoidance.
+
+## Git history checks
+
+pysmelly can analyze git history to detect evolutionary signals invisible to
+static analysis. These checks require `--git-history`:
+
+```bash
+uvx pysmelly --git-history                  # run all checks including git history
+uvx pysmelly --git-history --git-window 1y  # look back 1 year instead of 6 months
+```
+
+Git history findings (like `abandoned-code`) are persistent — the file is still
+abandoned next time you run pysmelly. To acknowledge a finding after reviewing
+the file, use the `reviewed` subcommand:
+
+```bash
+uvx pysmelly reviewed path/to/file.py        # acknowledge one file
+uvx pysmelly reviewed a.py b.py               # acknowledge multiple files
+```
+
+This creates an empty git commit with `pysmelly: reviewed path/to/file.py`
+markers. The finding disappears because the review commit resets the
+last-modified clock. When the review commit ages out of the time window, the
+finding returns — which is correct, because stale files should be re-evaluated
+periodically.
+
+You can also add the marker manually to any commit message:
+
+```
+Refactor auth module
+
+pysmelly: reviewed utils/legacy_parser.py
+pysmelly: reviewed utils/old_helpers.py
+```
 
 ## Configuration
 
