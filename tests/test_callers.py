@@ -88,6 +88,53 @@ process([3], fmt="csv")
         assert len(findings) == 1
         assert "fmt" in findings[0].message
 
+    def test_ignores_methods_on_public_classes(self, trees):
+        """Methods on public classes have external callers we can't see."""
+        t = trees.code("""\
+class Session:
+    def request(self, method, url, params=None):
+        pass
+
+    def get(self, url):
+        self.request("GET", url, params={})
+
+    def post(self, url):
+        self.request("POST", url, params={})
+""")
+        findings = check_unused_defaults(t)
+        assert len(findings) == 0
+
+    def test_still_flags_module_level_functions(self, trees):
+        """Module-level functions are still checked even when classes exist."""
+        t = trees.code("""\
+class Session:
+    pass
+
+def process(data, fmt=None):
+    pass
+
+process("a", fmt="json")
+process("b", fmt="csv")
+""")
+        findings = check_unused_defaults(t)
+        assert len(findings) == 1
+        assert "fmt" in findings[0].message
+
+    def test_ignores_methods_on_private_classes(self, trees):
+        """Methods on private classes are internal — still flag them."""
+        t = trees.code("""\
+class _Internal:
+    def process(self, data, fmt=None):
+        pass
+
+obj = _Internal()
+obj.process("a", fmt="json")
+obj.process("b", fmt="csv")
+""")
+        findings = check_unused_defaults(t)
+        assert len(findings) == 1
+        assert "fmt" in findings[0].message
+
 
 class TestDeadCode:
     def test_finds_uncalled_function(self, trees):
@@ -273,6 +320,79 @@ STEPS = [handlers.process]
         )
         findings = check_dead_code(t)
         assert len(findings) == 0
+
+    def test_ignores_deprecated_function(self, trees):
+        """Functions with DeprecationWarning are intentionally retained public API."""
+        t = trees.code("""\
+import warnings
+
+def get_encodings_from_content(content):
+    warnings.warn(
+        "Use charset_normalizer instead.",
+        DeprecationWarning,
+    )
+    return []
+""")
+        findings = check_dead_code(t)
+        assert len(findings) == 0
+
+    def test_ignores_pending_deprecation(self, trees):
+        """PendingDeprecationWarning also signals intentionally retained API."""
+        t = trees.code("""\
+import warnings
+
+def old_helper():
+    warnings.warn("Will be removed.", PendingDeprecationWarning)
+    return 42
+""")
+        findings = check_dead_code(t)
+        assert len(findings) == 0
+
+    def test_ignores_deprecation_with_category_kwarg(self, trees):
+        """category= keyword form is also detected."""
+        t = trees.code("""\
+import warnings
+
+def legacy_func():
+    warnings.warn("Gone soon.", category=DeprecationWarning)
+""")
+        findings = check_dead_code(t)
+        assert len(findings) == 0
+
+    def test_still_flags_non_deprecated_uncalled(self, trees):
+        """Functions without deprecation warnings are still flagged."""
+        t = trees.code("""\
+import warnings
+
+def truly_dead():
+    return 42
+""")
+        findings = check_dead_code(t)
+        assert len(findings) == 1
+        assert "truly_dead()" in findings[0].message
+
+    def test_ignores_function_in_dunder_all(self, trees):
+        """Functions listed in __all__ are explicitly public API."""
+        t = trees.code("""\
+__all__ = ["public_helper"]
+
+def public_helper():
+    return 42
+""")
+        findings = check_dead_code(t)
+        assert len(findings) == 0
+
+    def test_still_flags_function_not_in_dunder_all(self, trees):
+        """Functions NOT in __all__ are still flagged when uncalled."""
+        t = trees.code("""\
+__all__ = ["other_thing"]
+
+def not_exported():
+    return 42
+""")
+        findings = check_dead_code(t)
+        assert len(findings) == 1
+        assert "not_exported()" in findings[0].message
 
 
 class TestSingleCallSite:
@@ -476,6 +596,20 @@ def helper():
     pass
 
 helper()
+""")
+        findings = check_internal_only(t)
+        assert len(findings) == 0
+
+    def test_ignores_function_in_dunder_all(self, trees):
+        """Functions in __all__ are explicitly public API — don't suggest making private."""
+        t = trees.code("""\
+__all__ = ["merge_setting"]
+
+def merge_setting(a, b):
+    pass
+
+merge_setting(1, 2)
+merge_setting(3, 4)
 """)
         findings = check_internal_only(t)
         assert len(findings) == 0

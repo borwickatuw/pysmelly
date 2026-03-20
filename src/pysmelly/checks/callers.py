@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pysmelly.checks.helpers import (
     is_imported_elsewhere,
+    is_in_dunder_all,
     is_referenced_as_dotted_string,
     is_referenced_as_value,
     is_test_file,
@@ -22,11 +23,22 @@ from pysmelly.registry import Finding, Severity, check
 
 def _find_function_defaults(tree: ast.Module, filepath: Path) -> list[dict]:
     """Find all functions with default parameter values of None."""
+    # Collect methods in non-private classes — their defaults exist for
+    # external callers we can't see via call-graph analysis.
+    public_class_methods: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    public_class_methods.add(id(item))
+
     results = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if node.name.startswith("_") and not node.name.startswith("__"):
+            continue
+        if id(node) in public_class_methods:
             continue
 
         args = node.args
@@ -124,6 +136,28 @@ def check_unused_defaults(ctx: AnalysisContext) -> list[Finding]:
     return findings
 
 
+def _has_deprecation_warning(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function body contains warnings.warn(..., DeprecationWarning)."""
+    _DEPRECATION_NAMES = {"DeprecationWarning", "PendingDeprecationWarning"}
+    for node in ast.walk(func_node):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "warn"):
+            continue
+        # Check 2nd positional arg: warnings.warn("msg", DeprecationWarning)
+        if len(node.args) >= 2:
+            arg = node.args[1]
+            if isinstance(arg, ast.Name) and arg.id in _DEPRECATION_NAMES:
+                return True
+        # Check category keyword: warnings.warn("msg", category=DeprecationWarning)
+        for kw in node.keywords:
+            if kw.arg == "category" and isinstance(kw.value, ast.Name):
+                if kw.value.id in _DEPRECATION_NAMES:
+                    return True
+    return False
+
+
 @check(
     "dead-code", severity=Severity.HIGH, description="Public functions with zero callers anywhere"
 )
@@ -150,6 +184,17 @@ def check_dead_code(ctx: AnalysisContext) -> list[Finding]:
             and not is_referenced_as_dotted_string(func_name, ctx)
             and not is_used_as_decorator(func_name, ctx)
         ):
+            # Functions with deprecation warnings are intentionally retained
+            # public API — they were once used and are being phased out.
+            func_node = defs[0].get("node")
+            if func_node and _has_deprecation_warning(func_node):
+                continue
+
+            # Functions listed in __all__ are explicitly public API.
+            def_tree = ctx.all_trees.get(Path(def_file))
+            if def_tree and is_in_dunder_all(func_name, def_tree):
+                continue
+
             findings.append(
                 Finding(
                     file=def_file,
@@ -284,6 +329,11 @@ def check_internal_only(ctx: AnalysisContext) -> list[Finding]:
             and len(internal_calls) >= 2
             and not is_imported_elsewhere(func_name, def_file, ctx)
         ):
+            # Functions listed in __all__ are explicitly public API.
+            def_tree = ctx.all_trees.get(Path(def_file))
+            if def_tree and is_in_dunder_all(func_name, def_tree):
+                continue
+
             findings.append(
                 Finding(
                     file=def_file,
