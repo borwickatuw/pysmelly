@@ -374,9 +374,9 @@ helpers.format_row()
         assert len(findings) == 1
 
     def test_ignores_long_functions_by_line_count(self, trees):
-        """Functions spanning 30+ lines should be skipped even with few statements."""
+        """Functions spanning 10+ lines should be skipped even with few statements."""
         # 3 top-level statements but many lines (nested logic)
-        body_lines = "\n".join(f"        x = {i}" for i in range(28))
+        body_lines = "\n".join(f"        x = {i}" for i in range(8))
         code = f"""\
 def wait_for_task():
     while True:

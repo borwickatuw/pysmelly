@@ -173,7 +173,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
 
     Filters:
     - Functions with 5+ top-level statements are skipped
-    - Functions spanning 30+ lines are skipped
+    - Functions spanning 10+ lines are skipped
     - Cross-directory calls are suppressed (public API boundaries)
 
     Severity is bumped to MEDIUM when the function has many parameters (4+)
@@ -183,7 +183,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
     findings = []
     func_defs = ctx.function_index
     max_body_stmts = 4
-    max_body_lines = 30
+    max_body_lines = 10
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
@@ -203,7 +203,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
         if func_node and len(func_node.body) > max_body_stmts:
             continue
 
-        # Skip functions spanning 30+ lines — too large to inline
+        # Skip functions spanning 10+ lines — too large to inline
         if func_node and hasattr(func_node, "end_lineno") and func_node.end_lineno:
             if func_node.end_lineno - func_node.lineno + 1 > max_body_lines:
                 continue
