@@ -20,6 +20,14 @@ TRIVIAL_STRINGS = frozenset(
         "ascii",
         "latin-1",
         "latin1",
+        # Python idioms
+        "__main__",
+        # Argparse action constants
+        "store_true",
+        "store_false",
+        "store_const",
+        "append",
+        "count",
         # HTTP methods
         "GET",
         "POST",
@@ -173,7 +181,7 @@ def _is_trivial(value: object) -> bool:
     if value in TRIVIAL_VALUES:
         return True
     if isinstance(value, str):
-        if len(value) <= 1:
+        if len(value) <= 2:
             return True
         if value in TRIVIAL_STRINGS:
             return True

@@ -109,6 +109,52 @@ class TestScatteredConstants:
         findings = check_scattered_constants(t)
         assert len(findings) == 0
 
+    def test_ignores_dunder_main(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'if __name__ == "__main__": pass',
+                "b.py": 'if __name__ == "__main__": pass',
+                "c.py": 'if __name__ == "__main__": pass',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_argparse_actions(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'parser.add_argument("--verbose", action="store_true")',
+                "b.py": 'parser.add_argument("--quiet", action="store_true")',
+                "c.py": 'parser.add_argument("--debug", action="store_true")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_two_char_strings(self, trees):
+        """Strings of length <= 2 are too short to be interesting."""
+        t = trees.files(
+            {
+                "a.py": 'x = "id"',
+                "b.py": 'y = "id"',
+                "c.py": 'z = "id"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_flags_three_char_strings(self, trees):
+        """Strings of length 3+ are still flagged."""
+        t = trees.files(
+            {
+                "a.py": 'x = "foo"',
+                "b.py": 'y = "foo"',
+                "c.py": 'z = "foo"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+
     def test_ignores_http_headers(self, trees):
         t = trees.files(
             {
