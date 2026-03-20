@@ -647,11 +647,13 @@ def check_feature_envy(ctx: AnalysisContext) -> list[Finding]:
                 if item.name in _FRAMEWORK_HOOK_METHODS:
                     continue
 
-                # Get parameter names (excluding self/cls)
+                # Get parameter names (excluding self/cls and framework
+                # objects that methods inherently operate on)
                 param_names: set[str] = set()
                 for arg in item.args.args:
-                    if arg.arg not in ("self", "cls"):
-                        param_names.add(arg.arg)
+                    if arg.arg in ("self", "cls", "request", "response"):
+                        continue
+                    param_names.add(arg.arg)
 
                 if not param_names:
                     continue

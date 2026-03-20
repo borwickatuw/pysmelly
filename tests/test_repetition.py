@@ -528,6 +528,11 @@ class TestShotgunSurgery:
     def test_finds_4_file_access(self, trees):
         t = trees.files(
             {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
                 "a.py": "x = config.timeout",
                 "b.py": "y = config.timeout",
                 "c.py": "z = config.timeout",
@@ -614,10 +619,28 @@ class D:
     def test_different_var_names_not_grouped(self, trees):
         t = trees.files(
             {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
                 "a.py": "x = config.timeout",
                 "b.py": "y = settings.timeout",
                 "c.py": "z = opts.timeout",
                 "d.py": "w = params.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_framework_attrs_not_in_project(self, trees):
+        """Attrs not defined in any project class are framework/stdlib — skip."""
+        t = trees.files(
+            {
+                "a.py": "x = logger.warning('a')",
+                "b.py": "x = logger.warning('b')",
+                "c.py": "x = logger.warning('c')",
+                "d.py": "x = logger.warning('d')",
             }
         )
         findings = check_shotgun_surgery(t)

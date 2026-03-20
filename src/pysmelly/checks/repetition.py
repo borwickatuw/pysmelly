@@ -636,6 +636,32 @@ _STDLIB_MODULES = frozenset(
 )
 
 
+def _collect_project_defined_attrs(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Collect attribute names defined in project classes (self.X = ... or annotations).
+
+    Only attributes defined in the analyzed codebase are project-level concerns.
+    Framework/stdlib attributes won't appear here.
+    """
+    attrs: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for item in ast.walk(node):
+                # self.X = ... assignments
+                if (
+                    isinstance(item, ast.Attribute)
+                    and isinstance(item.ctx, ast.Store)
+                    and isinstance(item.value, ast.Name)
+                    and item.value.id == "self"
+                ):
+                    attrs.add(item.attr)
+                # Class-level annotations (X: type)
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    attrs.add(item.target.id)
+    return attrs
+
+
 @check(
     "shotgun-surgery",
     severity=Severity.MEDIUM,
@@ -645,6 +671,9 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
     """Find attribute accesses repeated across many files."""
     findings = []
     min_files = 4
+
+    # Only flag attributes defined in the project, not framework/stdlib APIs
+    project_attrs = _collect_project_defined_attrs(ctx.all_trees)
 
     # Collect (var_name, attr_name) -> set of (file, line)
     accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
@@ -673,8 +702,8 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # Skip private attrs
             if attr_name.startswith("_"):
                 continue
-            # Skip common attrs
-            if attr_name in COMMON_ATTRS:
+            # Only flag attributes defined in project classes
+            if attr_name not in project_attrs:
                 continue
             # Skip stdlib module attrs (ast.Name, os.path, etc.)
             if var_name in _STDLIB_MODULES:
