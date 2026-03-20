@@ -56,6 +56,10 @@ _TAGLINES = [
     ("The unexamined codebase is not worth deploying.", "Socrates"),
     ("Reports of this function's usefulness have been greatly exaggerated.", "Mark Twain"),
     ("Smells like dead code spirit.", "Nirvana"),
+    (
+        "In this world, nothing is certain except dead code and taxes.",
+        "Benjamin Franklin",
+    ),
 ]
 
 
