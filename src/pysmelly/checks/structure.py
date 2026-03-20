@@ -140,9 +140,24 @@ def _normalize_ast(node: ast.AST) -> str:
     return "|".join(_ast_signature_parts(node))
 
 
+_SIMPLE_AST_TOKENS: dict[type, str] = {
+    ast.If: "if",
+    ast.For: "for",
+    ast.While: "while",
+    ast.With: "with",
+    ast.Return: "return",
+    ast.Assign: "assign",
+    ast.Expr: "expr",
+    ast.Raise: "raise",
+    ast.Assert: "assert",
+    ast.Try: "try",
+}
+
+
 def _ast_signature_parts(node: ast.AST):
     """Yield structure-only tokens for AST nodes."""
     for child in ast.walk(node):
+        # Nodes with custom token extraction
         if isinstance(child, ast.Call):
             if isinstance(child.func, ast.Name):
                 yield f"call:{child.func.id}"
@@ -151,21 +166,16 @@ def _ast_signature_parts(node: ast.AST):
             else:
                 yield "call:?"
             yield f"args:{len(child.args)},kw:{len(child.keywords)}"
-        elif isinstance(child, ast.If):
-            yield "if"
-        elif isinstance(child, ast.For):
-            yield "for"
-        elif isinstance(child, ast.Return):
-            yield "return"
-        elif isinstance(child, ast.Assign):
-            yield "assign"
-        elif isinstance(child, ast.Expr):
-            yield "expr"
         elif isinstance(child, ast.Compare):
             ops = ",".join(type(op).__name__ for op in child.ops)
             yield f"cmp:{ops}"
         elif isinstance(child, ast.Attribute):
             yield f".{child.attr}"
+        else:
+            # Simple nodes: type -> fixed token string
+            token = _SIMPLE_AST_TOKENS.get(type(child))
+            if token:
+                yield token
 
 
 def _extract_statement_blocks(
