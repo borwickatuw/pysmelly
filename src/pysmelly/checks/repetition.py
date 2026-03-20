@@ -813,9 +813,7 @@ def _find_split_subscripts(tree: ast.Module) -> list[tuple[str, int, int]]:
             if not val.args:
                 continue
             delim_arg = val.args[0]
-            if not isinstance(delim_arg, ast.Constant) or not isinstance(
-                delim_arg.value, str
-            ):
+            if not isinstance(delim_arg, ast.Constant) or not isinstance(delim_arg.value, str):
                 continue
             split_vars[node.targets[0].id] = delim_arg.value
 
@@ -834,9 +832,7 @@ def _find_split_subscripts(tree: ast.Module) -> list[tuple[str, int, int]]:
                 continue
             if not isinstance(node.slice.value, int):
                 continue
-            results.append(
-                (split_vars[node.value.id], node.slice.value, node.lineno)
-            )
+            results.append((split_vars[node.value.id], node.slice.value, node.lineno))
 
     return results
 

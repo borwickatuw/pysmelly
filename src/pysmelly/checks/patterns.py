@@ -1250,8 +1250,7 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
                     line=lineno,
                     check="dead-constants",
                     message=(
-                        f"{const_name} = {desc} is never referenced "
-                        f"anywhere in the codebase"
+                        f"{const_name} = {desc} is never referenced " f"anywhere in the codebase"
                     ),
                     severity=Severity.MEDIUM,
                 )

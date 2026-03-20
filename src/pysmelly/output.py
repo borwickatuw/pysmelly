@@ -134,8 +134,7 @@ def format_text(
         lines.append(f"Total: {total_count} finding(s)")
         if suppressed_count > 0:
             lines.append(
-                f"Showing top {max_findings}."
-                f" Run with --more-please for all {total_count}."
+                f"Showing top {max_findings}." f" Run with --more-please for all {total_count}."
             )
     else:
         lines.append("All checks passed.")
