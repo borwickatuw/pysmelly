@@ -536,10 +536,9 @@ class MyTests(TestCase):
 
 class TestFeatureEnvy:
     def test_finds_envy(self, trees):
-        """Envy on second+ param (first param after self is excluded)."""
         t = trees.code("""\
 class Formatter:
-    def render(self, template, document):
+    def render(self, document):
         title = document.title
         body = document.body
         author = document.author
@@ -551,16 +550,22 @@ class Formatter:
         assert "document" in findings[0].message
         assert "Formatter.render()" in findings[0].message
 
-    def test_ignores_first_param_after_self(self, trees):
-        """First param is the method's subject — framework hooks pass it."""
+    def test_ignores_framework_hooks(self, trees):
+        """Django admin hooks access params more than self by design."""
         t = trees.code("""\
-class Admin:
+class MyAdmin:
     def formfield_for_foreignkey(self, db_field, request):
         x = db_field.name
         y = db_field.remote_field
         z = db_field.related_model
         w = db_field.formfield
         return w
+
+    def add_arguments(self, parser):
+        parser.add_argument("--dry-run")
+        parser.add_argument("--verbose")
+        parser.add_argument("--output")
+        parser.add_argument("--format")
 """)
         findings = check_feature_envy(t)
         assert len(findings) == 0
@@ -623,10 +628,9 @@ class TestFormatter:
         assert len(findings) == 0
 
     def test_message_identifies_envied_param(self, trees):
-        """Second param triggers envy, message names it."""
         t = trees.code("""\
 class Reporter:
-    def summarize(self, topic, stats):
+    def summarize(self, stats):
         return f"{stats.mean} {stats.median} {stats.mode} {stats.count}"
 """)
         findings = check_feature_envy(t)

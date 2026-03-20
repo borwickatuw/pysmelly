@@ -586,6 +586,37 @@ def _is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
+# Framework hook methods where accessing params more than self is expected
+_FRAMEWORK_HOOK_METHODS = frozenset(
+    {
+        # Django admin
+        "formfield_for_foreignkey",
+        "formfield_for_manytomany",
+        "formfield_for_dbfield",
+        "formfield_for_choice_field",
+        # Django views/forms
+        "get_context_data",
+        "get_queryset",
+        "get_form_kwargs",
+        "get_form_class",
+        "form_valid",
+        "form_invalid",
+        # Django management commands
+        "add_arguments",
+        # Django middleware
+        "process_request",
+        "process_response",
+        "process_view",
+        "process_exception",
+        # Django REST framework
+        "get_serializer_class",
+        "get_permissions",
+        "perform_create",
+        "perform_update",
+    }
+)
+
+
 @check(
     "feature-envy",
     severity=Severity.MEDIUM,
@@ -611,13 +642,16 @@ def check_feature_envy(ctx: AnalysisContext) -> list[Finding]:
                 if _is_staticmethod_or_classmethod(item):
                     continue
 
-                # Get parameter names (excluding self/cls and the first
-                # positional param — framework hooks pass the "subject"
-                # as the first arg, and operating on it is the purpose)
-                non_self_args = [
-                    a.arg for a in item.args.args if a.arg not in ("self", "cls")
-                ]
-                param_names: set[str] = set(non_self_args[1:]) if non_self_args else set()
+                # Skip known framework hooks where the signature is
+                # dictated and accessing params more than self is expected
+                if item.name in _FRAMEWORK_HOOK_METHODS:
+                    continue
+
+                # Get parameter names (excluding self/cls)
+                param_names: set[str] = set()
+                for arg in item.args.args:
+                    if arg.arg not in ("self", "cls"):
+                        param_names.add(arg.arg)
 
                 if not param_names:
                     continue
