@@ -121,17 +121,6 @@ def _is_excluded(rel: Path, patterns: list[str]) -> bool:
     return False
 
 
-def _is_ignored_file(file: str, check: str, ignore_files: dict[str, list[str]]) -> bool:
-    """Check if a finding's file matches any ignore-files pattern for its check."""
-    patterns = ignore_files.get(check)
-    if not patterns:
-        return False
-    for pattern in patterns:
-        if fnmatch.fnmatch(file, pattern):
-            return True
-    return False
-
-
 def _is_suppressed(finding: Finding, source_lines: dict[str, list[str]]) -> bool:
     """Check if a finding is suppressed by an inline comment."""
     lines = source_lines.get(finding.file)
@@ -610,13 +599,6 @@ def main(argv: list[str] | None = None) -> None:
 
     # Filter suppressed findings (# pysmelly: ignore / # pysmelly: ignore[check-name])
     all_findings = [f for f in all_findings if not _is_suppressed(f, source_lines)]
-
-    # Filter by ignore-files config
-    ignore_files = config.get("ignore-files", {})
-    if ignore_files:
-        all_findings = [
-            f for f in all_findings if not _is_ignored_file(f.file, f.check, ignore_files)
-        ]
 
     # Build guidance preamble for LLM consumers (on by default)
     context: list[str] | None = None

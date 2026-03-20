@@ -231,3 +231,26 @@ class TestAbandonedCode:
         # Only the active directory should produce a finding
         assert len(findings) == 1
         assert findings[0].file == "active/old.py"
+
+    def test_reviewed_file_not_flagged(self):
+        """A stale file with a recent 'pysmelly: reviewed' marker is not flagged.
+
+        The reviewed marker updates last_modified in GitHistory, so by the
+        time the check runs, the file appears recently touched.
+        """
+        files = {
+            "pkg/a.py": "x = 1",
+            "pkg/b.py": "y = 2",
+            "pkg/c.py": "z = 3",
+            "pkg/old.py": "w = 4",
+        }
+        # old.py was reviewed recently — last_modified reflects the review commit
+        last_modified = {
+            "pkg/a.py": _RECENT,
+            "pkg/b.py": _RECENT,
+            "pkg/c.py": _RECENT,
+            "pkg/old.py": _RECENT,  # updated by reviewed marker
+        }
+        ctx = _make_ctx(files, last_modified)
+        findings = check_abandoned_code(ctx)
+        assert len(findings) == 0

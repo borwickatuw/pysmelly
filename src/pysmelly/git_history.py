@@ -27,6 +27,7 @@ _CONVENTIONAL_PREFIXES = frozenset(
 )
 
 _WINDOW_RE = re.compile(r"^(\d+)([dmy])$")
+_REVIEWED_RE = re.compile(r"^pysmelly:\s*reviewed\s+(.+)$", re.MULTILINE)
 
 _WINDOW_UNITS = {
     "d": "days",
@@ -92,6 +93,7 @@ class GitHistory:
         self._commits: list[CommitInfo] = []
         self.commits_for_file: dict[str, list[CommitInfo]] = {}
         self.last_modified: dict[str, datetime] = {}
+        self.reviewed_at: dict[str, datetime] = {}
         self._message_quality: float | None = None
         self._parse()
 
@@ -160,6 +162,63 @@ class GitHistory:
                 existing = self.last_modified.get(filepath)
                 if existing is None or commit.date > existing:
                     self.last_modified[filepath] = commit.date
+
+        self._parse_reviewed(since)
+
+    def _parse_reviewed(self, since: str) -> None:
+        """Parse 'pysmelly: reviewed <path>' markers from commit messages.
+
+        A commit message containing 'pysmelly: reviewed path/to/file.py'
+        resets the last-modified clock for that file, even if the commit
+        didn't touch it. This lets teams acknowledge persistent findings
+        (like abandoned-code) without modifying the source file.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "log",
+                    "--format=%H%x00%aI%x00%B%x00",
+                    "--grep=pysmelly: reviewed",
+                    f"--since={since}",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=self.git_root,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return
+
+        if not result.stdout.strip():
+            return
+
+        # Split on the record separator (each commit ends with \x00\n)
+        for record in result.stdout.split("\x00\n"):
+            record = record.strip()
+            if not record or "\x00" not in record:
+                continue
+            parts = record.split("\x00", 2)
+            if len(parts) < 3:
+                continue
+            _commit_hash, date_str, body = parts
+            try:
+                date = datetime.fromisoformat(date_str)
+            except ValueError:
+                continue
+
+            for match in _REVIEWED_RE.finditer(body):
+                filepath = match.group(1).strip()
+                if not filepath:
+                    continue
+                # Update last_modified so the file appears recently touched
+                existing = self.last_modified.get(filepath)
+                if existing is None or date > existing:
+                    self.last_modified[filepath] = date
+                # Track review date separately for audit
+                existing_review = self.reviewed_at.get(filepath)
+                if existing_review is None or date > existing_review:
+                    self.reviewed_at[filepath] = date
 
     @property
     def message_quality(self) -> float:

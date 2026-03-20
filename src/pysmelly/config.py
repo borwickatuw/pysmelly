@@ -15,10 +15,7 @@ STRING_KEYS = frozenset({"min-severity", "check", "git-window", "commit-messages
 # Keys that accept boolean values
 BOOL_KEYS = frozenset({"git-history"})
 
-# Keys that accept TOML table values (check name -> list of file patterns)
-TABLE_KEYS = frozenset({"ignore-files"})
-
-VALID_KEYS = LIST_KEYS | STRING_KEYS | BOOL_KEYS | TABLE_KEYS
+VALID_KEYS = LIST_KEYS | STRING_KEYS | BOOL_KEYS
 
 VALID_SEVERITIES = frozenset({"low", "medium", "high"})
 
@@ -114,30 +111,6 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
             f"{source}: invalid git-window '{config['git-window']}'. "
             f"Expected format like 6m, 1y, 90d (number + d/m/y)"
         )
-
-    if "ignore-files" in config:
-        table = config["ignore-files"]
-        if not isinstance(table, dict):
-            raise ConfigError(
-                f"{source}: 'ignore-files' must be a table, got {type(table).__name__}"
-            )
-        for check_name, patterns in table.items():
-            if check_name not in valid_check_names:
-                raise ConfigError(
-                    f"{source}: unknown check '{check_name}' in [ignore-files]. "
-                    f"Use --list-checks to see available checks"
-                )
-            if not isinstance(patterns, list):
-                raise ConfigError(
-                    f"{source}: ignore-files.{check_name} must be a list, "
-                    f"got {type(patterns).__name__}"
-                )
-            for item in patterns:
-                if not isinstance(item, str):
-                    raise ConfigError(
-                        f"{source}: ignore-files.{check_name} items must be strings, "
-                        f"got {type(item).__name__}"
-                    )
 
 
 def load_config(target_dir: Path, valid_check_names: set[str]) -> dict:

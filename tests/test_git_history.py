@@ -141,6 +141,75 @@ class TestMessageQualityProperty:
         assert history.message_quality == 0.0
 
 
+class TestReviewedMarkers:
+    def test_reviewed_updates_last_modified(self, git_repo):
+        """'pysmelly: reviewed' in a commit message updates last_modified."""
+        (git_repo / "old.py").write_text("x = 1\n")
+        _git(git_repo, "add", "old.py")
+        _git(git_repo, "commit", "-m", "initial")
+
+        # Empty commit with reviewed marker
+        _git(
+            git_repo,
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Review stale files\n\npysmelly: reviewed old.py",
+        )
+
+        history = GitHistory(git_repo, window="6m")
+        # old.py should have last_modified from the review commit, not just the initial
+        assert "old.py" in history.last_modified
+        assert "old.py" in history.reviewed_at
+
+    def test_reviewed_in_regular_commit(self, git_repo):
+        """Review marker works in a commit that also touches files."""
+        (git_repo / "old.py").write_text("x = 1\n")
+        (git_repo / "new.py").write_text("y = 2\n")
+        _git(git_repo, "add", ".")
+        _git(git_repo, "commit", "-m", "initial")
+
+        (git_repo / "new.py").write_text("y = 3\n")
+        _git(git_repo, "add", "new.py")
+        _git(
+            git_repo,
+            "commit",
+            "-m",
+            "Update new.py\n\npysmelly: reviewed old.py",
+        )
+
+        history = GitHistory(git_repo, window="6m")
+        assert "old.py" in history.reviewed_at
+
+    def test_multiple_reviewed_in_one_commit(self, git_repo):
+        """Multiple reviewed markers in a single commit."""
+        (git_repo / "a.py").write_text("x = 1\n")
+        (git_repo / "b.py").write_text("y = 2\n")
+        _git(git_repo, "add", ".")
+        _git(git_repo, "commit", "-m", "initial")
+
+        _git(
+            git_repo,
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Review stale files\n\npysmelly: reviewed a.py\npysmelly: reviewed b.py",
+        )
+
+        history = GitHistory(git_repo, window="6m")
+        assert "a.py" in history.reviewed_at
+        assert "b.py" in history.reviewed_at
+
+    def test_no_reviewed_markers(self, git_repo):
+        """Normal commits produce empty reviewed_at."""
+        (git_repo / "a.py").write_text("x = 1\n")
+        _git(git_repo, "add", "a.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        history = GitHistory(git_repo, window="6m")
+        assert history.reviewed_at == {}
+
+
 def _git(cwd, *args):
     """Run a git command in the given directory."""
     import subprocess

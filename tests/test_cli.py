@@ -300,26 +300,3 @@ used()
             pass
         output = capsys.readouterr().out
         assert "abandoned-code" not in output
-
-    def test_ignore_files_suppresses_finding(self, tmp_path, capsys):
-        """Finding suppressed by ignore-files config is not reported."""
-        (tmp_path / ".pysmelly.toml").write_text('[ignore-files]\ndead-code = ["app.py"]\n')
-        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
-        try:
-            main(["--no-context", str(tmp_path)])
-        except SystemExit:
-            pass
-        output = capsys.readouterr().out
-        assert "dead-code" not in output or "app.py" not in output
-
-    def test_ignore_files_glob_pattern(self, tmp_path, capsys):
-        """ignore-files supports glob patterns."""
-        (tmp_path / ".pysmelly.toml").write_text('[ignore-files]\ndead-code = ["app*.py"]\n')
-        (tmp_path / "app_old.py").write_text("def unused_func():\n    pass\n")
-        try:
-            main(["--no-context", str(tmp_path)])
-        except SystemExit:
-            pass
-        output = capsys.readouterr().out
-        # The dead-code finding for app_old.py should be suppressed
-        assert "app_old.py" not in output
