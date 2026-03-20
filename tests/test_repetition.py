@@ -1,6 +1,7 @@
 """Tests for cross-file repetition checks."""
 
 from pysmelly.checks.repetition import (
+    check_repeated_string_parsing,
     check_scattered_constants,
     check_scattered_isinstance,
     check_shotgun_surgery,
@@ -621,3 +622,89 @@ class D:
         )
         findings = check_shotgun_surgery(t)
         assert len(findings) == 0
+
+
+class TestRepeatedStringParsing:
+    def test_finds_same_split_index_in_3_locations(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'city = addr.split("|")[1]',
+                "b.py": 'city = address.split("|")[1]',
+                "c.py": 'city = loc.split("|")[1]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 1
+        assert '.split("|")[1]' in findings[0].message
+        assert "3 locations" in findings[0].message
+        assert "dataclass" in findings[0].message
+
+    def test_ignores_fewer_than_3(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'city = addr.split("|")[1]',
+                "b.py": 'city = addr.split("|")[1]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_finds_multiple_indices_same_delimiter(self, trees):
+        """3+ different indices with same delimiter = parsing a format."""
+        t = trees.code("""\
+street = addr.split("|")[0]
+city = addr.split("|")[1]
+state = addr.split("|")[2]
+zip_code = addr.split("|")[3]
+""")
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert "different indices" in messages or ".split" in messages
+
+    def test_ignores_non_string_delimiter(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = data.split(delim)[0]",
+                "b.py": "x = data.split(delim)[0]",
+                "c.py": "x = data.split(delim)[0]",
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files(
+            {
+                "tests/test_parse.py": """\
+x = data.split("|")[0]
+y = data.split("|")[1]
+z = data.split("|")[2]
+""",
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_different_delimiters_not_grouped(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = data.split("|")[0]',
+                "b.py": 'x = data.split(",")[0]',
+                "c.py": 'x = data.split(":")[0]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_severity_is_medium(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = s.split("|")[0]',
+                "b.py": 'x = s.split("|")[0]',
+                "c.py": 'x = s.split("|")[0]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM

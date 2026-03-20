@@ -19,7 +19,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes, temporal-coupling, feature-envy, anemic-domain)
 - `src/pysmelly/checks/imports.py` - Import checks (compat-shims)
 - `src/pysmelly/checks/recommendations.py` - Stdlib alternatives check with TOML catalog
-- `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery)
+- `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery, repeated-string-parsing)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
 

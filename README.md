@@ -100,6 +100,7 @@ pysmelly init
 | `anemic-domain` | Classes with 5+ `__init__` attributes but zero non-dunder methods — data bag with no behavior. |
 | `shotgun-surgery` | Same `obj.attr` accessed in 4+ files — changes to that attribute require updating many files. |
 | `god-dict` | Functions returning dict literals with 4+ string keys — consider a dataclass or NamedTuple. |
+| `repeated-string-parsing` | Same `.split(delim)[N]` in 3+ locations — ad-hoc serialization format needing a dataclass. |
 
 ### Low severity — informational
 

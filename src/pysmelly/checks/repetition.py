@@ -714,3 +714,119 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+# --- repeated-string-parsing ---
+
+
+def _find_split_subscripts(tree: ast.Module) -> list[tuple[str, int, int]]:
+    """Find .split(delim)[N] patterns, returning (delimiter, index, lineno) tuples."""
+    results: list[tuple[str, int, int]] = []
+    for node in ast.walk(tree):
+        # Pattern: Subscript(Call(Attribute(*, "split"), [Constant(str)]), Constant(int))
+        if not isinstance(node, ast.Subscript):
+            continue
+        if not isinstance(node.slice, ast.Constant):
+            continue
+        if not isinstance(node.slice.value, int):
+            continue
+
+        call = node.value
+        if not isinstance(call, ast.Call):
+            continue
+        if not isinstance(call.func, ast.Attribute):
+            continue
+        if call.func.attr != "split":
+            continue
+        if not call.args:
+            continue
+        delim_arg = call.args[0]
+        if not isinstance(delim_arg, ast.Constant) or not isinstance(delim_arg.value, str):
+            continue
+
+        results.append((delim_arg.value, node.slice.value, node.lineno))
+    return results
+
+
+@check(
+    "repeated-string-parsing",
+    severity=Severity.MEDIUM,
+    description="Same .split(delim)[N] pattern in 3+ locations — ad-hoc serialization format",
+)
+def check_repeated_string_parsing(ctx: AnalysisContext) -> list[Finding]:
+    """Find repeated .split(delimiter)[index] patterns suggesting primitive obsession."""
+    findings = []
+
+    # Collect (delimiter, index) -> [(file, line), ...]
+    occurrences: dict[tuple[str, int], list[tuple[str, int]]] = defaultdict(list)
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        splits = _find_split_subscripts(tree)
+        # Dedup per file per (delim, index) pair
+        seen: set[tuple[str, int]] = set()
+
+        for delim, idx, lineno in splits:
+            key = (delim, idx)
+            if key not in seen:
+                seen.add(key)
+                occurrences[key].append((str(filepath), lineno))
+
+    # Strategy 1: same (delim, index) in 3+ locations
+    reported_delims: set[str] = set()
+    for (delim, idx), locs in sorted(occurrences.items()):
+        if len(locs) < 3:
+            continue
+        loc_strs = [f"{f}:{line}" for f, line in sorted(locs)[:5]]
+        if len(locs) > 5:
+            loc_strs.append("...")
+        reported_delims.add(delim)
+        findings.append(
+            Finding(
+                file=locs[0][0],
+                line=locs[0][1],
+                check="repeated-string-parsing",
+                message=(
+                    f'.split("{delim}")[{idx}] appears in {len(locs)}'
+                    f" locations ({', '.join(loc_strs)})"
+                    f" — ad-hoc serialization; consider a dataclass"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    # Strategy 2: same delimiter with 3+ different indices (parsing a format)
+    delim_indices: dict[str, set[int]] = defaultdict(set)
+    delim_all_locs: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for (delim, idx), locs in occurrences.items():
+        delim_indices[delim].add(idx)
+        delim_all_locs[delim].extend(locs)
+
+    for delim, indices in sorted(delim_indices.items()):
+        if len(indices) < 3:
+            continue
+        if delim in reported_delims:
+            continue  # already covered by strategy 1
+        locs = delim_all_locs[delim]
+        files = sorted({f for f, _ in locs})
+        sorted_indices = sorted(indices)
+        findings.append(
+            Finding(
+                file=files[0],
+                line=locs[0][1],
+                check="repeated-string-parsing",
+                message=(
+                    f'.split("{delim}") with {len(indices)} different'
+                    f" indices ({', '.join(str(i) for i in sorted_indices)})"
+                    f" across {len(files)}"
+                    f" file{'s' if len(files) != 1 else ''}"
+                    f" — ad-hoc format being parsed piecemeal;"
+                    f" consider a dataclass"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings

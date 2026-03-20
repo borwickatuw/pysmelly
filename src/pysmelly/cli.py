@@ -156,6 +156,7 @@ CALLER_AWARE_CHECKS = {
     "vestigial-params",
     "shotgun-surgery",
     "god-dict",
+    "repeated-string-parsing",
 }
 
 
