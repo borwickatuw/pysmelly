@@ -13,13 +13,13 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter
 - `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling)
-- `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts, fossilized-toggles, dead-constants, unreachable-after-return, isinstance-chain, boolean-param-explosion, exception-flow-control)
+- `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts, fossilized-toggles, dead-constants, unreachable-after-return, isinstance-chain, boolean-param-explosion, exception-flow-control, arrow-code, hungarian-notation, inconsistent-returns, plaintext-passwords, getattr-strings)
 - `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps, middle-man)
-- `src/pysmelly/checks/dead.py` - Dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers, dead-abstraction)
-- `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes)
+- `src/pysmelly/checks/dead.py` - Dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers, dead-abstraction, broken-backends)
+- `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes, temporal-coupling, feature-envy, anemic-domain)
 - `src/pysmelly/checks/imports.py` - Import checks (compat-shims)
 - `src/pysmelly/checks/recommendations.py` - Stdlib alternatives check with TOML catalog
-- `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance)
+- `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
 

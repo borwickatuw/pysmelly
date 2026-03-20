@@ -61,6 +61,7 @@ pysmelly init
 | `suspicious-fallbacks` | `.get()` on module-level constant dicts with non-trivial defaults. If the key should always exist, use `[]` indexing and fail fast. |
 | `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults. Required config should fail fast, not silently fall back. |
 | `unreachable-after-return` | Code after `return`/`raise` or exhaustive `if/else` branches — dead tail code from refactoring. |
+| `plaintext-passwords` | `==`/`!=` comparison on password/secret/token variables — use `hmac.compare_digest()` or hash comparison. |
 
 ### Medium severity — review each, fix what makes sense
 
@@ -90,6 +91,13 @@ pysmelly init
 | `shared-mutable-module-state` | Module-level mutable containers mutated from other files at import time. |
 | `orphaned-test-helpers` | Test helper functions and unused fixtures with zero callers. |
 | `shadowed-method` | Diamond inheritance where multiple parents define the same method — MRO silently picks one. |
+| `broken-backends` | Non-abstract classes where every method raises `NotImplementedError` — missing ABC base or broken backend. |
+| `inconsistent-returns` | Functions returning 3+ distinct types across return paths — consider narrowing the return type. |
+| `getattr-strings` | `getattr(obj, 'literal')` without default or `hasattr(obj, 'literal')` — stringly-typed attribute access. |
+| `temporal-coupling` | Methods reading `self.x` only set by another non-`__init__` method — implicit call ordering. |
+| `feature-envy` | Methods accessing 3+ attributes of another parameter, more than `self` — logic belongs elsewhere. |
+| `anemic-domain` | Classes with 5+ `__init__` attributes but zero non-dunder methods — data bag with no behavior. |
+| `shotgun-surgery` | Same `obj.attr` accessed in 4+ files — changes to that attribute require updating many files. |
 
 ### Low severity — informational
 
@@ -104,6 +112,8 @@ pysmelly init
 | `large-class` | Classes with 20+ methods — review for single responsibility. |
 | `long-function` | Functions spanning 100+ lines — review for decomposition. |
 | `long-elif-chain` | 8+ branch if/elif chains comparing the same variable to literals — consider a dict or enum. |
+| `arrow-code` | Functions with nesting depth 5+ (if/for/while/try/with pyramid) — consider extracting inner blocks. |
+| `hungarian-notation` | Variables like `strName`, `intCount`, `lstItems` — use snake_case instead. |
 
 ## Output
 
