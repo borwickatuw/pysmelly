@@ -40,6 +40,10 @@ Configuration:
   skip = ["single-call-site"]
   min-severity = "medium"
 
+Acknowledging git history findings:
+  pysmelly reviewed path/to/file.py  Create a commit acknowledging a file
+  pysmelly reviewed a.py b.py        Acknowledge multiple files at once
+
 Incremental analysis:
   pysmelly --diff              Findings in uncommitted changes only
   pysmelly --diff main         Findings in changes since main
@@ -387,10 +391,50 @@ def _handle_init(args: list[str]) -> None:
     print(f"Added pysmelly reference to CLAUDE.md")
 
 
+def _handle_reviewed(args: list[str]) -> None:
+    """Handle `pysmelly reviewed <file> [<file> ...]` — create a commit acknowledging files."""
+    if not args:
+        print("Error: pysmelly reviewed requires at least one file path", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify we're in a git repo
+    git_root = get_git_root(Path.cwd())
+    if git_root is None:
+        print("Error: pysmelly reviewed requires a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify files exist
+    for filepath in args:
+        if not Path(filepath).exists():
+            print(f"Error: {filepath} does not exist", file=sys.stderr)
+            sys.exit(1)
+
+    # Build commit message
+    markers = "\n".join(f"pysmelly: reviewed {f}" for f in args)
+    if len(args) == 1:
+        subject = f"Acknowledge pysmelly finding for {args[0]}"
+    else:
+        subject = f"Acknowledge pysmelly findings for {len(args)} files"
+    message = f"{subject}\n\n{markers}"
+
+    try:
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", message],
+            check=True,
+            cwd=git_root,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"Error: git commit failed (exit {e.returncode})", file=sys.stderr)
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     raw_args = argv if argv is not None else sys.argv[1:]
     if raw_args and raw_args[0] == "init":
         _handle_init(raw_args[1:])
+        return
+    if raw_args and raw_args[0] == "reviewed":
+        _handle_reviewed(raw_args[1:])
         return
 
     parser = argparse.ArgumentParser(

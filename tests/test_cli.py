@@ -300,3 +300,86 @@ used()
             pass
         output = capsys.readouterr().out
         assert "abandoned-code" not in output
+
+    def test_reviewed_creates_commit(self, git_repo):
+        """pysmelly reviewed creates an empty commit with markers."""
+        (git_repo / "old.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "old.py"], cwd=git_repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
+        )
+        # Run from within the git repo
+        import os
+
+        prev = os.getcwd()
+        try:
+            os.chdir(git_repo)
+            main(["reviewed", "old.py"])
+        finally:
+            os.chdir(prev)
+
+        # Verify the commit was created
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%B"],
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "pysmelly: reviewed old.py" in result.stdout
+
+    def test_reviewed_multiple_files(self, git_repo):
+        """pysmelly reviewed accepts multiple files."""
+        (git_repo / "a.py").write_text("x = 1\n")
+        (git_repo / "b.py").write_text("y = 2\n")
+        subprocess.run(["git", "add", "."], cwd=git_repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
+        )
+        import os
+
+        prev = os.getcwd()
+        try:
+            os.chdir(git_repo)
+            main(["reviewed", "a.py", "b.py"])
+        finally:
+            os.chdir(prev)
+
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%B"],
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "pysmelly: reviewed a.py" in result.stdout
+        assert "pysmelly: reviewed b.py" in result.stdout
+
+    def test_reviewed_no_args_errors(self, capsys):
+        """pysmelly reviewed with no files -> error."""
+        with pytest.raises(SystemExit) as exc_info:
+            main(["reviewed"])
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "requires at least one file" in err
+
+    def test_reviewed_nonexistent_file_errors(self, git_repo, capsys):
+        """pysmelly reviewed with nonexistent file -> error."""
+        import os
+
+        prev = os.getcwd()
+        try:
+            os.chdir(git_repo)
+            with pytest.raises(SystemExit) as exc_info:
+                main(["reviewed", "nonexistent.py"])
+            assert exc_info.value.code == 1
+            err = capsys.readouterr().err
+            assert "does not exist" in err
+        finally:
+            os.chdir(prev)
