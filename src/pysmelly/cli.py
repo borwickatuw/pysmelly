@@ -211,10 +211,16 @@ GUIDANCE_CONTENT = """\
 
 ## What pysmelly does
 
-pysmelly is an AST-based Python code smell detector that performs **cross-file
-call-graph analysis** — finding vestigial patterns that survive after design
-changes. These are patterns that single-file linters (ruff, pylint) cannot
-detect because they require seeing how code is used across the entire codebase.
+pysmelly is an AST-based Python code smell detector that acts as an
+**investigation dispatcher** for AI code review. It performs **cross-file
+call-graph analysis** to find vestigial code patterns — code that outlived the
+design that created it — and reports them as **starting points for
+investigation**, not mandates.
+
+Each finding includes cross-file context (caller counts, blast radius) so you
+can understand the scope of the issue before deciding what to do. These are
+patterns that single-file linters (ruff, pylint) cannot detect because they
+require seeing how code is used across the entire codebase.
 
 ## Running pysmelly
 
@@ -250,12 +256,17 @@ CLI arguments extend list values and override scalar values.
 
 ## How to interpret findings
 
-**Take findings seriously.** pysmelly's findings are signals that code may be
-vestigial — left over from a previous design that has since changed. Each
-finding looks "fine" when you examine the code in isolation, because the code
-*is* fine in isolation. The smell is in the cross-file picture: a function
-that exists but has no callers, a parameter that every caller passes the same
-value for, a constant duplicated across a dozen files.
+**Findings are investigation pointers.** pysmelly tells you where to look and
+provides cross-file context so you can investigate effectively. A finding like
+"format_type is declared but never used in parse_body() — 12 callers still
+pass it" is not saying "delete this parameter" — it's saying "this parameter
+appears vestigial, investigate the call chain and decide."
+
+**Take findings seriously.** Each finding looks "fine" when you examine the
+code in isolation, because the code *is* fine in isolation. The smell is in
+the cross-file picture: a function that exists but has no callers, a parameter
+that every caller passes the same value for, a constant defined but never
+referenced.
 
 **Do not dismiss findings by defending the code in isolation.** The most common
 mistake is to look at a finding like "single-call-site" and say "but the
@@ -263,20 +274,25 @@ function is well-named and readable." That's not the point — the point is that
 the abstraction has exactly one consumer, which means the indirection may no
 longer be earning its keep.
 
+**Use the cross-file context to investigate.** When pysmelly says a parameter
+has "18 callers still passing it," trace those callers. When it says a constant
+is "never referenced anywhere," check whether the code that used it was removed
+or rewritten with different string literals. The context in the finding message
+is there to guide your investigation.
+
 **Evaluate each finding in context**, but lean toward action:
-- **HIGH severity**: Act on these or explicitly justify keeping them. These
-  are patterns like dead code, unused exception classes, or compatibility
-  shims for Python versions you no longer support.
-- **MEDIUM severity**: Review each one. Most will warrant a fix, but some
-  may be justified by context pysmelly can't see (framework conventions,
-  public API contracts).
-- **LOW severity**: Informational. Skim for surprises. These flag patterns
-  worth knowing about but not necessarily acting on.
+- **HIGH severity**: Investigate and fix — these are almost always real
+  problems (dead code, unused defaults, unreachable code after return).
+- **MEDIUM severity**: Investigate and decide — the finding shows where to
+  look and provides context. Most warrant a fix, but some may be justified
+  by context pysmelly can't see (framework conventions, public API contracts).
+- **LOW severity**: Note during review. Skim for surprises. These flag
+  patterns worth knowing about but not necessarily acting on.
 
 **Grey areas are expected.** pysmelly flags patterns that *may* indicate
-vestigial design. The consumer (you) applies judgment about whether each
-finding represents a real problem. But start from the assumption that
-the finding is valid and look for evidence to confirm, not to dismiss.
+vestigial design. You apply judgment about whether each finding warrants
+action. But start from the assumption that the finding is valid and look
+for evidence to confirm, not to dismiss.
 """
 
 CLAUDE_MD_REFERENCE = """\
