@@ -3,6 +3,7 @@
 from pysmelly.checks.patterns import (
     check_boolean_param_explosion,
     check_constant_dispatch_dicts,
+    check_dead_constants,
     check_env_fallbacks,
     check_exception_flow_control,
     check_foo_equals_foo,
@@ -1031,6 +1032,135 @@ if FLAG:
 """)
         findings = check_fossilized_toggles(t)
         assert len(findings) == 0
+
+
+class TestDeadConstants:
+    def test_finds_unreferenced_string_constant(self, trees):
+        t = trees.code("""\
+TASK_BEFORE_EXECUTE = "task:before_execute"
+TASK_AFTER_EXECUTE = "task:after_execute"
+
+def fire(event):
+    pass
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 2
+        names = {f.message.split(" = ")[0] for f in findings}
+        assert "TASK_BEFORE_EXECUTE" in names
+        assert "TASK_AFTER_EXECUTE" in names
+
+    def test_no_finding_when_used_as_argument(self, trees):
+        t = trees.code("""\
+TASK_BEFORE_EXECUTE = "task:before_execute"
+
+def setup():
+    hook_manager.on(TASK_BEFORE_EXECUTE, my_callback)
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_no_finding_when_used_in_conditional(self, trees):
+        t = trees.code("""\
+MODE = "production"
+
+if MODE == "production":
+    do_stuff()
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_no_finding_when_imported_elsewhere(self, trees):
+        t = trees.files(
+            {
+                "constants.py": """\
+API_VERSION = "v2"
+""",
+                "client.py": """\
+from constants import API_VERSION
+""",
+            }
+        )
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_no_finding_when_in_dunder_all(self, trees):
+        t = trees.code("""\
+__all__ = ["EVENT_NAME"]
+EVENT_NAME = "my_event"
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_no_finding_when_accessed_as_attribute(self, trees):
+        t = trees.code("""\
+STATUS_OK = 200
+
+def check(response):
+    return response.STATUS_OK
+""")
+        # STATUS_OK appears as an Attribute.attr in Load context
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_no_finding_when_reassigned(self, trees):
+        """Reassigned constants are excluded (not truly constant)."""
+        t = trees.code("""\
+COUNTER = 0
+COUNTER = 1
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_skips_private_constants(self, trees):
+        t = trees.code("""\
+_INTERNAL = "secret"
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_skips_lowercase_names(self, trees):
+        t = trees.code("""\
+my_constant = "hello"
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_cross_file_unreferenced(self, trees):
+        t = trees.files(
+            {
+                "hooks.py": """\
+EVENT_START = "start"
+EVENT_STOP = "stop"
+""",
+                "executor.py": """\
+def run():
+    fire("start")
+    fire("stop")
+""",
+            }
+        )
+        # Constants defined but executor uses string literals instead
+        findings = check_dead_constants(t)
+        assert len(findings) == 2
+
+    def test_no_finding_numeric_constant_used(self, trees):
+        t = trees.code("""\
+MAX_RETRIES = 3
+
+def retry(func):
+    for i in range(MAX_RETRIES):
+        func()
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_truncates_long_values(self, trees):
+        t = trees.code("""\
+VERY_LONG_CONSTANT = "this is a very long string value that exceeds forty characters in repr"
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 1
+        assert "..." in findings[0].message
 
 
 class TestUnreachableAfterReturn:

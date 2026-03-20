@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from pysmelly.checks.helpers import is_in_dunder_all
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
@@ -1118,6 +1119,85 @@ def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
                 severity=Severity.MEDIUM,
             )
         )
+
+    return findings
+
+
+# --- dead-constants helpers ---
+
+
+def _collect_all_name_and_attr_loads(
+    all_trees: dict[Path, ast.Module],
+) -> set[str]:
+    """Collect all names used in Load context (bare names and attribute accesses)."""
+    names: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                names.add(node.id)
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                names.add(node.attr)
+    return names
+
+
+@check(
+    "dead-constants",
+    severity=Severity.MEDIUM,
+    description="UPPER_CASE module-level constants never referenced anywhere",
+)
+def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
+    """Find UPPER_CASE module-level constants that are defined but never used.
+
+    Event name constants, configuration keys, feature flag names — these
+    accumulate as code evolves. When the code that consumed them is changed
+    or removed, the constants remain as dead weight. The hooks.py pattern
+    is typical: 17 event name constants defined, zero ever referenced,
+    because the executor uses different string literals.
+    """
+    findings = []
+
+    # Collect non-reassigned constants: {name: [(filepath, lineno, value)]}
+    all_constants: dict[str, list[tuple[Path, int, object]]] = {}
+    for filepath, tree in ctx.all_trees.items():
+        for name, (lineno, value) in _collect_module_constants(tree).items():
+            if not _is_constant_reassigned(tree, name, lineno):
+                all_constants.setdefault(name, []).append((filepath, lineno, value))
+
+    if not all_constants:
+        return findings
+
+    # Build set of all referenced names (Name.Load and Attribute.attr in Load)
+    referenced_names = _collect_all_name_and_attr_loads(ctx.all_trees)
+
+    for const_name, defs in all_constants.items():
+        # Skip if referenced anywhere as a name or attribute
+        if const_name in referenced_names:
+            continue
+        # Skip if imported elsewhere
+        if ctx.import_index.get(const_name):
+            continue
+
+        for filepath, lineno, value in defs:
+            tree = ctx.all_trees[filepath]
+            if is_in_dunder_all(const_name, tree):
+                continue
+
+            value_repr = repr(value)
+            if len(value_repr) > 40:
+                value_repr = value_repr[:37] + "..."
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=lineno,
+                    check="dead-constants",
+                    message=(
+                        f"{const_name} = {value_repr} is never referenced "
+                        f"anywhere in the codebase"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
 
     return findings
 
