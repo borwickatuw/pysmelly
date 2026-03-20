@@ -102,8 +102,9 @@ def format_text(
     else:
         lines.append("All checks passed.")
 
-    quote, source = random.choice(_TAGLINES)
-    attribution = f" ({source})" if source else ""
-    lines.append(f"\n  -- {quote}{attribution}")
+    if findings:
+        quote, source = random.choice(_TAGLINES)
+        attribution = f" ({source})" if source else ""
+        lines.append(f"\n  -- {quote}{attribution}")
 
     return "\n".join(lines)
