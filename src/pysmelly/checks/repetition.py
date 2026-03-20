@@ -76,6 +76,8 @@ TRIVIAL_NUMBERS = frozenset(
         500,
         502,
         503,
+        # Single-digit integers (almost always coincidental across files)
+        3, 4, 5, 6, 7, 8, 9,
         # Common powers of 2 (buffer sizes, field lengths)
         64,
         128,
