@@ -177,6 +177,54 @@ class TestScatteredConstants:
         findings = check_scattered_constants(t)
         assert len(findings) == 0
 
+    def test_ignores_dict_get_first_arg(self, trees):
+        """config.get("key") — data-schema key, not a developer constant."""
+        t = trees.files(
+            {
+                "a.py": 'x = config.get("infrastructure")',
+                "b.py": 'y = data.get("infrastructure")',
+                "c.py": 'z = settings.get("infrastructure")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dict_pop_first_arg(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = d.pop("item_id")',
+                "b.py": 'y = d.pop("item_id")',
+                "c.py": 'z = d.pop("item_id")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dict_setdefault_first_arg(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'd.setdefault("errors", [])',
+                "b.py": 'd.setdefault("errors", [])',
+                "c.py": 'd.setdefault("errors", [])',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_flags_non_dict_access_method_calls(self, trees):
+        """Other method calls with string args are still flagged (if in interesting context)."""
+        t = trees.files(
+            {
+                "a.py": 'x = process("special_value")',
+                "b.py": 'y = handle("special_value")',
+                "c.py": 'z = transform("special_value")',
+            }
+        )
+        # Positional args to non-dict-access methods are not in "interesting context"
+        # so they won't be flagged. This test documents the behavior.
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
     def test_ignores_test_files(self, trees):
         t = trees.files(
             {

@@ -165,6 +165,19 @@ STDLIB_TYPES = frozenset(
 
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "critical", "exception", "log"})
 
+# Dict-access methods where the first positional arg is a data-schema key,
+# not a developer choice worth extracting to a named constant.
+DICT_ACCESS_METHODS = frozenset({"get", "pop", "setdefault"})
+
+
+def _is_dict_access_key(node: ast.Constant, call: ast.Call) -> bool:
+    """Check if a constant is the first positional arg to a dict-access method."""
+    if not (
+        isinstance(call.func, ast.Attribute) and call.func.attr in DICT_ACCESS_METHODS
+    ):
+        return False
+    return len(call.args) >= 1 and call.args[0] is node
+
 
 def _is_migration_file(filepath: Path) -> bool:
     """Check if a file is a Django migration (migrations/0001_*.py pattern)."""
@@ -238,11 +251,17 @@ def _is_interesting_constant_context(
         if node in parent.defaults or node in parent.kw_defaults:
             return True
 
-    # Keyword argument value (but not in log calls)
+    # Keyword argument value (but not in log calls or dict-access methods)
     if isinstance(parent, ast.keyword):
         if grandparent is not None and _is_log_call(grandparent):
             return False
+        if isinstance(grandparent, ast.Call) and _is_dict_access_key(node, grandparent):
+            return False
         return True
+
+    # First positional arg to dict-access methods (config.get("key"), d.pop("id"))
+    if isinstance(parent, ast.Call) and _is_dict_access_key(node, parent):
+        return False
 
     return False
 
