@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.checks.helpers import is_in_dunder_all, is_test_file
@@ -2016,6 +2017,327 @@ def check_getattr_strings(ctx: AnalysisContext) -> list[Finding]:
                         f" ({', '.join(loc_strs)}) — shotgun surgery risk"
                     ),
                     severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings
+
+
+# --- late-binding-closures ---
+
+_LOOP_STMTS = (ast.For, ast.AsyncFor)
+
+
+def _get_loop_var_names(loop: ast.For | ast.AsyncFor) -> set[str]:
+    """Extract variable names from a for-loop target."""
+    names: set[str] = set()
+    target = loop.target
+    if isinstance(target, ast.Name):
+        names.add(target.id)
+    elif isinstance(target, ast.Tuple):
+        for elt in target.elts:
+            if isinstance(elt, ast.Name):
+                names.add(elt.id)
+    return names
+
+
+def _find_free_names_in_func(
+    func: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+) -> set[str]:
+    """Find names read (Load) inside a function/lambda that aren't its own params or locals."""
+    # Collect parameter names
+    if isinstance(func, ast.Lambda):
+        args = func.args
+        body_nodes: list[ast.AST] = [func.body]
+    else:
+        args = func.args
+        body_nodes = func.body  # type: ignore[assignment]
+
+    param_names: set[str] = set()
+    for a in args.args + args.posonlyargs + args.kwonlyargs:
+        param_names.add(a.arg)
+    if args.vararg:
+        param_names.add(args.vararg.arg)
+    if args.kwarg:
+        param_names.add(args.kwarg.arg)
+    # Default args with same name as param are captures (x=x pattern)
+    captured_via_default: set[str] = set()
+    all_defaults = args.defaults + args.kw_defaults
+    for d in all_defaults:
+        if isinstance(d, ast.Name):
+            captured_via_default.add(d.id)
+
+    # Collect local assignments
+    local_names: set[str] = set()
+    for node in ast.walk(func if isinstance(func, ast.Lambda) else ast.Module(body=func.body)):  # type: ignore[arg-type]
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    local_names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            local_names.add(node.target.id)
+
+    # Collect all Name loads
+    read_names: set[str] = set()
+    for start_node in body_nodes:
+        for node in ast.walk(start_node):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                read_names.add(node.id)
+
+    # Free names = reads that aren't params, locals, or captured via defaults
+    return read_names - param_names - local_names - captured_via_default
+
+
+@check(
+    "late-binding-closures",
+    severity=Severity.HIGH,
+    description="Lambda/closure in loop captures loop variable by reference, not value",
+)
+def check_late_binding_closures(ctx: AnalysisContext) -> list[Finding]:
+    """Find closures in loops that capture the loop variable by late binding."""
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, _LOOP_STMTS):
+                continue
+
+            loop_vars = _get_loop_var_names(node)
+            if not loop_vars:
+                continue
+
+            # Walk the loop body looking for lambdas and nested function defs
+            for child in ast.walk(node):
+                if child is node:
+                    continue
+
+                if isinstance(child, ast.Lambda):
+                    free = _find_free_names_in_func(child)
+                    captured = loop_vars & free
+                    if captured:
+                        var_str = ", ".join(sorted(captured))
+                        findings.append(
+                            Finding(
+                                file=str(filepath),
+                                line=child.lineno,
+                                check="late-binding-closures",
+                                message=(
+                                    f"lambda captures loop variable {var_str}"
+                                    f" by reference — all closures will see"
+                                    f" the final value; use default arg"
+                                    f" ({var_str}={var_str}) to capture"
+                                ),
+                                severity=Severity.HIGH,
+                            )
+                        )
+
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    free = _find_free_names_in_func(child)
+                    captured = loop_vars & free
+                    if captured:
+                        var_str = ", ".join(sorted(captured))
+                        findings.append(
+                            Finding(
+                                file=str(filepath),
+                                line=child.lineno,
+                                check="late-binding-closures",
+                                message=(
+                                    f"{child.name}() captures loop variable"
+                                    f" {var_str} by reference — all closures"
+                                    f" will see the final value"
+                                ),
+                                severity=Severity.HIGH,
+                            )
+                        )
+
+    return findings
+
+
+# --- law-of-demeter ---
+
+
+def _chain_length(node: ast.Attribute) -> int:
+    """Count the depth of a chained attribute access (a.b.c.d = 4)."""
+    depth = 1
+    current: ast.expr = node.value
+    while isinstance(current, ast.Attribute):
+        depth += 1
+        current = current.value
+    if isinstance(current, ast.Name):
+        depth += 1  # count the root name
+    return depth
+
+
+def _chain_root(node: ast.Attribute) -> str | None:
+    """Get the root variable name of an attribute chain."""
+    current: ast.expr = node
+    while isinstance(current, ast.Attribute):
+        current = current.value
+    if isinstance(current, ast.Name):
+        return current.id
+    return None
+
+
+def _chain_str(node: ast.Attribute) -> str:
+    """Reconstruct the full dotted attribute chain as a string."""
+    parts: list[str] = [node.attr]
+    current: ast.expr = node.value
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return ".".join(reversed(parts))
+
+
+# Attribute names that indicate AST/IR node navigation, not domain object access
+_AST_NAV_ATTRS = frozenset(
+    {
+        "func",
+        "value",
+        "args",
+        "body",
+        "orelse",
+        "targets",
+        "target",
+        "elts",
+        "slice",
+        "ctx",
+        "op",
+        "ops",
+        "operand",
+        "left",
+        "right",
+        "comparators",
+        "handlers",
+        "finalbody",
+        "keywords",
+        "decorator_list",
+        "bases",
+        "returns",
+        "annotation",
+        "exc",
+        "cause",
+        "test",
+        "iter",
+        "ifs",
+        "generators",
+        "keys",
+        "values",
+        "vararg",
+        "kwarg",
+        "posonlyargs",
+        "kwonlyargs",
+        "kw_defaults",
+        "defaults",
+        "names",
+        "module",
+        "asname",
+        "arg",
+        "id",
+        "attr",
+        "lineno",
+        "col_offset",
+        "end_lineno",
+        "end_col_offset",
+    }
+)
+
+
+@check(
+    "law-of-demeter",
+    severity=Severity.LOW,
+    description="Attribute chains 4+ deep (a.b.c.d) — reaching through object internals",
+)
+def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
+    """Find deep attribute access chains suggesting Law of Demeter violations."""
+    findings = []
+    threshold = 4
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        # Dedup: only report the deepest chain per line
+        line_findings: dict[int, tuple[int, str]] = {}  # line -> (depth, chain_str)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            if not isinstance(node.ctx, ast.Load):
+                continue
+
+            # Skip if parent is also an Attribute — we'll count from the outermost
+            # (This is handled by only recording the deepest per line)
+
+            depth = _chain_length(node)
+            if depth < threshold:
+                continue
+
+            root = _chain_root(node)
+            if root is None:
+                continue
+
+            # Skip method calls in the chain — fluent APIs / builder pattern
+            # Check if any intermediate node is the func of a Call
+            is_fluent = False
+            current: ast.expr = node
+            parents = ctx.parent_map(tree)
+            while isinstance(current, ast.Attribute):
+                parent = parents.get(current)
+                if isinstance(parent, ast.Call) and parent.func is current:
+                    is_fluent = True
+                    break
+                current = current.value
+            if is_fluent:
+                continue
+
+            # Skip AST/IR node navigation chains (node.func.value.id etc.)
+            chain_attrs: list[str] = []
+            nav = node
+            while isinstance(nav, ast.Attribute):
+                chain_attrs.append(nav.attr)
+                nav = nav.value
+            if sum(1 for a in chain_attrs if a in _AST_NAV_ATTRS) >= 2:
+                continue
+
+            # Skip module-level attribute access (os.path.sep, etc.)
+            if root[0].islower() and root in {
+                "os",
+                "sys",
+                "ast",
+                "re",
+                "io",
+                "json",
+                "logging",
+                "pathlib",
+                "typing",
+                "collections",
+                "functools",
+                "itertools",
+                "datetime",
+            }:
+                continue
+
+            chain = _chain_str(node)
+            line = node.lineno
+            if line not in line_findings or depth > line_findings[line][0]:
+                line_findings[line] = (depth, chain)
+
+        for line, (depth, chain) in sorted(line_findings.items()):
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=line,
+                    check="law-of-demeter",
+                    message=(
+                        f"{chain} — chain depth {depth};"
+                        f" consider asking the intermediate object instead"
+                    ),
+                    severity=Severity.LOW,
                 )
             )
 

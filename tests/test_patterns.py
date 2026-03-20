@@ -13,6 +13,8 @@ from pysmelly.checks.patterns import (
     check_hungarian_notation,
     check_inconsistent_returns,
     check_isinstance_chain,
+    check_late_binding_closures,
+    check_law_of_demeter,
     check_plaintext_passwords,
     check_runtime_monkey_patch,
     check_suspicious_fallbacks,
@@ -2020,3 +2022,171 @@ x = getattr(obj, 'name')
         )
         findings = check_getattr_strings(t)
         assert not any("shotgun surgery" in f.message for f in findings)
+
+
+class TestLateBindingClosures:
+    def test_finds_lambda_in_for_loop(self, trees):
+        t = trees.code("""\
+def make_multipliers():
+    multipliers = []
+    for i in range(5):
+        multipliers.append(lambda x: x * i)
+    return multipliers
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 1
+        assert "lambda" in findings[0].message
+        assert "i" in findings[0].message
+        assert findings[0].severity.value == "high"
+
+    def test_finds_closure_in_for_loop(self, trees):
+        t = trees.code("""\
+def register_handlers():
+    handlers = {}
+    for name in ["save", "load", "delete"]:
+        def handler():
+            print(f"Clicked {name}")
+        handlers[name] = handler
+    return handlers
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 1
+        assert "handler()" in findings[0].message
+        assert "name" in findings[0].message
+
+    def test_ignores_default_arg_capture(self, trees):
+        """lambda x, i=i: x * i captures correctly via default."""
+        t = trees.code("""\
+def make_multipliers():
+    multipliers = []
+    for i in range(5):
+        multipliers.append(lambda x, i=i: x * i)
+    return multipliers
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 0
+
+    def test_ignores_no_loop_var_reference(self, trees):
+        t = trees.code("""\
+x = 10
+for i in range(5):
+    f = lambda: x
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 0
+
+    def test_finds_list_comprehension_lambda(self, trees):
+        """List comprehension with lambda referencing outer loop var."""
+        t = trees.code("""\
+def make_adders():
+    result = []
+    for n in range(10):
+        result.append(lambda x: x + n)
+    return result
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 1
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_closures.py": """\
+for i in range(5):
+    f = lambda x: x * i
+"""})
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 0
+
+    def test_finds_tuple_unpacking_loop(self, trees):
+        t = trees.code("""\
+for name, func in [("a", fa), ("b", fb)]:
+    def logged():
+        print(f"Calling {name}")
+        return func()
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) == 1
+        messages = findings[0].message
+        assert "name" in messages or "func" in messages
+
+    def test_finds_nested_loop_capture(self, trees):
+        t = trees.code("""\
+def make_grid():
+    callbacks = []
+    for i in range(3):
+        for j in range(3):
+            callbacks.append(lambda: (i, j))
+    return callbacks
+""")
+        findings = check_late_binding_closures(t)
+        assert len(findings) >= 1
+
+
+class TestLawOfDemeter:
+    def test_finds_deep_chain(self, trees):
+        t = trees.code("""\
+def get_city(order):
+    return order.user.address.city
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 1
+        assert "order.user.address.city" in findings[0].message
+        assert "depth 4" in findings[0].message
+
+    def test_ignores_short_chain(self, trees):
+        t = trees.code("""\
+def get_name(user):
+    return user.profile.name
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
+    def test_ignores_fluent_api(self, trees):
+        """Method calls in chain = fluent API, not demeter violation."""
+        t = trees.code("""\
+qs = queryset.filter(active=True).exclude(banned=True).order_by("name")
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
+    def test_ignores_stdlib_modules(self, trees):
+        t = trees.code("""\
+import os
+x = os.path.sep.join(parts)
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_deep.py": """\
+x = order.user.address.city
+"""})
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
+    def test_finds_deeper_chain(self, trees):
+        t = trees.code("""\
+x = self.service.repository.model.field.value
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 1
+        assert "depth 6" in findings[0].message
+
+    def test_deduplicates_per_line(self, trees):
+        """Multiple chains on same line: only deepest reported."""
+        t = trees.code("""\
+x = a.b.c.d + a.b.c.d.e.f
+""")
+        findings = check_law_of_demeter(t)
+        # Should report the deeper one
+        assert len(findings) == 1
+        assert "depth 6" in findings[0].message
+
+    def test_self_chain_counted(self, trees):
+        """self.config.db.host is depth 4 — self counts as root."""
+        t = trees.code("""\
+class App:
+    def connect(self):
+        return connect(self.config.db.host)
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 1
+        assert "self.config.db.host" in findings[0].message
