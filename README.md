@@ -2,7 +2,7 @@
 
 AST-based Python code smell detector for AI-assisted code review.
 
-pysmelly finds **vestigial code patterns** — code that outlived the design that created it. It performs cross-file call-graph analysis to detect smells that single-file linters miss, then reports findings at three severity levels so an AI reviewer (or human) knows which to act on, which to review, and which to skim.
+pysmelly finds **vestigial code patterns** — code that outlived the design that created it. It performs cross-file call-graph analysis to detect smells that single-file linters miss, then reports findings as **investigation pointers** — signals that tell an AI reviewer (like [Claude Code](https://docs.anthropic.com/en/docs/claude-code)) or a human where to look, not what to do. Findings include cross-file context (caller counts, blast radius) so the reviewer can apply judgment.
 
 ## Install
 
@@ -56,15 +56,18 @@ pysmelly init
 |---|---|
 | `unused-defaults` | Parameter defaults to `None` but every caller always passes a value. The `Optional` is vestigial — make the param required. |
 | `dead-code` | Public functions with zero callers anywhere in the codebase. Cross-references direct calls, imports, dict/list references, and callback passing. |
+| `dead-exceptions` | Custom exception classes never raised or caught anywhere. |
 | `compat-shims` | `try/except ImportError` patterns left over from supporting older Python versions the project no longer targets. |
 | `suspicious-fallbacks` | `.get()` on module-level constant dicts with non-trivial defaults. If the key should always exist, use `[]` indexing and fail fast. |
 | `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults. Required config should fail fast, not silently fall back. |
+| `unreachable-after-return` | Code after `return`/`raise` or exhaustive `if/else` branches — dead tail code from refactoring. |
 
 ### Medium severity — review each, fix what makes sense
 
 | Check | What it finds |
 |---|---|
 | `constant-args` | Parameter always receives the same literal value from every caller. The value should be a default or constant. |
+| `vestigial-params` | Parameters declared but never referenced in the function body — with cross-file caller count showing blast radius. |
 | `foo-equals-foo` | Single-use locals gathered into an object — suggests bundling into a dataclass or building directly. |
 | `duplicate-blocks` | Structurally identical code blocks across functions (AST-normalized, so different variable names still match). |
 | `duplicate-except-blocks` | Identical except handlers with same error messages across files. |
@@ -74,6 +77,18 @@ pysmelly init
 | `pass-through-params` | Parameters received by a function and only forwarded to another function. The intermediary's signature is vestigial. |
 | `param-clumps` | Groups of 3+ parameters appearing together in 3+ function signatures — extract a dataclass. |
 | `runtime-monkey-patch` | Function assigned to attribute of external object at module scope. |
+| `fossilized-toggles` | UPPER_CASE boolean constants that make conditionals always-true/false (dead branches). |
+| `dead-constants` | UPPER_CASE module-level constants never referenced anywhere — e.g. event name constants nobody uses. |
+| `dead-abstraction` | ABCs with zero concrete implementations — speculative generality that never materialized. |
+| `dead-dispatch-entries` | Dispatch dict entries whose key strings appear nowhere else in the codebase. |
+| `middle-man` | Classes where 75%+ of methods just delegate to a single wrapped object. |
+| `write-only-attributes` | `@dataclass` fields never read anywhere in the codebase — vestigial config accretion. |
+| `isinstance-chain` | Functions with 5+ `isinstance()` checks — investigate for polymorphism or dispatch table. |
+| `boolean-param-explosion` | Functions with 4+ boolean parameters — accumulated flags suggesting decomposition. |
+| `exception-flow-control` | Custom exceptions raised and caught in the same `try/except` — used as goto, not error handling. |
+| `inconsistent-error-handling` | Same function called with divergent error handling across callers. |
+| `shared-mutable-module-state` | Module-level mutable containers mutated from other files at import time. |
+| `orphaned-test-helpers` | Test helper functions and unused fixtures with zero callers. |
 
 ### Low severity — informational
 
@@ -83,6 +98,8 @@ pysmelly init
 | `internal-only` | Public functions only called within their own file — candidates for `_private` naming. |
 | `trivial-wrappers` | Functions whose body is a single return statement — candidates for inlining. |
 | `stdlib-alternatives` | Stdlib modules where well-known third-party libraries are better, deprecated stdlib/third-party modules, and mixed stdlib/modern usage in the same codebase. |
+| `scattered-constants` | Same string literal repeated across 3+ files — consider a named constant. |
+| `scattered-isinstance` | Same `isinstance` type-check pattern repeated across 3+ files. |
 
 ## Output
 
@@ -111,6 +128,8 @@ pysmelly focuses on the gap: **cross-file call-graph analysis** and **design-lev
 
 ## Using with Claude Code
 
+pysmelly is designed as an **investigation dispatcher** for AI code review. Its findings are starting points — signals that tell Claude Code where to look and what to investigate, with enough cross-file context to act on. Claude Code reads the findings, examines the actual code, and applies judgment about what to fix.
+
 ### Setup
 
 Run `pysmelly init` in your project to set up AI review guidance:
@@ -129,9 +148,17 @@ pysmelly src/
 ```
 
 The text output includes a guidance preamble that helps LLMs interpret findings in context. The three severity levels map to AI review actions:
-- **High**: Auto-fix or flag for immediate attention
-- **Medium**: Discuss in review, suggest specific refactoring
-- **Low**: Mention in summary, don't block on these
+- **High**: Investigate and fix — these are almost always real problems
+- **Medium**: Investigate and decide — the finding shows where to look, Claude Code determines what (if anything) to do
+- **Low**: Note during review — useful context, may or may not warrant action
+
+### What makes findings actionable for AI review
+
+pysmelly findings include **cross-file context** that single-file linters can't provide:
+
+- *"format_type is declared but never used in parse_body() — 12 callers still pass it"* — Claude Code can trace the vestigial parameter through the call chain and remove it everywhere
+- *"deploy() param 'timeout' defaults to None but all 3 callers always pass it"* — Claude Code can make the parameter required and simplify the callers
+- *"TASK_BEFORE_EXECUTE = 'task:before\_execute' is never referenced anywhere"* — Claude Code can investigate whether the constant was superseded and delete it
 
 ## Requirements
 

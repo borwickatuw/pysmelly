@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-AST-based Python code smell detector. Finds vestigial code patterns that survive after design changes — the kind of cruft that accumulates as code evolves. Performs cross-file call-graph analysis that single-file linters can't do.
+AST-based Python code smell detector that acts as an **investigation dispatcher** for AI-assisted code review. Finds vestigial code patterns — code that outlived the design that created it — and reports them as **starting points for investigation**, not mandates. Performs cross-file call-graph analysis that single-file linters can't do, providing context like caller counts and blast radius so the AI reviewer (Claude Code) or human can apply judgment.
 
 Target audience is AI-assisted code review (Claude Code), but output is useful for humans too.
 
@@ -12,11 +12,14 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/registry.py` - `@check` decorator, `Finding` dataclass, `Severity` enum
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter
-- `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params)
-- `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts)
-- `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps)
+- `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling)
+- `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts, fossilized-toggles, dead-constants, unreachable-after-return, isinstance-chain, boolean-param-explosion, exception-flow-control)
+- `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps, middle-man)
+- `src/pysmelly/checks/dead.py` - Dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers, dead-abstraction)
+- `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes)
 - `src/pysmelly/checks/imports.py` - Import checks (compat-shims)
 - `src/pysmelly/checks/recommendations.py` - Stdlib alternatives check with TOML catalog
+- `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
 
@@ -35,15 +38,16 @@ make self-check                        # Run pysmelly on itself
 
 - **Minimal dependencies** — currently stdlib only, but not a hard constraint
 - **Check registration** via `@check("name", severity=Severity.X)` decorator
-- **Each check** receives `dict[Path, ast.Module]` (all parsed files) and returns `list[Finding]`
+- **Each check** receives `AnalysisContext` (all parsed files + cached indices) and returns `list[Finding]`
 - **File discovery** uses `git ls-files` when in a repo, falls back to rglob
-- **Severity levels**: HIGH (act on it), MEDIUM (review it), LOW (informational)
+- **Severity levels**: HIGH (investigate and fix), MEDIUM (investigate and decide), LOW (note during review)
 
 ## Design Principles
 
 - Cross-file analysis is the differentiator — don't reimplement what ruff/pylint already do well
-- Findings should be actionable, not just informative
-- Grey areas are fine — the consumer (Claude Code) can apply judgment
+- Findings are **investigation pointers**, not mandates — the consumer (Claude Code) reads the code and decides
+- Include cross-file context (caller counts, blast radius) so findings are actionable
+- Grey areas are fine — Claude Code can apply judgment about whether a finding warrants action
 - Minimal dependencies preferred — don't add deps without clear justification
 - Calls `git` via subprocess (list args, no shell) for file discovery and diff mode
 

@@ -9,6 +9,7 @@ from pysmelly.checks.callers import (
     check_return_none_instead_of_raise,
     check_single_call_site,
     check_unused_defaults,
+    check_vestigial_params,
 )
 from pysmelly.registry import Severity
 
@@ -1308,3 +1309,146 @@ except Exception:
         findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
+
+
+class TestVestigialParams:
+    def test_finds_unused_param(self, trees):
+        t = trees.code("""\
+def process(data, format_type):
+    return data.upper()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 1
+        assert "format_type" in findings[0].message
+        assert "process()" in findings[0].message
+
+    def test_includes_caller_count(self, trees):
+        t = trees.files(
+            {
+                "lib.py": """\
+def process(data, format_type):
+    return data.upper()
+""",
+                "a.py": 'from lib import process\nprocess("hello", "json")',
+                "b.py": 'from lib import process\nprocess("world", "xml")',
+            }
+        )
+        findings = check_vestigial_params(t)
+        assert len(findings) == 1
+        assert "2 caller(s) still pass it" in findings[0].message
+
+    def test_no_finding_all_params_used(self, trees):
+        t = trees.code("""\
+def process(data, format_type):
+    if format_type == "json":
+        return json.dumps(data)
+    return str(data)
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_underscore_prefixed_params(self, trees):
+        t = trees.code("""\
+def callback(event, _context):
+    handle(event)
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_self_and_cls(self, trees):
+        t = trees.code("""\
+class Foo:
+    def method(self, data):
+        return data.upper()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_stub_body_pass(self, trees):
+        t = trees.code("""\
+def not_implemented(data, options):
+    pass
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_stub_body_ellipsis(self, trees):
+        t = trees.code("""\
+def protocol_method(data, options):
+    ...
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_stub_body_not_implemented(self, trees):
+        t = trees.code("""\
+def abstract_method(data, options):
+    raise NotImplementedError
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_abstractmethod_decorated(self, trees):
+        t = trees.code("""\
+from abc import abstractmethod
+
+class Base:
+    @abstractmethod
+    def process(self, data, options):
+        return data
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_override_decorated(self, trees):
+        t = trees.code("""\
+class Child(Base):
+    @override
+    def process(self, data, options):
+        return data.upper()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_multiple_unused_params(self, trees):
+        t = trees.code("""\
+def transform(data, retry_count, timeout, cache_key, batch_size):
+    return data
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 4
+        names = {f.message.split(" is")[0] for f in findings}
+        assert names == {"retry_count", "timeout", "cache_key", "batch_size"}
+
+    def test_skips_docstring_only_stub(self, trees):
+        t = trees.code("""\
+def abstract_method(data, options):
+    \"\"\"Must be implemented by subclasses.\"\"\"
+    pass
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_finds_unused_in_method(self, trees):
+        t = trees.code("""\
+class Executor:
+    def execute(self, task, track_metrics=False, run_async=False):
+        return task.run()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 2
+        names = {f.message.split(" is")[0] for f in findings}
+        assert "track_metrics" in names
+        assert "run_async" in names
+
+    def test_skips_test_files(self, trees):
+        t = trees.files(
+            {
+                "tests/test_foo.py": """\
+def helper(data, unused):
+    return data
+""",
+            }
+        )
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0

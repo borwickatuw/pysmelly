@@ -153,6 +153,7 @@ CALLER_AWARE_CHECKS = {
     "scattered-isinstance",
     "inconsistent-error-handling",
     "shared-mutable-module-state",
+    "vestigial-params",
 }
 
 

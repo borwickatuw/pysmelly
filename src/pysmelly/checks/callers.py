@@ -983,3 +983,130 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+# --- vestigial-params helpers ---
+
+
+def _is_stub_body(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function body is a stub (pass, ..., raise NotImplementedError)."""
+    body = func_node.body
+    # Strip docstring
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if not body:
+        return True
+    if len(body) != 1:
+        return False
+    stmt = body[0]
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+        if stmt.value.value is ...:
+            return True
+    if isinstance(stmt, ast.Raise) and stmt.exc:
+        exc = stmt.exc
+        if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+            if exc.func.id == "NotImplementedError":
+                return True
+        if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+            return True
+    return False
+
+
+def _has_interface_decorator(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function is decorated with @abstractmethod or @override."""
+    for deco in func_node.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id in ("abstractmethod", "override"):
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr in ("abstractmethod", "override"):
+            return True
+    return False
+
+
+def _find_unused_params(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
+    """Find parameter names never referenced in the function body."""
+    param_names: list[str] = []
+    for arg in func_node.args.posonlyargs + func_node.args.args + func_node.args.kwonlyargs:
+        if arg.arg not in ("self", "cls") and not arg.arg.startswith("_"):
+            param_names.append(arg.arg)
+
+    if not param_names:
+        return []
+
+    # Collect all Name references in the body
+    used_names: set[str] = set()
+    for stmt in func_node.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name):
+                used_names.add(node.id)
+
+    return [p for p in param_names if p not in used_names]
+
+
+@check(
+    "vestigial-params",
+    severity=Severity.MEDIUM,
+    description="Function parameters declared but never referenced in the body",
+)
+def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
+    """Find parameters that exist in a function signature but are never used.
+
+    Parameters accumulate as features iterate: format_type is added for
+    multi-format support, the format handling is later removed, but the
+    parameter remains in the signature and all callers still pass it.
+
+    The cross-file caller count shows blast radius: removing the vestigial
+    parameter means updating every call site.
+    """
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+
+            # Skip stubs and interface methods
+            if _is_stub_body(node):
+                continue
+            if _has_interface_decorator(node):
+                continue
+
+            unused = _find_unused_params(node)
+            if not unused:
+                continue
+
+            # Count callers for cross-file context
+            callers = ctx.call_index.get(node.name, [])
+            caller_count = len(callers)
+
+            for param_name in sorted(unused):
+                if caller_count > 0:
+                    msg = (
+                        f"{param_name} is declared but never used in "
+                        f"{node.name}() — {caller_count} caller(s) still pass it"
+                    )
+                else:
+                    msg = f"{param_name} is declared but never used in " f"{node.name}()"
+
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="vestigial-params",
+                        message=msg,
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings
