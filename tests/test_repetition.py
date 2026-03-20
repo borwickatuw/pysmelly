@@ -649,6 +649,32 @@ class TestRepeatedStringParsing:
         findings = check_repeated_string_parsing(t)
         assert len(findings) == 0
 
+    def test_finds_intermediate_variable_pattern(self, trees):
+        """parts = x.split(delim) then parts[N] is the real-world pattern."""
+        t = trees.files(
+            {
+                "a.py": """\
+def get_city(addr):
+    parts = addr.split("|")
+    return parts[1]
+""",
+                "b.py": """\
+def get_state(addr):
+    parts = addr.split("|")
+    return parts[2]
+""",
+                "c.py": """\
+def get_zip(addr):
+    parts = addr.split("|")
+    return parts[3]
+""",
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert '"|"' in messages
+
     def test_finds_multiple_indices_same_delimiter(self, trees):
         """3+ different indices with same delimiter = parsing a format."""
         t = trees.code("""\

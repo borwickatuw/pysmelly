@@ -720,10 +720,15 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
 
 
 def _find_split_subscripts(tree: ast.Module) -> list[tuple[str, int, int]]:
-    """Find .split(delim)[N] patterns, returning (delimiter, index, lineno) tuples."""
+    """Find .split(delim)[N] patterns, returning (delimiter, index, lineno) tuples.
+
+    Detects both direct chaining (x.split("|")[1]) and intermediate variable
+    patterns (parts = x.split("|") ... parts[1]).
+    """
     results: list[tuple[str, int, int]] = []
+
+    # Pattern 1: direct x.split(delim)[N]
     for node in ast.walk(tree):
-        # Pattern: Subscript(Call(Attribute(*, "split"), [Constant(str)]), Constant(int))
         if not isinstance(node, ast.Subscript):
             continue
         if not isinstance(node.slice, ast.Constant):
@@ -745,6 +750,57 @@ def _find_split_subscripts(tree: ast.Module) -> list[tuple[str, int, int]]:
             continue
 
         results.append((delim_arg.value, node.slice.value, node.lineno))
+
+    # Pattern 2: parts = x.split(delim) ... parts[N]
+    # Collect split-assigned variable names and their delimiters per function
+    for func_node in ast.walk(tree):
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        # Map variable name -> delimiter for split assignments in this function
+        split_vars: dict[str, str] = {}
+        for node in ast.walk(func_node):
+            if not isinstance(node, ast.Assign):
+                continue
+            if len(node.targets) != 1:
+                continue
+            if not isinstance(node.targets[0], ast.Name):
+                continue
+            val = node.value
+            if not isinstance(val, ast.Call):
+                continue
+            if not isinstance(val.func, ast.Attribute):
+                continue
+            if val.func.attr != "split":
+                continue
+            if not val.args:
+                continue
+            delim_arg = val.args[0]
+            if not isinstance(delim_arg, ast.Constant) or not isinstance(
+                delim_arg.value, str
+            ):
+                continue
+            split_vars[node.targets[0].id] = delim_arg.value
+
+        if not split_vars:
+            continue
+
+        # Find subscript access on those variables: parts[N]
+        for node in ast.walk(func_node):
+            if not isinstance(node, ast.Subscript):
+                continue
+            if not isinstance(node.value, ast.Name):
+                continue
+            if node.value.id not in split_vars:
+                continue
+            if not isinstance(node.slice, ast.Constant):
+                continue
+            if not isinstance(node.slice.value, int):
+                continue
+            results.append(
+                (split_vars[node.value.id], node.slice.value, node.lineno)
+            )
+
     return results
 
 
