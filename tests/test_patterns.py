@@ -1206,6 +1206,43 @@ UNUSED_CONSTANT = "never_referenced"
         findings = check_dead_constants(t)
         assert len(findings) == 1
 
+    def test_finds_unreferenced_frozenset(self, trees):
+        """Non-literal constants like frozenset() should also be caught."""
+        t = trees.code("""\
+SKIP_NAMES = frozenset({"foo", "bar", "baz"})
+OTHER_SET = frozenset({"a", "b"})
+
+def process(name):
+    return name
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 2
+        names = {f.message.split(" = ")[0] for f in findings}
+        assert "SKIP_NAMES" in names
+        assert "OTHER_SET" in names
+
+    def test_finds_unreferenced_dict_literal(self, trees):
+        t = trees.code("""\
+MAPPING = {"a": 1, "b": 2}
+
+def process():
+    pass
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 1
+        assert "MAPPING" in findings[0].message
+
+    def test_no_finding_when_frozenset_is_used(self, trees):
+        t = trees.code("""\
+SKIP_NAMES = frozenset({"foo", "bar"})
+
+def process(name):
+    if name in SKIP_NAMES:
+        return
+""")
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
 
 class TestUnreachableAfterReturn:
     def test_code_after_return(self, trees):

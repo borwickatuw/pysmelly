@@ -1155,32 +1155,75 @@ def _collect_all_name_and_attr_loads(
     return names
 
 
+def _collect_module_level_names(tree: ast.Module) -> dict[str, tuple[int, str]]:
+    """Find all UPPER_CASE module-level names (including non-literal assignments).
+
+    Returns {name: (lineno, description)} where description is a short
+    representation of the assigned value for the finding message.
+    """
+    names: dict[str, tuple[int, str]] = {}
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        name = target.id
+        if not name.isupper() or name.startswith("_"):
+            continue
+
+        # Build a short description of the value
+        val = node.value
+        if isinstance(val, ast.Constant):
+            desc = repr(val.value)
+        elif isinstance(val, ast.Call) and isinstance(val.func, ast.Name):
+            desc = f"{val.func.id}(...)"
+        elif isinstance(val, ast.Call) and isinstance(val.func, ast.Attribute):
+            desc = f"{val.func.attr}(...)"
+        elif isinstance(val, ast.Dict):
+            desc = "{...}"
+        elif isinstance(val, ast.List):
+            desc = "[...]"
+        elif isinstance(val, ast.Set):
+            desc = "{...}"
+        elif isinstance(val, ast.Tuple):
+            desc = "(...)"
+        else:
+            desc = "..."
+
+        if len(desc) > 40:
+            desc = desc[:37] + "..."
+        names[name] = (node.lineno, desc)
+    return names
+
+
 @check(
     "dead-constants",
     severity=Severity.MEDIUM,
     description="UPPER_CASE module-level constants never referenced anywhere",
 )
 def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
-    """Find UPPER_CASE module-level constants that are defined but never used.
+    """Find UPPER_CASE module-level names that are defined but never used.
 
-    Event name constants, configuration keys, feature flag names — these
-    accumulate as code evolves. When the code that consumed them is changed
-    or removed, the constants remain as dead weight. The hooks.py pattern
-    is typical: 17 event name constants defined, zero ever referenced,
-    because the executor uses different string literals.
+    Covers both literal constants (strings, ints) and non-literal assignments
+    (frozenset, dict, list constructors). Event name constants, skip lists,
+    configuration keys — these accumulate as code evolves and become dead
+    weight when the consuming code is changed or removed.
     """
     findings = []
 
-    # Collect non-reassigned constants: {name: [(filepath, lineno, value)]}
-    all_constants: dict[str, list[tuple[Path, int, object]]] = {}
+    # Collect all UPPER_CASE module-level names: {name: [(filepath, lineno, desc)]}
+    all_constants: dict[str, list[tuple[Path, int, str]]] = {}
     for filepath, tree in ctx.all_trees.items():
         # Settings files contain UPPER_CASE constants read by frameworks
         # via getattr() — they're not dead, just invisible to static analysis
         if _is_settings_file(filepath):
             continue
-        for name, (lineno, value) in _collect_module_constants(tree).items():
+        for name, (lineno, desc) in _collect_module_level_names(tree).items():
             if not _is_constant_reassigned(tree, name, lineno):
-                all_constants.setdefault(name, []).append((filepath, lineno, value))
+                all_constants.setdefault(name, []).append((filepath, lineno, desc))
 
     if not all_constants:
         return findings
@@ -1196,14 +1239,10 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
         if ctx.import_index.get(const_name):
             continue
 
-        for filepath, lineno, value in defs:
+        for filepath, lineno, desc in defs:
             tree = ctx.all_trees[filepath]
             if is_in_dunder_all(const_name, tree):
                 continue
-
-            value_repr = repr(value)
-            if len(value_repr) > 40:
-                value_repr = value_repr[:37] + "..."
 
             findings.append(
                 Finding(
@@ -1211,7 +1250,7 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
                     line=lineno,
                     check="dead-constants",
                     message=(
-                        f"{const_name} = {value_repr} is never referenced "
+                        f"{const_name} = {desc} is never referenced "
                         f"anywhere in the codebase"
                     ),
                     severity=Severity.MEDIUM,
