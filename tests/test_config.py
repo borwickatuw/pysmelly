@@ -29,9 +29,7 @@ class TestLoadConfig:
     def test_dotfile_takes_precedence(self, tmp_path):
         """When both exist, .pysmelly.toml wins."""
         (tmp_path / ".pysmelly.toml").write_text('skip = ["dead-code"]\n')
-        (tmp_path / "pyproject.toml").write_text(
-            '[tool.pysmelly]\nskip = ["internal-only"]\n'
-        )
+        (tmp_path / "pyproject.toml").write_text('[tool.pysmelly]\nskip = ["internal-only"]\n')
         result = load_config(tmp_path, VALID_CHECKS)
         assert result == {"skip": ["dead-code"]}
 

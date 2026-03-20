@@ -23,6 +23,20 @@ analysis to detect patterns that single-file linters miss.
 
 Install:  uvx pysmelly (zero dependencies, no setup required)
 
+Suppression:
+  # pysmelly: ignore              Suppress all checks on this line
+  # pysmelly: ignore[dead-code]   Suppress specific check(s)
+
+Configuration:
+  .pysmelly.toml or [tool.pysmelly] in pyproject.toml
+  exclude = ["tests/", "test_*"]
+  skip = ["single-call-site"]
+  min-severity = "medium"
+
+Incremental analysis:
+  pysmelly --diff              Findings in uncommitted changes only
+  pysmelly --diff main         Findings in changes since main
+
 Severity levels:
   high    Act on this or explicitly justify keeping it
   medium  Review each finding, fix what makes sense
@@ -208,8 +222,30 @@ uvx pysmelly                           # analyze current directory (zero-install
 uvx pysmelly --summary                 # counts per check, no individual findings
 uvx pysmelly --check dead-code         # run a single check
 uvx pysmelly --min-severity medium     # filter noise
+uvx pysmelly --exclude tests/ test_*   # exclude test files
+uvx pysmelly --diff                    # findings in uncommitted changes only
+uvx pysmelly --diff main              # findings in changes since main
 uvx pysmelly --list-checks             # see all available checks
 ```
+
+## Suppressing findings
+
+```python
+x = 1  # pysmelly: ignore              — suppress all checks on this line
+x = 1  # pysmelly: ignore[dead-code]   — suppress specific check(s)
+```
+
+## Configuration
+
+Create `.pysmelly.toml` or add `[tool.pysmelly]` to `pyproject.toml`:
+
+```toml
+exclude = ["tests/", "test_*", "conftest.py"]
+skip = ["single-call-site"]
+min-severity = "medium"
+```
+
+CLI arguments extend list values and override scalar values.
 
 ## How to interpret findings
 

@@ -172,9 +172,7 @@ DICT_ACCESS_METHODS = frozenset({"get", "pop", "setdefault"})
 
 def _is_dict_access_key(node: ast.Constant, call: ast.Call) -> bool:
     """Check if a constant is the first positional arg to a dict-access method."""
-    if not (
-        isinstance(call.func, ast.Attribute) and call.func.attr in DICT_ACCESS_METHODS
-    ):
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in DICT_ACCESS_METHODS):
         return False
     return len(call.args) >= 1 and call.args[0] is node
 

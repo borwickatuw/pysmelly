@@ -53,15 +53,12 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
 
     for key in LIST_KEYS:
         if key in config and not isinstance(config[key], list):
-            raise ConfigError(
-                f"{source}: '{key}' must be a list, got {type(config[key]).__name__}"
-            )
+            raise ConfigError(f"{source}: '{key}' must be a list, got {type(config[key]).__name__}")
         if key in config:
             for item in config[key]:
                 if not isinstance(item, str):
                     raise ConfigError(
-                        f"{source}: '{key}' items must be strings, "
-                        f"got {type(item).__name__}"
+                        f"{source}: '{key}' items must be strings, " f"got {type(item).__name__}"
                     )
 
     for key in STRING_KEYS:
