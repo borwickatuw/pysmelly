@@ -779,3 +779,233 @@ def check_shadowed_methods(ctx: AnalysisContext) -> list[Finding]:
                 )
 
     return findings
+
+
+# --- large-class ---
+
+
+@check(
+    "large-class",
+    severity=Severity.LOW,
+    description="Classes with many methods — review for single responsibility",
+)
+def check_large_class(ctx: AnalysisContext) -> list[Finding]:
+    """Find classes with 20+ non-dunder methods.
+
+    Classes grow by accretion — each feature adds a method, nobody splits
+    the class. ApplicationManager with 49 methods handles users, database,
+    email, logging, reports, files, and sorting all in one class.
+
+    Investigation pointer: Claude Code can review whether the class has
+    multiple distinct responsibilities that should be separate classes.
+    """
+    findings = []
+    min_methods = 20
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            methods = [
+                item
+                for item in node.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and not (item.name.startswith("__") and item.name.endswith("__"))
+            ]
+            if len(methods) >= min_methods:
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="large-class",
+                        message=(
+                            f"{node.name} has {len(methods)} methods "
+                            f"— review for single responsibility"
+                        ),
+                        severity=Severity.LOW,
+                    )
+                )
+
+    return findings
+
+
+# --- long-function ---
+
+
+@check(
+    "long-function",
+    severity=Severity.LOW,
+    description="Functions spanning 100+ lines — review for decomposition",
+)
+def check_long_function(ctx: AnalysisContext) -> list[Finding]:
+    """Find functions spanning 100+ lines.
+
+    Different from ruff's C901 (cyclomatic complexity): a 200-line function
+    with simple sequential steps won't trigger C901 but is still a
+    decomposition candidate. Long functions grow by accretion — each
+    change adds a few lines, nobody extracts helpers.
+
+    Investigation pointer: Claude Code can identify natural phase boundaries
+    (validation, transformation, formatting) and suggest extraction.
+    """
+    findings = []
+    min_lines = 100
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not hasattr(node, "end_lineno") or not node.end_lineno:
+                continue
+            lines = node.end_lineno - node.lineno + 1
+            if lines >= min_lines:
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="long-function",
+                        message=(
+                            f"{node.name}() spans {lines} lines " f"— review for decomposition"
+                        ),
+                        severity=Severity.LOW,
+                    )
+                )
+
+    return findings
+
+
+# --- long-elif-chain helpers ---
+
+
+def _count_elif_chain(node: ast.If) -> tuple[int, str | None]:
+    """Count branches in an if/elif chain and identify the compared variable.
+
+    Returns (branch_count, compared_variable_name_or_None).
+    """
+    count = 1
+    compared_var = _get_comparison_target(node.test)
+    current = node
+    while current.orelse and len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+        current = current.orelse[0]
+        count += 1
+        # Check that each branch compares the same variable
+        branch_var = _get_comparison_target(current.test)
+        if compared_var is not None and branch_var != compared_var:
+            compared_var = None  # mixed comparisons, not a dispatch chain
+    # Count the else branch if present
+    if current.orelse:
+        count += 1
+    return count, compared_var
+
+
+def _get_comparison_target(test: ast.expr) -> str | None:
+    """Extract the variable name from a comparison like 'x == literal'.
+
+    Returns the variable name, or None if the test isn't a simple comparison.
+    """
+    if not isinstance(test, ast.Compare):
+        return None
+    if len(test.ops) != 1:
+        return None
+    if not isinstance(test.ops[0], (ast.Eq, ast.Is)):
+        return None
+    left = test.left
+    if isinstance(left, ast.Name):
+        return left.id
+    if isinstance(left, ast.Attribute):
+        return _elif_attr_str(left)
+    return None
+
+
+def _elif_attr_str(node: ast.Attribute) -> str:
+    """Build a dotted string from an attribute chain."""
+    if isinstance(node.value, ast.Name):
+        return f"{node.value.id}.{node.attr}"
+    if isinstance(node.value, ast.Attribute):
+        return f"{_elif_attr_str(node.value)}.{node.attr}"
+    return node.attr
+
+
+@check(
+    "long-elif-chain",
+    severity=Severity.LOW,
+    description="Long if/elif chains that may be replaceable with a dispatch dict or enum",
+)
+def check_long_elif_chain(ctx: AnalysisContext) -> list[Finding]:
+    """Find if/elif chains with 8+ branches comparing the same variable.
+
+    These chains grow by accretion — each new status code, format type,
+    or category gets another elif. They're often replaceable with a dict
+    mapping or enum, which is more maintainable and extensible.
+
+    Investigation pointer: Claude Code can evaluate whether a dispatch
+    dict, enum, or match statement would be cleaner.
+    """
+    findings = []
+    min_branches = 8
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        # Track which If nodes we've already counted (to avoid
+        # re-counting elif sub-chains)
+        counted: set[int] = set()
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            if id(node) in counted:
+                continue
+
+            branch_count, compared_var = _count_elif_chain(node)
+            if branch_count < min_branches:
+                continue
+
+            # Mark all nodes in this chain as counted
+            current = node
+            while True:
+                counted.add(id(current))
+                if (
+                    current.orelse
+                    and len(current.orelse) == 1
+                    and isinstance(current.orelse[0], ast.If)
+                ):
+                    current = current.orelse[0]
+                else:
+                    break
+
+            # Find enclosing function name
+            func_name = None
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if (
+                    hasattr(fn, "end_lineno")
+                    and fn.end_lineno
+                    and fn.lineno <= node.lineno <= fn.end_lineno
+                ):
+                    func_name = fn.name
+
+            if compared_var:
+                detail = f"comparing {compared_var} to literals " f"— consider a dict or enum"
+            else:
+                detail = "— review for dispatch table or decomposition"
+
+            location = f"{func_name}()" if func_name else "module level"
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="long-elif-chain",
+                    message=(f"{branch_count}-branch if/elif chain in " f"{location} {detail}"),
+                    severity=Severity.LOW,
+                )
+            )
+
+    return findings

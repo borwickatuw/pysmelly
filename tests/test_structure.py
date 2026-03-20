@@ -3,6 +3,9 @@
 from pysmelly.checks.structure import (
     check_duplicate_blocks,
     check_duplicate_except_blocks,
+    check_large_class,
+    check_long_elif_chain,
+    check_long_function,
     check_middle_man,
     check_param_clumps,
     check_shadowed_methods,
@@ -852,3 +855,159 @@ class Combined(Alpha, Beta):
         assert len(findings) == 1
         assert "MRO uses Alpha's version" in findings[0].message
         assert "Beta's is silently shadowed" in findings[0].message
+
+
+class TestLargeClass:
+    def test_finds_class_with_20_methods(self, trees):
+        methods = "\n".join([f"    def method_{i}(self): pass" for i in range(20)])
+        t = trees.code(f"class BigClass:\n{methods}\n")
+        findings = check_large_class(t)
+        assert len(findings) == 1
+        assert "BigClass" in findings[0].message
+        assert "20 methods" in findings[0].message
+        assert findings[0].severity.value == "low"
+
+    def test_no_finding_19_methods(self, trees):
+        methods = "\n".join([f"    def method_{i}(self): pass" for i in range(19)])
+        t = trees.code(f"class SmallEnough:\n{methods}\n")
+        findings = check_large_class(t)
+        assert len(findings) == 0
+
+    def test_excludes_dunder_methods(self, trees):
+        """Dunder methods don't count toward the threshold."""
+        regular = "\n".join([f"    def method_{i}(self): pass" for i in range(15)])
+        dunders = "\n".join(
+            [
+                "    def __init__(self): pass",
+                "    def __repr__(self): pass",
+                "    def __str__(self): pass",
+                "    def __eq__(self, other): pass",
+                "    def __hash__(self): pass",
+                "    def __len__(self): pass",
+            ]
+        )
+        t = trees.code(f"class MixedClass:\n{regular}\n{dunders}\n")
+        findings = check_large_class(t)
+        # 15 regular + 6 dunders = 21 total, but only 15 counted
+        assert len(findings) == 0
+
+
+class TestLongFunction:
+    def test_finds_long_function(self, trees):
+        body = "\n".join([f"    x_{i} = {i}" for i in range(100)])
+        t = trees.code(f"def long_func():\n{body}\n")
+        findings = check_long_function(t)
+        assert len(findings) == 1
+        assert "long_func()" in findings[0].message
+        assert "lines" in findings[0].message
+        assert findings[0].severity.value == "low"
+
+    def test_no_finding_short_function(self, trees):
+        body = "\n".join([f"    x_{i} = {i}" for i in range(50)])
+        t = trees.code(f"def short_func():\n{body}\n")
+        findings = check_long_function(t)
+        assert len(findings) == 0
+
+    def test_finds_long_method(self, trees):
+        body = "\n".join([f"        x_{i} = {i}" for i in range(100)])
+        t = trees.code(f"class Foo:\n    def long_method(self):\n{body}\n")
+        findings = check_long_function(t)
+        assert len(findings) == 1
+        assert "long_method()" in findings[0].message
+
+
+class TestLongElifChain:
+    def test_finds_chain_of_eight(self, trees):
+        branches = "\n".join(
+            [
+                "    if x == 1: return 'a'",
+                "    elif x == 2: return 'b'",
+                "    elif x == 3: return 'c'",
+                "    elif x == 4: return 'd'",
+                "    elif x == 5: return 'e'",
+                "    elif x == 6: return 'f'",
+                "    elif x == 7: return 'g'",
+                "    else: return 'h'",
+            ]
+        )
+        t = trees.code(f"def classify(x):\n{branches}\n")
+        findings = check_long_elif_chain(t)
+        assert len(findings) == 1
+        assert "8-branch" in findings[0].message
+        assert "classify()" in findings[0].message
+        assert "x" in findings[0].message
+
+    def test_no_finding_seven_branches(self, trees):
+        branches = "\n".join(
+            [
+                "    if x == 1: return 'a'",
+                "    elif x == 2: return 'b'",
+                "    elif x == 3: return 'c'",
+                "    elif x == 4: return 'd'",
+                "    elif x == 5: return 'e'",
+                "    elif x == 6: return 'f'",
+                "    else: return 'g'",
+            ]
+        )
+        t = trees.code(f"def classify(x):\n{branches}\n")
+        findings = check_long_elif_chain(t)
+        assert len(findings) == 0
+
+    def test_identifies_compared_variable(self, trees):
+        branches = "\n".join(
+            [
+                "    if status == 'a': pass",
+                "    elif status == 'b': pass",
+                "    elif status == 'c': pass",
+                "    elif status == 'd': pass",
+                "    elif status == 'e': pass",
+                "    elif status == 'f': pass",
+                "    elif status == 'g': pass",
+                "    else: pass",
+            ]
+        )
+        t = trees.code(f"def check(status):\n{branches}\n")
+        findings = check_long_elif_chain(t)
+        assert len(findings) == 1
+        assert "comparing status to literals" in findings[0].message
+        assert "dict or enum" in findings[0].message
+
+    def test_mixed_comparisons_no_variable(self, trees):
+        """When branches compare different variables, don't name one."""
+        branches = "\n".join(
+            [
+                "    if a == 1: pass",
+                "    elif b == 2: pass",
+                "    elif c == 3: pass",
+                "    elif d == 4: pass",
+                "    elif e == 5: pass",
+                "    elif f == 6: pass",
+                "    elif g == 7: pass",
+                "    else: pass",
+            ]
+        )
+        t = trees.code(f"def mixed(a, b, c, d, e, f, g):\n{branches}\n")
+        findings = check_long_elif_chain(t)
+        assert len(findings) == 1
+        assert "dispatch table or decomposition" in findings[0].message
+
+    def test_does_not_double_count_sub_chains(self, trees):
+        """A 10-branch chain should produce 1 finding, not 3."""
+        branches = "\n".join(
+            [
+                "    if x == 1: pass",
+                "    elif x == 2: pass",
+                "    elif x == 3: pass",
+                "    elif x == 4: pass",
+                "    elif x == 5: pass",
+                "    elif x == 6: pass",
+                "    elif x == 7: pass",
+                "    elif x == 8: pass",
+                "    elif x == 9: pass",
+                "    else: pass",
+            ]
+        )
+        t = trees.code(f"def dispatch(x):\n{branches}\n")
+        findings = check_long_elif_chain(t)
+        assert len(findings) == 1
+        assert "10-branch" in findings[0].message
