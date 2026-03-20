@@ -3,7 +3,7 @@
 from pysmelly.checks.callers import (
     check_constant_args,
     check_dead_code,
-    check_god_dict,
+    check_dict_as_dataclass,
     check_inconsistent_error_handling,
     check_internal_only,
     check_pass_through_params,
@@ -1532,7 +1532,7 @@ def helper(data, unused):
         assert len(findings) == 0
 
 
-class TestGodDict:
+class TestDictAsDataclass:
     def test_finds_large_dict_return(self, trees):
         t = trees.code("""\
 def get_user_data(user):
@@ -1543,7 +1543,7 @@ def get_user_data(user):
         "status": user.status,
     }
 """)
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 1
         assert "get_user_data()" in findings[0].message
         assert "4 string keys" in findings[0].message
@@ -1554,7 +1554,7 @@ def get_user_data(user):
 def get_info():
     return {"name": "foo", "age": 42}
 """)
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 0
 
     def test_ignores_non_string_keys(self, trees):
@@ -1562,7 +1562,7 @@ def get_info():
 def get_mapping():
     return {1: "a", 2: "b", 3: "c", 4: "d"}
 """)
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 0
 
     def test_cross_file_access(self, trees):
@@ -1585,7 +1585,7 @@ def show_user(user):
 """,
             }
         )
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 1
         assert "1 file" in findings[0].message
 
@@ -1594,7 +1594,7 @@ def show_user(user):
 def get_fixture():
     return {"a": 1, "b": 2, "c": 3, "d": 4}
 """})
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 0
 
     def test_severity_is_medium(self, trees):
@@ -1602,7 +1602,7 @@ def get_fixture():
 def get_config():
     return {"host": "h", "port": 80, "timeout": 30, "retries": 3}
 """)
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
 
@@ -1611,6 +1611,6 @@ def get_config():
 def make_record():
     return {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
 """)
-        findings = check_god_dict(t)
+        findings = check_dict_as_dataclass(t)
         assert len(findings) == 1
         assert "first" in findings[0].message

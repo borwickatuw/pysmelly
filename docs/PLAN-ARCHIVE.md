@@ -126,7 +126,7 @@ Added from running pysmelly against the antipatterns corpus and real-world codeb
 
 - [x] **`late-binding-closures`** (HIGH) — Lambda/closure in loop captures loop variable by reference instead of value. Detects both lambdas and nested function defs; correctly handles default-arg capture pattern (x=x). Pattern check in `patterns.py`.
 - [x] **`law-of-demeter`** (LOW) — Attribute chains 4+ deep (order.user.address.city). Skips fluent API method chains, stdlib module access, and AST/IR node navigation. Pattern check in `patterns.py`.
-- [x] **`god-dict`** (MEDIUM) — Functions returning dict literals with 4+ string keys. Cross-file evidence (callers accessing keys via subscript) enhances the message. Caller-aware check in `callers.py`.
+- [x] **`dict-as-dataclass`** (MEDIUM) — Functions returning dict literals with 4+ string keys. Cross-file evidence (callers accessing keys via subscript) enhances the message. Caller-aware check in `callers.py`.
 - [x] **`repeated-string-parsing`** (MEDIUM) — `.split(delim)[N]` patterns in 3+ locations, or same delimiter with 3+ different indices. Detects both direct chaining and intermediate variable patterns. Repetition check in `repetition.py`.
 
 ### Phase 9d: Outscience feedback iterations

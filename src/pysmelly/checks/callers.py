@@ -1161,7 +1161,7 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
     return findings
 
 
-# --- god-dict ---
+# --- dict-as-dataclass ---
 
 
 def _collect_dict_returning_functions(
@@ -1213,11 +1213,11 @@ def _collect_dict_returning_functions(
 
 
 @check(
-    "god-dict",
+    "dict-as-dataclass",
     severity=Severity.MEDIUM,
     description="Functions returning dict literals with 4+ keys — consider a dataclass",
 )
-def check_god_dict(ctx: AnalysisContext) -> list[Finding]:
+def check_dict_as_dataclass(ctx: AnalysisContext) -> list[Finding]:
     """Find functions returning large dict literals that should be dataclasses."""
     findings = []
 
@@ -1274,7 +1274,7 @@ def check_god_dict(ctx: AnalysisContext) -> list[Finding]:
                 Finding(
                     file=func_def["file"],
                     line=func_def["line"],
-                    check="god-dict",
+                    check="dict-as-dataclass",
                     message=msg,
                     severity=Severity.MEDIUM,
                 )

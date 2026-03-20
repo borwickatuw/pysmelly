@@ -12,7 +12,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/registry.py` - `@check` decorator, `Finding` dataclass, `Severity` enum
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter
-- `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling, god-dict)
+- `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling, dict-as-dataclass)
 - `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts, fossilized-toggles, dead-constants, unreachable-after-return, isinstance-chain, boolean-param-explosion, exception-flow-control, arrow-code, hungarian-notation, inconsistent-returns, plaintext-passwords, getattr-strings, late-binding-closures, law-of-demeter)
 - `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps, middle-man)
 - `src/pysmelly/checks/dead.py` - Dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers, dead-abstraction, broken-backends)
