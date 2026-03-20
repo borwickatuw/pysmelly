@@ -458,3 +458,102 @@ def func_c(x, y, verbose):
         findings = check_param_clumps(t)
         # After filtering verbose, only {x, y} remains (< 3)
         assert len(findings) == 0
+
+    def test_click_command_decorators_excluded(self, trees):
+        """Click CLI commands share params by design, not by accident."""
+        t = trees.code("""\
+import click
+
+@click.command()
+@click.option("--env")
+def deploy(environment, service, region):
+    pass
+
+@click.command()
+@click.option("--env")
+def rollback(environment, service, region):
+    pass
+
+@click.command()
+def status(environment, service, region):
+    pass
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 0
+
+    def test_abstractmethod_excluded(self, trees):
+        """Abstract method implementations share params by protocol, not clumping."""
+        t = trees.files(
+            {
+                "base.py": """\
+from abc import abstractmethod
+
+class Validator:
+    @abstractmethod
+    def validate(self, app_config, env_config, context):
+        pass
+""",
+                "impl_a.py": """\
+from abc import abstractmethod
+
+class ValidatorA:
+    @abstractmethod
+    def validate(self, app_config, env_config, context):
+        pass
+""",
+                "impl_b.py": """\
+from abc import abstractmethod
+
+class ValidatorB:
+    @abstractmethod
+    def validate(self, app_config, env_config, context):
+        pass
+""",
+            }
+        )
+        findings = check_param_clumps(t)
+        assert len(findings) == 0
+
+    def test_override_decorator_excluded(self, trees):
+        """@override functions share params by interface conformance."""
+        t = trees.code("""\
+from typing import override
+
+class A:
+    @override
+    def process(self, data, config, options):
+        pass
+
+class B:
+    @override
+    def process(self, data, config, options):
+        pass
+
+class C:
+    @override
+    def process(self, data, config, options):
+        pass
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 0
+
+    def test_non_interface_decorators_still_flagged(self, trees):
+        """Regular decorators don't suppress param-clumps."""
+        t = trees.code("""\
+def my_decorator(f):
+    return f
+
+@my_decorator
+def create_user(first_name, last_name, email):
+    pass
+
+@my_decorator
+def update_user(first_name, last_name, email):
+    pass
+
+@my_decorator
+def validate_user(first_name, last_name, email):
+    pass
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 1

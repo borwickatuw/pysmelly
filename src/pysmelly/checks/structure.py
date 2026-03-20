@@ -12,6 +12,23 @@ from pysmelly.registry import Finding, Severity, check
 
 NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "log", "quiet"})
 
+# Decorators that indicate CLI dispatch or interface conformance —
+# functions with these decorators share parameters by design, not by accident.
+INTERFACE_DECORATORS = frozenset(
+    {
+        # abc / typing
+        "abstractmethod",
+        "override",
+        # Click / Typer CLI
+        "command",
+        "group",
+        "option",
+        "argument",
+        "pass_context",
+        "pass_obj",
+    }
+)
+
 
 def _dedup_and_format_locations(
     items: list[dict],
@@ -383,6 +400,25 @@ def check_param_clumps(ctx: AnalysisContext) -> list[Finding]:
     return findings
 
 
+def _has_interface_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function has CLI dispatch or interface conformance decorators."""
+    for deco in node.decorator_list:
+        # @abstractmethod, @override
+        if isinstance(deco, ast.Name) and deco.id in INTERFACE_DECORATORS:
+            return True
+        # @click.command(), @click.option(...)
+        if isinstance(deco, ast.Call):
+            func = deco.func
+            if isinstance(func, ast.Attribute) and func.attr in INTERFACE_DECORATORS:
+                return True
+            if isinstance(func, ast.Name) and func.id in INTERFACE_DECORATORS:
+                return True
+        # @click.command (without parens), @app.command
+        if isinstance(deco, ast.Attribute) and deco.attr in INTERFACE_DECORATORS:
+            return True
+    return False
+
+
 def _get_meaningful_params(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> frozenset[str]:
@@ -399,7 +435,7 @@ def _extract_all_signatures(all_trees: dict[Path, ast.Module]) -> list[dict]:
 
     Includes methods, private functions, and decorated functions (broader
     than build_function_index) but excludes nested functions, test functions,
-    and test files.
+    test files, and functions with CLI dispatch or interface decorators.
     """
     signatures = []
 
@@ -425,6 +461,8 @@ def _extract_all_signatures(all_trees: dict[Path, ast.Module]) -> list[dict]:
             if id(node) in nested_funcs:
                 continue
             if node.name.startswith("test"):
+                continue
+            if _has_interface_decorator(node):
                 continue
 
             params = _get_meaningful_params(node)
