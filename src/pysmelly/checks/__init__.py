@@ -7,6 +7,7 @@ from pysmelly.checks import (  # noqa: F401
     architecture,
     callers,
     dead,
+    history,
     imports,
     patterns,
     recommendations,
