@@ -694,7 +694,7 @@ def _describe_trivial_return(value: ast.expr) -> str | None:
 
 @check(
     "env-fallbacks",
-    severity=Severity.HIGH,
+    severity=Severity.MEDIUM,
     description="os.environ.get() or os.getenv() with non-None defaults",
 )
 def check_env_fallbacks(ctx: AnalysisContext) -> list[Finding]:

@@ -59,7 +59,6 @@ pysmelly init
 | `dead-exceptions` | Custom exception classes never raised or caught anywhere. |
 | `compat-shims` | `try/except ImportError` patterns left over from supporting older Python versions the project no longer targets. |
 | `suspicious-fallbacks` | `.get()` on module-level constant dicts with non-trivial defaults. If the key should always exist, use `[]` indexing and fail fast. |
-| `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults. Required config should fail fast, not silently fall back. |
 | `unreachable-after-return` | Code after `return`/`raise` or exhaustive `if/else` branches — dead tail code from refactoring. |
 | `plaintext-passwords` | `==`/`!=` comparison on password/secret/token variables — use `hmac.compare_digest()` or hash comparison. |
 | `late-binding-closures` | Lambda/closure in loop captures loop variable by reference — all closures see the final value. |
@@ -68,6 +67,7 @@ pysmelly init
 
 | Check | What it finds |
 |---|---|
+| `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults — check whether the fallback is intentional. |
 | `constant-args` | Parameter always receives the same literal value from every caller. The value should be a default or constant. |
 | `vestigial-params` | Parameters declared but never referenced in the function body — with cross-file caller count showing blast radius. |
 | `foo-equals-foo` | Single-use locals gathered into an object — suggests bundling into a dataclass or building directly. |
