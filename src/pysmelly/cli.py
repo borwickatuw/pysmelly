@@ -162,6 +162,33 @@ def _has_test_excludes(excludes: list[str]) -> bool:
     return any("test" in pat.lower() for pat in excludes)
 
 
+def _check_guidance_status() -> str | None:
+    """Check if PYSMELLY.md exists and is current.
+
+    Returns a suggestion string, or None if guidance is up to date.
+    """
+    import hashlib
+
+    guidance_path = Path("PYSMELLY.md")
+    if not guidance_path.exists():
+        return (
+            "Run `pysmelly init` to set up AI review guidance for this project. "
+            "This creates PYSMELLY.md with detailed instructions on how to "
+            "act on findings."
+        )
+    try:
+        content = guidance_path.read_text()
+    except OSError:
+        return None
+    expected_hash = hashlib.sha256(GUIDANCE_CONTENT.encode()).hexdigest()[:12]
+    if f"pysmelly-guidance {expected_hash}" not in content:
+        return (
+            "PYSMELLY.md is outdated — run `pysmelly init` to update it with "
+            "the latest guidance."
+        )
+    return None
+
+
 def _build_guidance(excludes: list[str], checks_with_findings: set[str]) -> list[str]:
     """Build contextual guidance for LLM consumers."""
     guidance = [
@@ -174,6 +201,10 @@ def _build_guidance(excludes: list[str], checks_with_findings: set[str]) -> list
         "(framework requirement, public API contract) — not a general defense "
         "of the existing code.",
     ]
+
+    init_hint = _check_guidance_status()
+    if init_hint:
+        guidance.append(init_hint)
 
     if _has_test_excludes(excludes):
         guidance.append(
@@ -318,7 +349,11 @@ def _handle_init(args: list[str]) -> None:
 
     # Create parent directories if needed
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(GUIDANCE_CONTENT)
+    import hashlib
+
+    content_hash = hashlib.sha256(GUIDANCE_CONTENT.encode()).hexdigest()[:12]
+    versioned = f"<!-- pysmelly-guidance {content_hash} -->\n{GUIDANCE_CONTENT}"
+    path.write_text(versioned)
     print(f"Wrote {path}")
 
     # Add reference to CLAUDE.md (idempotent)
