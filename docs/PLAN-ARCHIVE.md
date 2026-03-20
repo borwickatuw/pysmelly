@@ -95,3 +95,29 @@ Two new checks in `checks/repetition.py` using collect-group-flag pattern. Moved
 - [x] **`--summary` flag** — Shows finding counts per check without individual findings. Sorted by severity (high first), then count descending.
 - [x] **`pysmelly init`** — Creates AI review guidance file (PYSMELLY.md) + CLAUDE.md reference for Claude Code adoption.
 - [x] **`temp-accumulators` consumer naming** — When an accumulator's only consumer is a dict key or attribute assignment, the message names the target (e.g., "only to populate manifest['metadata']").
+
+## Phase 9: Architectural Smells
+
+Two cross-file architectural checks, plus 10 new checks from the antipatterns corpus analysis.
+
+### Phase 9a: Original architectural checks
+
+- [x] **`inconsistent-error-handling`** (MEDIUM) — Same function called from 3+ sites with divergent error handling: some catch specific exceptions, some catch broad `Exception`, some don't catch at all. Caller-aware check in `callers.py`.
+- [x] **`shared-mutable-module-state`** (MEDIUM) — Module-level mutable variables mutated from other files at module scope. Tracks star imports, direct imports, module attribute access. Covers `.append()`, `.extend()`, `[key]=`, `+=`, etc. Architectural check in `architecture.py`.
+- [x] **`write-only-attributes`** (MEDIUM) — `@dataclass` fields never read anywhere in the codebase. Architectural check in `architecture.py`.
+- ~~`circular-imports`~~ — Dropped. Pylint R0401 and pycycle cover this.
+
+### Phase 9b: Antipatterns corpus checks (10 new checks)
+
+Added from running pysmelly against the antipatterns corpus and real-world codebases:
+
+- [x] **`arrow-code`** (LOW) — Functions with nesting depth 5+ (if/for/while/try/with pyramid). Pattern check in `patterns.py`.
+- [x] **`hungarian-notation`** (LOW) — Variables using Apps Hungarian (strName, lstItems) or Systems Hungarian (szName, lpBuffer, dwFlags) prefixes. Pattern check in `patterns.py`.
+- [x] **`inconsistent-returns`** (MEDIUM) — Functions returning 3+ distinct types across return paths. Pattern check in `patterns.py`.
+- [x] **`plaintext-passwords`** (HIGH) — `==`/`!=` comparison on password/secret/token variables. Pattern check in `patterns.py`.
+- [x] **`getattr-strings`** (MEDIUM) — `getattr(obj, 'literal')` without default or `hasattr(obj, 'literal')`. Includes cross-file shotgun surgery detection. Pattern check in `patterns.py`.
+- [x] **`broken-backends`** (MEDIUM) — Non-abstract classes where every method raises NotImplementedError. Dead code check in `dead.py`.
+- [x] **`temporal-coupling`** (MEDIUM) — Methods reading `self.x` only set by another non-`__init__` method. Architectural check in `architecture.py`.
+- [x] **`feature-envy`** (MEDIUM) — Methods accessing 3+ attributes of another parameter, more than `self`. Architectural check in `architecture.py`.
+- [x] **`anemic-domain`** (MEDIUM) — Classes with 5+ `__init__` attributes but zero non-dunder methods, with cross-file feature-envy evidence. Architectural check in `architecture.py`.
+- [x] **`shotgun-surgery`** (MEDIUM) — Same `obj.attr` accessed in 4+ files. Extensive noise suppression: COMMON_ATTRS skip list, stdlib module filtering, uppercase attribute filtering. Repetition check in `repetition.py`.
