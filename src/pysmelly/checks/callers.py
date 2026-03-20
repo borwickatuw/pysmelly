@@ -1035,14 +1035,55 @@ def _has_interface_decorator(func_node: ast.FunctionDef | ast.AsyncFunctionDef) 
     return False
 
 
+# Decorators that indicate framework dispatch — all params are
+# required by the framework, not by the function's own logic.
+_FRAMEWORK_DISPATCH_DECORATORS = frozenset(
+    {
+        "receiver",  # Django signals
+        "task",  # Celery
+        "shared_task",  # Celery
+        "periodic_task",  # Celery
+        "hookimpl",  # pluggy
+    }
+)
+
+
+def _has_framework_dispatch_decorator(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Check if a function is decorated with a framework dispatch decorator."""
+    for deco in func_node.decorator_list:
+        name = None
+        if isinstance(deco, ast.Name):
+            name = deco.id
+        elif isinstance(deco, ast.Call) and isinstance(deco.func, ast.Name):
+            name = deco.func.id
+        elif isinstance(deco, ast.Attribute):
+            name = deco.attr
+        elif isinstance(deco, ast.Call) and isinstance(deco.func, ast.Attribute):
+            name = deco.func.attr
+        if name in _FRAMEWORK_DISPATCH_DECORATORS:
+            return True
+    return False
+
+
 def _find_unused_params(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> list[str]:
     """Find parameter names never referenced in the function body."""
     param_names: list[str] = []
+    first_real_param = True
     for arg in func_node.args.posonlyargs + func_node.args.args + func_node.args.kwonlyargs:
-        if arg.arg not in ("self", "cls") and not arg.arg.startswith("_"):
-            param_names.append(arg.arg)
+        if arg.arg in ("self", "cls"):
+            continue
+        if arg.arg.startswith("_"):
+            continue
+        # Skip 'request' as first non-self param (web framework dispatch)
+        if first_real_param and arg.arg == "request":
+            first_real_param = False
+            continue
+        first_real_param = False
+        param_names.append(arg.arg)
 
     if not param_names:
         return []
@@ -1082,10 +1123,12 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
 
-            # Skip stubs and interface methods
+            # Skip stubs, interface methods, and framework dispatch
             if _is_stub_body(node):
                 continue
             if _has_interface_decorator(node):
+                continue
+            if _has_framework_dispatch_decorator(node):
                 continue
 
             unused = _find_unused_params(node)

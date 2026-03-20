@@ -1162,6 +1162,43 @@ VERY_LONG_CONSTANT = "this is a very long string value that exceeds forty charac
         assert len(findings) == 1
         assert "..." in findings[0].message
 
+    def test_skips_settings_file(self, trees):
+        """Django settings constants are read by the framework via getattr()."""
+        t = trees.files(
+            {
+                "myapp/settings.py": """\
+ROOT_URLCONF = "myapp.urls"
+AUTH_USER_MODEL = "accounts.User"
+DEBUG = True
+""",
+            }
+        )
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_skips_settings_directory(self, trees):
+        t = trees.files(
+            {
+                "config/settings/base.py": """\
+SECRET_KEY = "django-insecure-abc123"
+INSTALLED_APPS = []
+""",
+            }
+        )
+        findings = check_dead_constants(t)
+        assert len(findings) == 0
+
+    def test_non_settings_file_still_flagged(self, trees):
+        t = trees.files(
+            {
+                "myapp/constants.py": """\
+UNUSED_CONSTANT = "never_referenced"
+""",
+            }
+        )
+        findings = check_dead_constants(t)
+        assert len(findings) == 1
+
 
 class TestUnreachableAfterReturn:
     def test_code_after_return(self, trees):

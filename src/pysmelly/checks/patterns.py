@@ -1126,6 +1126,19 @@ def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
 # --- dead-constants helpers ---
 
 
+def _is_settings_file(filepath: Path) -> bool:
+    """Check if a file looks like a Django/framework settings file.
+
+    Settings files contain UPPER_CASE constants read by the framework via
+    getattr() — they appear unused in static analysis but are required.
+    """
+    if filepath.name == "settings.py":
+        return True
+    if "settings" in filepath.parts:
+        return True
+    return False
+
+
 def _collect_all_name_and_attr_loads(
     all_trees: dict[Path, ast.Module],
 ) -> set[str]:
@@ -1159,6 +1172,10 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
     # Collect non-reassigned constants: {name: [(filepath, lineno, value)]}
     all_constants: dict[str, list[tuple[Path, int, object]]] = {}
     for filepath, tree in ctx.all_trees.items():
+        # Settings files contain UPPER_CASE constants read by frameworks
+        # via getattr() — they're not dead, just invisible to static analysis
+        if _is_settings_file(filepath):
+            continue
         for name, (lineno, value) in _collect_module_constants(tree).items():
             if not _is_constant_reassigned(tree, name, lineno):
                 all_constants.setdefault(name, []).append((filepath, lineno, value))

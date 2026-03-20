@@ -1446,6 +1446,57 @@ def transform(data, retry_count, timeout, cache_key, batch_size):
         names = {f.message.split(" is")[0] for f in findings}
         assert names == {"retry_count", "timeout", "cache_key", "batch_size"}
 
+    def test_skips_request_as_first_param(self, trees):
+        """Django views: request is framework-required even if unused."""
+        t = trees.code("""\
+def my_view(request):
+    return render_template("index.html")
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_request_as_first_param_in_method(self, trees):
+        t = trees.code("""\
+class MyView:
+    def get(self, request, pk):
+        return self.get_object(pk)
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_request_not_skipped_when_not_first(self, trees):
+        """request in a non-first position is suspicious."""
+        t = trees.code("""\
+def process(data, request):
+    return data.upper()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 1
+        assert "request" in findings[0].message
+
+    def test_skips_receiver_decorated(self, trees):
+        """Django signal receivers have framework-required signatures."""
+        t = trees.code("""\
+from django.dispatch import receiver
+
+@receiver(post_save)
+def handle_save(sender, instance, created, **kwargs):
+    log("saved")
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_celery_task_decorated(self, trees):
+        t = trees.code("""\
+from celery import shared_task
+
+@shared_task
+def process(data, retries):
+    return data
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
     def test_skips_docstring_only_stub(self, trees):
         t = trees.code("""\
 def abstract_method(data, options):
