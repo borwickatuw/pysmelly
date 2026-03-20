@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
-from pysmelly.checks.helpers import is_in_dunder_all
+from pysmelly.checks.helpers import is_in_dunder_all, is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
@@ -1521,5 +1522,512 @@ def check_exception_flow_control(ctx: AnalysisContext) -> list[Finding]:
                             severity=Severity.MEDIUM,
                         )
                     )
+
+    return findings
+
+
+# --- arrow-code helpers ---
+
+_NESTING_STMTS = (
+    ast.If,
+    ast.For,
+    ast.While,
+    ast.With,
+    ast.AsyncFor,
+    ast.AsyncWith,
+)
+
+
+def _compute_max_nesting(stmts: list[ast.stmt], depth: int) -> int:
+    """Recursively compute max nesting depth of control flow statements."""
+    max_depth = depth
+    for stmt in stmts:
+        # Nested functions/classes start fresh — don't inherit parent depth
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+
+        if isinstance(stmt, _NESTING_STMTS):
+            child_depth = depth + 1
+            for attr in ("body", "orelse"):
+                children = getattr(stmt, attr, [])
+                if children:
+                    max_depth = max(max_depth, _compute_max_nesting(children, child_depth))
+        elif isinstance(stmt, ast.Try):
+            # try body adds one level
+            max_depth = max(max_depth, _compute_max_nesting(stmt.body, depth + 1))
+            # each handler adds one level
+            for handler in stmt.handlers:
+                max_depth = max(max_depth, _compute_max_nesting(handler.body, depth + 1))
+            if stmt.orelse:
+                max_depth = max(max_depth, _compute_max_nesting(stmt.orelse, depth + 1))
+            if stmt.finalbody:
+                max_depth = max(max_depth, _compute_max_nesting(stmt.finalbody, depth + 1))
+        else:
+            # Recurse into compound statements (e.g. match/case)
+            for attr in ("body", "orelse"):
+                children = getattr(stmt, attr, [])
+                if children:
+                    max_depth = max(max_depth, _compute_max_nesting(children, depth))
+    return max_depth
+
+
+@check(
+    "arrow-code",
+    severity=Severity.LOW,
+    description="Functions with deep nesting (5+ levels of if/for/while/try/with)",
+)
+def check_arrow_code(ctx: AnalysisContext) -> list[Finding]:
+    """Find functions with excessive nesting depth."""
+    findings = []
+    threshold = 5
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+
+            max_depth = _compute_max_nesting(node.body, 0)
+            if max_depth >= threshold:
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="arrow-code",
+                        message=(
+                            f"{node.name}() has nesting depth {max_depth}"
+                            f" — consider extracting inner blocks"
+                        ),
+                        severity=Severity.LOW,
+                    )
+                )
+
+    return findings
+
+
+# --- hungarian-notation ---
+
+_HUNGARIAN_RE = re.compile(r"^(str|int|bool|lst|dict|arr|obj|flt|tpl|set)[A-Z]")
+
+_HUNGARIAN_SNAKE = {
+    "str": "str_",
+    "int": "int_",
+    "bool": "bool_",
+    "lst": "lst_",
+    "dict": "dict_",
+    "arr": "arr_",
+    "obj": "obj_",
+    "flt": "flt_",
+    "tpl": "tpl_",
+    "set": "set_",
+}
+
+
+def _to_snake_case(name: str) -> str:
+    """Convert camelCase hungarian name to snake_case suggestion."""
+    # Split on uppercase letter boundaries
+    parts: list[str] = []
+    current: list[str] = []
+    for ch in name:
+        if ch.isupper() and current:
+            parts.append("".join(current).lower())
+            current = [ch]
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current).lower())
+    return "_".join(parts)
+
+
+@check(
+    "hungarian-notation",
+    severity=Severity.LOW,
+    description="Variables using Hungarian notation (strName, intCount, lstItems)",
+)
+def check_hungarian_notation(ctx: AnalysisContext) -> list[Finding]:
+    """Find variables using Hungarian notation prefixes."""
+    findings = []
+    seen: set[tuple[str, int]] = set()  # (file, line) dedup
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.walk(tree):
+            names_to_check: list[tuple[str, int]] = []
+
+            # Assignment targets
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names_to_check.append((target.id, node.lineno))
+
+            # Annotated assignment targets
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names_to_check.append((node.target.id, node.lineno))
+
+            # Function parameters
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for arg in node.args.args + node.args.posonlyargs + node.args.kwonlyargs:
+                    names_to_check.append((arg.arg, node.lineno))
+
+            # For-loop targets
+            if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+                names_to_check.append((node.target.id, node.lineno))
+
+            for name, line in names_to_check:
+                # Skip UPPER_CASE names
+                if name.isupper() or name.upper() == name:
+                    continue
+                m = _HUNGARIAN_RE.match(name)
+                if m:
+                    key = (str(filepath), line)
+                    if key not in seen:
+                        seen.add(key)
+                        snake = _to_snake_case(name)
+                        findings.append(
+                            Finding(
+                                file=str(filepath),
+                                line=line,
+                                check="hungarian-notation",
+                                message=(
+                                    f"{name} uses Hungarian notation"
+                                    f" — consider snake_case: {snake}"
+                                ),
+                                severity=Severity.LOW,
+                            )
+                        )
+
+    return findings
+
+
+# --- inconsistent-returns ---
+
+
+def _infer_return_type(node: ast.Return) -> str | None:
+    """Infer a type string from a return statement's value node."""
+    if node.value is None:
+        return "None"
+
+    val = node.value
+
+    if isinstance(val, ast.Constant):
+        if val.value is None:
+            return "None"
+        return type(val.value).__name__
+
+    if isinstance(val, ast.Dict):
+        return "dict"
+    if isinstance(val, ast.List):
+        return "list"
+    if isinstance(val, ast.Tuple):
+        return "tuple"
+    if isinstance(val, ast.Set):
+        return "set"
+    if isinstance(val, ast.ListComp):
+        return "list"
+    if isinstance(val, ast.DictComp):
+        return "dict"
+    if isinstance(val, ast.SetComp):
+        return "set"
+    if isinstance(val, ast.GeneratorExp):
+        return "generator"
+    if isinstance(val, ast.JoinedStr):
+        return "str"
+    if isinstance(val, ast.FormattedValue):
+        return "str"
+
+    if isinstance(val, ast.Call):
+        if isinstance(val.func, ast.Name):
+            return val.func.id
+        if isinstance(val.func, ast.Attribute):
+            return val.func.attr
+        return None
+
+    if isinstance(val, ast.BoolOp):
+        return None  # can't infer
+    if isinstance(val, ast.IfExp):
+        return None  # ternary — can't infer
+
+    return None
+
+
+def _has_overload_decorator(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if function has @overload decorator."""
+    for deco in func.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id == "overload":
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr == "overload":
+            return True
+    return False
+
+
+def _is_test_function(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a function is a test function by name."""
+    return func.name.startswith("test_")
+
+
+def _collect_returns(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Return]:
+    """Collect all return statements in a function, excluding nested functions/classes."""
+    returns: list[ast.Return] = []
+
+    def _visit(stmts: list[ast.stmt]) -> None:
+        for stmt in stmts:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(stmt, ast.Return):
+                returns.append(stmt)
+            for attr in ("body", "orelse", "finalbody"):
+                children = getattr(stmt, attr, None)
+                if isinstance(children, list):
+                    _visit(children)
+            if isinstance(stmt, ast.Try):
+                for handler in stmt.handlers:
+                    _visit(handler.body)
+
+    _visit(func.body)
+    return returns
+
+
+@check(
+    "inconsistent-returns",
+    severity=Severity.MEDIUM,
+    description="Functions returning 3+ distinct types across return paths",
+)
+def check_inconsistent_returns(ctx: AnalysisContext) -> list[Finding]:
+    """Find functions that return multiple distinct types."""
+    findings = []
+    min_types = 3
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if _is_test_function(node):
+                continue
+            if _has_overload_decorator(node):
+                continue
+
+            # Skip short private functions (<15 lines)
+            if node.name.startswith("_") and node.end_lineno is not None:
+                if node.end_lineno - node.lineno + 1 < 15:
+                    continue
+
+            returns = _collect_returns(node)
+            if len(returns) < min_types:
+                continue
+
+            types: set[str] = set()
+            for ret in returns:
+                t = _infer_return_type(ret)
+                if t is not None:
+                    types.add(t)
+
+            if len(types) >= min_types:
+                sorted_types = sorted(types)
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="inconsistent-returns",
+                        message=(
+                            f"{node.name}() returns {len(types)} distinct types "
+                            f"({', '.join(sorted_types)}) across {len(returns)} "
+                            f"return paths — consider narrowing the return type"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings
+
+
+# --- plaintext-passwords ---
+
+_PASSWORD_NAMES = frozenset({"password", "passwd", "secret", "token", "api_key", "apikey"})
+
+
+def _has_password_name(node: ast.expr) -> bool:
+    """Check if an expression refers to a password-related variable."""
+    name = None
+    if isinstance(node, ast.Name):
+        name = node.id.lower()
+    elif isinstance(node, ast.Attribute):
+        name = node.attr.lower()
+    if name is None:
+        return False
+    return any(pw in name for pw in _PASSWORD_NAMES)
+
+
+@check(
+    "plaintext-passwords",
+    severity=Severity.HIGH,
+    description="Equality comparison on password/secret/token variables",
+)
+def check_plaintext_passwords(ctx: AnalysisContext) -> list[Finding]:
+    """Find plaintext password comparisons using == or !=."""
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.walk(tree):
+            # Check == and != comparisons
+            if isinstance(node, ast.Compare):
+                for op in node.ops:
+                    if not isinstance(op, (ast.Eq, ast.NotEq)):
+                        continue
+                    # Check left side and all comparators
+                    all_operands = [node.left] + node.comparators
+                    for operand in all_operands:
+                        if _has_password_name(operand):
+                            op_str = "==" if isinstance(op, ast.Eq) else "!="
+                            if isinstance(operand, ast.Name):
+                                var_name = operand.id
+                            else:
+                                var_name = operand.attr  # type: ignore[union-attr]
+                            findings.append(
+                                Finding(
+                                    file=str(filepath),
+                                    line=node.lineno,
+                                    check="plaintext-passwords",
+                                    message=(
+                                        f"{var_name} compared with {op_str}"
+                                        f" — possible plaintext comparison; use"
+                                        f" hmac.compare_digest() or hash comparison"
+                                    ),
+                                    severity=Severity.HIGH,
+                                )
+                            )
+                            break  # one finding per Compare node
+                    else:
+                        continue
+                    break
+
+            # Check truthiness: if password: / if not password:
+            if isinstance(node, (ast.If, ast.While)):
+                test = node.test
+                target = None
+                if _has_password_name(test):
+                    target = test
+                elif isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+                    if _has_password_name(test.operand):
+                        target = test.operand
+                if target is not None:
+                    if isinstance(target, ast.Name):
+                        var_name = target.id
+                    else:
+                        var_name = target.attr  # type: ignore[union-attr]
+                    findings.append(
+                        Finding(
+                            file=str(filepath),
+                            line=node.lineno,
+                            check="plaintext-passwords",
+                            message=(
+                                f"{var_name} used in truthiness check"
+                                f" — timing-safe comparison needed for secrets"
+                            ),
+                            severity=Severity.HIGH,
+                        )
+                    )
+
+    return findings
+
+
+# --- getattr-strings ---
+
+
+@check(
+    "getattr-strings",
+    severity=Severity.MEDIUM,
+    description="getattr(obj, 'literal') without default or hasattr(obj, 'literal')",
+)
+def check_getattr_strings(ctx: AnalysisContext) -> list[Finding]:
+    """Find stringly-typed getattr/hasattr calls with literal strings."""
+    findings = []
+    # For cross-file aggregation
+    cross_file: dict[str, list[tuple[str, int]]] = {}
+
+    for filepath, tree in ctx.all_trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name):
+                continue
+
+            func_name = node.func.id
+
+            if func_name == "getattr" and len(node.args) >= 2:
+                attr_arg = node.args[1]
+                if not isinstance(attr_arg, ast.Constant) or not isinstance(attr_arg.value, str):
+                    continue
+                # Skip if 3rd arg or default= keyword provided
+                has_default = len(node.args) >= 3 or any(
+                    kw.arg == "default" for kw in node.keywords
+                )
+                attr_name = attr_arg.value
+                # Track for cross-file
+                cross_file.setdefault(attr_name, []).append((str(filepath), node.lineno))
+                if has_default:
+                    continue
+                if not is_test_file(filepath):
+                    findings.append(
+                        Finding(
+                            file=str(filepath),
+                            line=node.lineno,
+                            check="getattr-strings",
+                            message=(
+                                f"getattr(obj, '{attr_name}') without default"
+                                f" — use obj.{attr_name} directly"
+                            ),
+                            severity=Severity.MEDIUM,
+                        )
+                    )
+
+            elif func_name == "hasattr" and len(node.args) >= 2:
+                attr_arg = node.args[1]
+                if not isinstance(attr_arg, ast.Constant) or not isinstance(attr_arg.value, str):
+                    continue
+                attr_name = attr_arg.value
+                cross_file.setdefault(attr_name, []).append((str(filepath), node.lineno))
+                if not is_test_file(filepath):
+                    findings.append(
+                        Finding(
+                            file=str(filepath),
+                            line=node.lineno,
+                            check="getattr-strings",
+                            message=(
+                                f"hasattr(obj, '{attr_name}')"
+                                f" — stringly-typed attribute check;"
+                                f" consider a Protocol or isinstance()"
+                            ),
+                            severity=Severity.MEDIUM,
+                        )
+                    )
+
+    # Cross-file shotgun surgery check
+    for attr_name, locs in cross_file.items():
+        files = {loc[0] for loc in locs}
+        if len(locs) >= 3 and len(files) >= 3:
+            loc_strs = [f"{f}:{line}" for f, line in sorted(locs)[:5]]
+            findings.append(
+                Finding(
+                    file=locs[0][0],
+                    line=locs[0][1],
+                    check="getattr-strings",
+                    message=(
+                        f"'{attr_name}' used in getattr/hasattr across"
+                        f" {len(locs)} locations in {len(files)} files"
+                        f" ({', '.join(loc_strs)}) — shotgun surgery risk"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
 
     return findings

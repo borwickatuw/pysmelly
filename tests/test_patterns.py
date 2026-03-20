@@ -1,6 +1,7 @@
 """Tests for pattern-based checks."""
 
 from pysmelly.checks.patterns import (
+    check_arrow_code,
     check_boolean_param_explosion,
     check_constant_dispatch_dicts,
     check_dead_constants,
@@ -8,7 +9,11 @@ from pysmelly.checks.patterns import (
     check_exception_flow_control,
     check_foo_equals_foo,
     check_fossilized_toggles,
+    check_getattr_strings,
+    check_hungarian_notation,
+    check_inconsistent_returns,
     check_isinstance_chain,
+    check_plaintext_passwords,
     check_runtime_monkey_patch,
     check_suspicious_fallbacks,
     check_temp_accumulators,
@@ -1537,3 +1542,427 @@ def parse(text):
 """)
         findings = check_exception_flow_control(t)
         assert len(findings) == 0
+
+
+class TestArrowCode:
+    def test_finds_deep_nesting(self, trees):
+        t = trees.code("""\
+def process(data):
+    for item in data:
+        if item.valid:
+            for sub in item.children:
+                if sub.active:
+                    with open(sub.path) as f:
+                        pass
+""")
+        findings = check_arrow_code(t)
+        assert len(findings) == 1
+        assert "nesting depth" in findings[0].message
+        assert "process()" in findings[0].message
+
+    def test_ignores_shallow_nesting(self, trees):
+        t = trees.code("""\
+def process(data):
+    for item in data:
+        if item.valid:
+            do_thing(item)
+""")
+        findings = check_arrow_code(t)
+        assert len(findings) == 0
+
+    def test_class_method_starts_fresh(self, trees):
+        """Methods inside deeply nested classes don't inherit class nesting."""
+        t = trees.code("""\
+class MyClass:
+    def process(self, data):
+        for item in data:
+            if item.valid:
+                for sub in item.children:
+                    if sub.active:
+                        with open(sub.path) as f:
+                            pass
+""")
+        findings = check_arrow_code(t)
+        assert len(findings) == 1
+        assert "process()" in findings[0].message
+
+    def test_mixed_nesting_types(self, trees):
+        t = trees.code("""\
+def process(data):
+    if data:
+        for x in data:
+            while x > 0:
+                with open("f") as f:
+                    try:
+                        pass
+                    except Exception:
+                        pass
+""")
+        findings = check_arrow_code(t)
+        assert len(findings) == 1
+
+    def test_nested_function_counted_separately(self, trees):
+        """Nested functions start fresh — parent depth doesn't carry."""
+        t = trees.code("""\
+def outer():
+    if True:
+        if True:
+            if True:
+                def inner():
+                    if True:
+                        if True:
+                            if True:
+                                if True:
+                                    if True:
+                                        pass
+""")
+        findings = check_arrow_code(t)
+        # inner has depth 5+, outer has depth 3
+        assert len(findings) == 1
+        assert "inner()" in findings[0].message
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_deep.py": """\
+def test_something():
+    for item in data:
+        if item.valid:
+            for sub in item.children:
+                if sub.active:
+                    with open(sub.path) as f:
+                        pass
+"""})
+        findings = check_arrow_code(t)
+        assert len(findings) == 0
+
+    def test_try_except_counts_once(self, trees):
+        """try/except together add only one level of nesting, not two."""
+        t = trees.code("""\
+def process():
+    if True:
+        for x in data:
+            try:
+                if x:
+                    with open("f") as f:
+                        pass
+            except Exception:
+                pass
+""")
+        findings = check_arrow_code(t)
+        assert len(findings) == 1
+
+    def test_reports_correct_depth(self, trees):
+        t = trees.code("""\
+def deep():
+    if True:
+        if True:
+            if True:
+                if True:
+                    if True:
+                        if True:
+                            pass
+""")
+        findings = check_arrow_code(t)
+        assert len(findings) == 1
+        assert "depth 6" in findings[0].message
+
+
+class TestHungarianNotation:
+    def test_finds_assignment(self, trees):
+        t = trees.code("""\
+strName = "hello"
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 1
+        assert "strName" in findings[0].message
+        assert "str_name" in findings[0].message
+
+    def test_finds_parameter(self, trees):
+        t = trees.code("""\
+def process(intCount, lstItems):
+    pass
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert "intCount" in messages or "lstItems" in messages
+
+    def test_finds_for_target(self, trees):
+        t = trees.code("""\
+for objItem in items:
+    pass
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 1
+        assert "objItem" in findings[0].message
+
+    def test_skips_upper_case(self, trees):
+        t = trees.code("""\
+STR_MAX = 100
+INT_SIZE = 42
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 0
+
+    def test_ignores_snake_case(self, trees):
+        t = trees.code("""\
+str_name = "hello"
+int_count = 5
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 0
+
+    def test_ignores_no_capital_after_prefix(self, trees):
+        """'string' starts with 'str' but no capital letter follows."""
+        t = trees.code("""\
+string = "hello"
+integer = 5
+""")
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_naming.py": """\
+strName = "hello"
+"""})
+        findings = check_hungarian_notation(t)
+        assert len(findings) == 0
+
+
+class TestInconsistentReturns:
+    def test_finds_mixed_returns(self, trees):
+        t = trees.code("""\
+def parse_value(text):
+    if text == "none":
+        return None
+    if text.isdigit():
+        return int(text)
+    if text.startswith("["):
+        return list(text)
+    return text
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 1
+        assert "parse_value()" in findings[0].message
+        assert "distinct types" in findings[0].message
+
+    def test_ignores_consistent_returns(self, trees):
+        t = trees.code("""\
+def get_name(obj):
+    if obj.name:
+        return obj.name
+    return "default"
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_ignores_two_types(self, trees):
+        t = trees.code("""\
+def maybe_int(text):
+    if text.isdigit():
+        return int(text)
+    return None
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_ignores_few_returns(self, trees):
+        t = trees.code("""\
+def process(x):
+    if x:
+        return 42
+    return "hello"
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_ignores_test_function(self, trees):
+        t = trees.code("""\
+def test_parse():
+    if True:
+        return None
+    if True:
+        return 42
+    return "hello"
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_ignores_short_private_function(self, trees):
+        t = trees.code("""\
+def _helper(x):
+    if x == 1: return 1
+    if x == 2: return "two"
+    return None
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_detects_call_return_types(self, trees):
+        t = trees.code("""\
+def convert(data, fmt):
+    if fmt == "json":
+        return json_encode(data)
+    if fmt == "xml":
+        return xml_encode(data)
+    if fmt == "csv":
+        return csv_encode(data)
+    return None
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 1
+
+    def test_ignores_overloaded(self, trees):
+        t = trees.code("""\
+from typing import overload
+
+@overload
+def parse(x: str) -> str: ...
+@overload
+def parse(x: int) -> int: ...
+def parse(x):
+    if isinstance(x, str):
+        return str(x)
+    return int(x)
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+
+class TestPlaintextPasswords:
+    def test_finds_equality(self, trees):
+        t = trees.code("""\
+def check(password, expected):
+    if password == expected:
+        return True
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 1
+        assert "password" in findings[0].message
+        assert "==" in findings[0].message
+        assert findings[0].severity.value == "high"
+
+    def test_finds_inequality(self, trees):
+        t = trees.code("""\
+def check(user_token, stored):
+    if user_token != stored:
+        return False
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 1
+        assert "!=" in findings[0].message
+
+    def test_finds_attribute_comparison(self, trees):
+        t = trees.code("""\
+if request.api_key == stored_key:
+    pass
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 1
+        assert "api_key" in findings[0].message
+
+    def test_finds_truthiness(self, trees):
+        t = trees.code("""\
+def check(password):
+    if password:
+        do_something()
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 1
+        assert "truthiness" in findings[0].message
+
+    def test_ignores_assignment(self, trees):
+        """Assignment to password variable is not a comparison."""
+        t = trees.code("""\
+password = get_input()
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 0
+
+    def test_ignores_is_none(self, trees):
+        """`is None` / `is not None` uses ast.Is, not ast.Eq."""
+        t = trees.code("""\
+if password is None:
+    pass
+if password is not None:
+    pass
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_auth.py": """\
+def test_check():
+    if password == "expected":
+        pass
+"""})
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 0
+
+    def test_ignores_non_password_names(self, trees):
+        t = trees.code("""\
+if username == "admin":
+    pass
+""")
+        findings = check_plaintext_passwords(t)
+        assert len(findings) == 0
+
+
+class TestGetattrStrings:
+    def test_finds_getattr_without_default(self, trees):
+        t = trees.code("""\
+x = getattr(obj, 'name')
+""")
+        findings = check_getattr_strings(t)
+        assert any("getattr" in f.message and "'name'" in f.message for f in findings)
+
+    def test_ignores_getattr_with_default(self, trees):
+        t = trees.code("""\
+x = getattr(obj, 'name', None)
+""")
+        findings = check_getattr_strings(t)
+        # No individual finding (but might have cross-file)
+        assert not any("without default" in f.message for f in findings)
+
+    def test_finds_hasattr(self, trees):
+        t = trees.code("""\
+if hasattr(obj, 'read'):
+    pass
+""")
+        findings = check_getattr_strings(t)
+        assert any("hasattr" in f.message for f in findings)
+
+    def test_ignores_variable_string(self, trees):
+        t = trees.code("""\
+x = getattr(obj, attr_name)
+""")
+        findings = check_getattr_strings(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_getattr.py": """\
+x = getattr(obj, 'name')
+"""})
+        findings = check_getattr_strings(t)
+        # Individual findings skipped for test files
+        assert not any("without default" in f.message for f in findings)
+
+    def test_cross_file_shotgun_surgery(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = getattr(obj, 'read')",
+                "b.py": "if hasattr(obj, 'read'): pass",
+                "c.py": "x = getattr(obj, 'read')",
+            }
+        )
+        findings = check_getattr_strings(t)
+        assert any("shotgun surgery" in f.message for f in findings)
+
+    def test_few_occurrences_no_cross_file(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = getattr(obj, 'read')",
+                "b.py": "x = getattr(obj, 'read')",
+            }
+        )
+        findings = check_getattr_strings(t)
+        assert not any("shotgun surgery" in f.message for f in findings)
