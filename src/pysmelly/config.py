@@ -1,0 +1,123 @@
+"""Config file support — .pysmelly.toml and pyproject.toml [tool.pysmelly]."""
+
+from __future__ import annotations
+
+import sys
+import tomllib
+from pathlib import Path
+
+# Keys that accept list values
+LIST_KEYS = frozenset({"exclude", "skip"})
+
+# Keys that accept string values
+STRING_KEYS = frozenset({"min-severity", "check"})
+
+VALID_KEYS = LIST_KEYS | STRING_KEYS
+
+VALID_SEVERITIES = frozenset({"low", "medium", "high"})
+
+
+class ConfigError(Exception):
+    """Raised for invalid config file contents."""
+
+
+def _find_config_file(target_dir: Path) -> Path | None:
+    """Find config file in target directory. First match wins:
+
+    1. .pysmelly.toml
+    2. pyproject.toml (must contain [tool.pysmelly])
+    """
+    dotfile = target_dir / ".pysmelly.toml"
+    if dotfile.is_file():
+        return dotfile
+
+    pyproject = target_dir / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            data = tomllib.loads(pyproject.read_text())
+        except tomllib.TOMLDecodeError:
+            return None
+        if "tool" in data and "pysmelly" in data["tool"]:
+            return pyproject
+    return None
+
+
+def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> None:
+    """Validate config keys, types, and values. Raises ConfigError on problems."""
+    unknown = set(config) - VALID_KEYS
+    if unknown:
+        raise ConfigError(
+            f"{source}: unknown key(s): {', '.join(sorted(unknown))}. "
+            f"Valid keys: {', '.join(sorted(VALID_KEYS))}"
+        )
+
+    for key in LIST_KEYS:
+        if key in config and not isinstance(config[key], list):
+            raise ConfigError(
+                f"{source}: '{key}' must be a list, got {type(config[key]).__name__}"
+            )
+        if key in config:
+            for item in config[key]:
+                if not isinstance(item, str):
+                    raise ConfigError(
+                        f"{source}: '{key}' items must be strings, "
+                        f"got {type(item).__name__}"
+                    )
+
+    for key in STRING_KEYS:
+        if key in config and not isinstance(config[key], str):
+            raise ConfigError(
+                f"{source}: '{key}' must be a string, got {type(config[key]).__name__}"
+            )
+
+    if "min-severity" in config and config["min-severity"] not in VALID_SEVERITIES:
+        raise ConfigError(
+            f"{source}: invalid min-severity '{config['min-severity']}'. "
+            f"Valid values: {', '.join(sorted(VALID_SEVERITIES))}"
+        )
+
+    if "check" in config and config["check"] not in valid_check_names:
+        raise ConfigError(
+            f"{source}: unknown check '{config['check']}'. "
+            f"Use --list-checks to see available checks"
+        )
+
+    if "skip" in config:
+        bad = [s for s in config["skip"] if s not in valid_check_names]
+        if bad:
+            raise ConfigError(
+                f"{source}: unknown check(s) in skip: {', '.join(bad)}. "
+                f"Use --list-checks to see available checks"
+            )
+
+
+def load_config(target_dir: Path, valid_check_names: set[str]) -> dict:
+    """Find and load config from .pysmelly.toml or pyproject.toml.
+
+    Returns a dict with validated config keys, or empty dict if no config found.
+    Raises ConfigError on invalid config (prints message and exits).
+    """
+    config_file = _find_config_file(target_dir)
+    if config_file is None:
+        return {}
+
+    try:
+        data = tomllib.loads(config_file.read_text())
+    except tomllib.TOMLDecodeError as e:
+        print(f"Error: {config_file}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if config_file.name == "pyproject.toml":
+        config = data.get("tool", {}).get("pysmelly", {})
+        source = f"{config_file} [tool.pysmelly]"
+    else:
+        config = data
+        source = str(config_file)
+
+    try:
+        _validate_config(config, source, valid_check_names)
+    except ConfigError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    return config

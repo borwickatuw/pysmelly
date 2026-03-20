@@ -10,6 +10,7 @@ from pathlib import Path
 
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
+from pysmelly.config import load_config
 from pysmelly.context import AnalysisContext
 from pysmelly.discovery import get_changed_lines, get_git_root, get_python_files, parse_file
 from pysmelly.output import format_text
@@ -351,7 +352,23 @@ def main(argv: list[str] | None = None) -> None:
         _print_check_list()
         return
 
+    # Load config file and merge with CLI args
     roots = [Path(t).resolve() for t in args.targets]
+    config_dir = roots[0] if len(roots) == 1 else Path.cwd()
+    config = load_config(config_dir, set(CHECKS.keys()))
+
+    # Config provides defaults; CLI args override.
+    # For list args, config values come first, CLI values extend.
+    if "exclude" in config:
+        args.exclude = config["exclude"] + args.exclude
+    if "skip" in config:
+        args.skip = config["skip"] + args.skip
+    # String args: CLI overrides config (argparse defaults are sentinel values)
+    if "min-severity" in config and args.min_severity == "low":
+        args.min_severity = config["min-severity"]
+    if "check" in config and args.check is None:
+        args.check = config["check"]
+
     for root in roots:
         if not root.is_dir():
             print(f"Error: {root} is not a directory", file=sys.stderr)
