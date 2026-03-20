@@ -22,6 +22,10 @@ def check_compat_shims(ctx: AnalysisContext) -> list[Finding]:
     findings = []
 
     for filepath, tree in ctx.all_trees.items():
+        # manage.py has Django's auto-generated try/except ImportError boilerplate
+        if filepath.name == "manage.py":
+            continue
+
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):
                 continue

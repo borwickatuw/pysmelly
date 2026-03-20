@@ -1756,6 +1756,23 @@ def _has_overload_decorator(func: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
     return False
 
 
+def _is_wrapper_function(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if function is a decorator/wrapper (uses @wraps or named like one).
+
+    Decorators and middleware legitimately return different types (e.g. a
+    Django permission decorator may return a redirect, a 403, or the
+    wrapped view's response).
+    """
+    for deco in func.decorator_list:
+        # @wraps(...) or @functools.wraps(...)
+        if isinstance(deco, ast.Call):
+            if isinstance(deco.func, ast.Name) and deco.func.id == "wraps":
+                return True
+            if isinstance(deco.func, ast.Attribute) and deco.func.attr == "wraps":
+                return True
+    return False
+
+
 def _is_test_function(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function is a test function by name."""
     return func.name.startswith("test_")
@@ -1803,6 +1820,8 @@ def check_inconsistent_returns(ctx: AnalysisContext) -> list[Finding]:
             if _is_test_function(node):
                 continue
             if _has_overload_decorator(node):
+                continue
+            if _is_wrapper_function(node):
                 continue
 
             # Skip short private functions (<15 lines)
@@ -1958,6 +1977,11 @@ def check_getattr_strings(ctx: AnalysisContext) -> list[Finding]:
             elif func_name == "hasattr" and len(node.args) >= 2:
                 attr_arg = node.args[1]
                 if not isinstance(attr_arg, ast.Constant) or not isinstance(attr_arg.value, str):
+                    continue
+                # hasattr(self, ...) is legitimate introspection (e.g. Django
+                # reverse OneToOneField checks), not stringly-typed access
+                first_arg = node.args[0]
+                if isinstance(first_arg, ast.Name) and first_arg.id == "self":
                     continue
                 attr_name = attr_arg.value
                 cross_file.setdefault(attr_name, []).append((str(filepath), node.lineno))

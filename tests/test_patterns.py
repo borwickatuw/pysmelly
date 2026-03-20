@@ -1853,6 +1853,24 @@ def parse(x):
         findings = check_inconsistent_returns(t)
         assert len(findings) == 0
 
+    def test_ignores_wraps_decorator(self, trees):
+        """Decorators/middleware legitimately return different types."""
+        t = trees.code("""\
+from functools import wraps
+
+def require_login(view_func):
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user:
+            return redirect("/login")
+        if request.user.banned:
+            return HttpResponseForbidden()
+        return view_func(request, *args, **kwargs)
+    return wrapper
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
 
 class TestPlaintextPasswords:
     def test_finds_equality(self, trees):
@@ -1956,6 +1974,16 @@ if hasattr(obj, 'read'):
 """)
         findings = check_getattr_strings(t)
         assert any("hasattr" in f.message for f in findings)
+
+    def test_ignores_hasattr_self(self, trees):
+        """hasattr(self, ...) is legitimate introspection (e.g. Django reverse relations)."""
+        t = trees.code("""\
+class MyModel:
+    def has_profile(self):
+        return hasattr(self, 'profile')
+""")
+        findings = check_getattr_strings(t)
+        assert not any("hasattr" in f.message for f in findings)
 
     def test_ignores_variable_string(self, trees):
         t = trees.code("""\

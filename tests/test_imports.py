@@ -45,3 +45,18 @@ except ValueError:
 """)
         findings = check_compat_shims(t)
         assert len(findings) == 0
+
+    def test_skips_manage_py(self, trees):
+        """Django's manage.py has auto-generated try/except ImportError."""
+        t = trees.files(
+            {
+                "manage.py": """\
+try:
+    from django.core.management import execute_from_command_line
+except ImportError as exc:
+    raise ImportError("Couldn't import Django.") from exc
+""",
+            }
+        )
+        findings = check_compat_shims(t)
+        assert len(findings) == 0
