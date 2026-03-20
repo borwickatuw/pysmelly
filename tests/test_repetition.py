@@ -275,7 +275,8 @@ class TestScatteredConstants:
         findings = check_scattered_constants(t)
         assert len(findings) == 0
 
-    def test_includes_subscript_keys(self, trees):
+    def test_ignores_subscript_keys(self, trees):
+        """Dict keys are API contracts, not scattered constants."""
         t = trees.files(
             {
                 "a.py": 'x = d["config_key"]',
@@ -284,8 +285,7 @@ class TestScatteredConstants:
             }
         )
         findings = check_scattered_constants(t)
-        assert len(findings) == 1
-        assert "'config_key'" in findings[0].message
+        assert len(findings) == 0
 
     def test_includes_keyword_arg_values(self, trees):
         t = trees.files(
@@ -300,12 +300,12 @@ class TestScatteredConstants:
         assert "30" in findings[0].message
 
     def test_mixed_contexts_count(self, trees):
-        """Assignment in A, comparison in B, subscript in C — all count."""
+        """Assignment in A, comparison in B, kwarg in C — all count."""
         t = trees.files(
             {
                 "a.py": 'status = "pending"',
                 "b.py": 'if x == "pending": pass',
-                "c.py": 'y = d["pending"]',
+                "c.py": 'func(status="pending")',
             }
         )
         findings = check_scattered_constants(t)

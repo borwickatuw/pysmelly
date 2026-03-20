@@ -1902,33 +1902,6 @@ def check_plaintext_passwords(ctx: AnalysisContext) -> list[Finding]:
                         continue
                     break
 
-            # Check truthiness: if password: / if not password:
-            if isinstance(node, (ast.If, ast.While)):
-                test = node.test
-                target = None
-                if _has_password_name(test):
-                    target = test
-                elif isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-                    if _has_password_name(test.operand):
-                        target = test.operand
-                if target is not None:
-                    if isinstance(target, ast.Name):
-                        var_name = target.id
-                    else:
-                        var_name = target.attr  # type: ignore[union-attr]
-                    findings.append(
-                        Finding(
-                            file=str(filepath),
-                            line=node.lineno,
-                            check="plaintext-passwords",
-                            message=(
-                                f"{var_name} used in truthiness check"
-                                f" — timing-safe comparison needed for secrets"
-                            ),
-                            severity=Severity.HIGH,
-                        )
-                    )
-
     return findings
 
 

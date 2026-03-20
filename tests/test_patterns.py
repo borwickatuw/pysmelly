@@ -1886,15 +1886,15 @@ if request.api_key == stored_key:
         assert len(findings) == 1
         assert "api_key" in findings[0].message
 
-    def test_finds_truthiness(self, trees):
+    def test_ignores_truthiness(self, trees):
+        """if SECRET_KEY: checks config presence, not comparing secrets."""
         t = trees.code("""\
 def check(password):
     if password:
         do_something()
 """)
         findings = check_plaintext_passwords(t)
-        assert len(findings) == 1
-        assert "truthiness" in findings[0].message
+        assert len(findings) == 0
 
     def test_ignores_assignment(self, trees):
         """Assignment to password variable is not a comparison."""

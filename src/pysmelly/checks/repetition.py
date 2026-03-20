@@ -240,9 +240,8 @@ def _is_interesting_constant_context(
     if isinstance(parent, ast.Compare):
         return True
 
-    # Subscript slice (d["key"])
-    if isinstance(parent, ast.Subscript) and node is parent.slice:
-        return True
+    # Subscript slice (d["key"]) — skipped: dict keys are often API contracts
+    # or data-schema fields, not scattered constants worth extracting.
 
     # Default parameter value
     if isinstance(parent, ast.arguments):
