@@ -1,5 +1,9 @@
 """Tests for CLI behavior."""
 
+import subprocess
+
+import pytest
+
 from pysmelly.cli import main
 
 
@@ -230,3 +234,92 @@ used()
             pass
         output = capsys.readouterr().out
         assert "speculative generality" in output
+
+    def test_git_history_check_without_flag_errors(self, tmp_path, capsys):
+        """--check abandoned-code without --git-history -> error exit."""
+        (tmp_path / "app.py").write_text("x = 1\n")
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--check", "abandoned-code", str(tmp_path)])
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "requires --git-history" in err
+
+    def test_git_history_without_git_repo_errors(self, tmp_path, capsys):
+        """--git-history without git repo -> error exit."""
+        (tmp_path / "app.py").write_text("x = 1\n")
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--git-history", str(tmp_path)])
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "requires a git repository" in err
+
+    def test_list_checks_shows_git_marker(self, capsys):
+        """--list-checks shows [git] marker for git-history checks."""
+        main(["--list-checks"])
+        output = capsys.readouterr().out
+        assert "abandoned-code" in output
+        assert "[git]" in output
+
+    def test_git_history_on_real_repo(self, git_repo, capsys):
+        """--git-history on a git repo runs without crash."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "app.py"], cwd=git_repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
+        )
+        try:
+            main(
+                [
+                    "--no-context",
+                    "--git-history",
+                    "--check",
+                    "abandoned-code",
+                    str(git_repo),
+                ]
+            )
+        except SystemExit:
+            pass
+        # Should not crash — output is fine either way
+
+    def test_git_history_checks_excluded_by_default(self, git_repo, capsys):
+        """Without --git-history, git-history checks don't run."""
+        (git_repo / "app.py").write_text("def unused_func():\n    pass\n")
+        subprocess.run(["git", "add", "app.py"], cwd=git_repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
+        )
+        try:
+            main(["--no-context", str(git_repo)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        assert "abandoned-code" not in output
+
+    def test_ignore_files_suppresses_finding(self, tmp_path, capsys):
+        """Finding suppressed by ignore-files config is not reported."""
+        (tmp_path / ".pysmelly.toml").write_text('[ignore-files]\ndead-code = ["app.py"]\n')
+        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
+        try:
+            main(["--no-context", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        assert "dead-code" not in output or "app.py" not in output
+
+    def test_ignore_files_glob_pattern(self, tmp_path, capsys):
+        """ignore-files supports glob patterns."""
+        (tmp_path / ".pysmelly.toml").write_text('[ignore-files]\ndead-code = ["app*.py"]\n')
+        (tmp_path / "app_old.py").write_text("def unused_func():\n    pass\n")
+        try:
+            main(["--no-context", str(tmp_path)])
+        except SystemExit:
+            pass
+        output = capsys.readouterr().out
+        # The dead-code finding for app_old.py should be suppressed
+        assert "app_old.py" not in output

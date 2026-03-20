@@ -4,7 +4,13 @@ import pytest
 
 from pysmelly.config import ConfigError, _validate_config, load_config
 
-VALID_CHECKS = {"dead-code", "single-call-site", "scattered-constants", "internal-only"}
+VALID_CHECKS = {
+    "dead-code",
+    "single-call-site",
+    "scattered-constants",
+    "internal-only",
+    "abandoned-code",
+}
 
 
 class TestLoadConfig:
@@ -97,6 +103,46 @@ class TestValidation:
     def test_check_must_be_string(self):
         with pytest.raises(ConfigError, match="'check' must be a string"):
             _validate_config({"check": ["dead-code"]}, "test", VALID_CHECKS)
+
+    def test_git_history_bool_validates(self):
+        _validate_config({"git-history": True}, "test", VALID_CHECKS)
+
+    def test_git_history_must_be_bool(self):
+        with pytest.raises(ConfigError, match="'git-history' must be a boolean"):
+            _validate_config({"git-history": "yes"}, "test", VALID_CHECKS)
+
+    def test_git_window_validates(self):
+        _validate_config({"git-window": "1y"}, "test", VALID_CHECKS)
+
+    def test_git_window_invalid(self):
+        with pytest.raises(ConfigError, match="invalid git-window"):
+            _validate_config({"git-window": "6weeks"}, "test", VALID_CHECKS)
+
+    def test_commit_messages_structured_validates(self):
+        _validate_config({"commit-messages": "structured"}, "test", VALID_CHECKS)
+
+    def test_commit_messages_invalid(self):
+        with pytest.raises(ConfigError, match="invalid commit-messages 'maybe'"):
+            _validate_config({"commit-messages": "maybe"}, "test", VALID_CHECKS)
+
+    def test_ignore_files_valid(self):
+        _validate_config({"ignore-files": {"dead-code": ["utils/*.py"]}}, "test", VALID_CHECKS)
+
+    def test_ignore_files_unknown_check(self):
+        with pytest.raises(ConfigError, match="unknown check 'bogus'.*ignore-files"):
+            _validate_config({"ignore-files": {"bogus": ["file.py"]}}, "test", VALID_CHECKS)
+
+    def test_ignore_files_non_list_value(self):
+        with pytest.raises(ConfigError, match="ignore-files.dead-code must be a list"):
+            _validate_config({"ignore-files": {"dead-code": "file.py"}}, "test", VALID_CHECKS)
+
+    def test_ignore_files_non_string_items(self):
+        with pytest.raises(ConfigError, match="ignore-files.dead-code items must be strings"):
+            _validate_config({"ignore-files": {"dead-code": [123]}}, "test", VALID_CHECKS)
+
+    def test_ignore_files_must_be_table(self):
+        with pytest.raises(ConfigError, match="'ignore-files' must be a table"):
+            _validate_config({"ignore-files": ["file.py"]}, "test", VALID_CHECKS)
 
 
 class TestCLIConfigIntegration:
