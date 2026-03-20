@@ -3,6 +3,7 @@
 from pysmelly.checks.callers import (
     check_constant_args,
     check_dead_code,
+    check_inconsistent_error_handling,
     check_internal_only,
     check_pass_through_params,
     check_return_none_instead_of_raise,
@@ -974,3 +975,202 @@ outer("fast")
 """)
         findings = check_pass_through_params(t, verbose=False)
         assert len(findings) == 0
+
+
+class TestInconsistentErrorHandling:
+    def test_finds_divergent_handling(self, trees):
+        """One specific, one broad, one unhandled — divergent."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": """\
+from lib import fetch
+try:
+    fetch()
+except ConnectionError:
+    pass
+""",
+                "b.py": """\
+from lib import fetch
+try:
+    fetch()
+except Exception:
+    pass
+""",
+                "c.py": """\
+from lib import fetch
+fetch()
+""",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 1
+        assert "fetch()" in findings[0].message
+        assert "inconsistent" in findings[0].message
+        assert "ConnectionError" in findings[0].message
+
+    def test_ignores_consistent_specific(self, trees):
+        """All callers catch specific exceptions — consistent."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept ConnectionError:\n    pass",
+                "b.py": "from lib import fetch\ntry:\n    fetch()\nexcept TimeoutError:\n    pass",
+                "c.py": "from lib import fetch\ntry:\n    fetch()\nexcept ValueError:\n    pass",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_consistent_broad(self, trees):
+        """All callers catch broad Exception — consistently lazy."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+                "b.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+                "c.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_all_unhandled(self, trees):
+        """All callers unhandled — no error handling anywhere."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\nfetch()",
+                "b.py": "from lib import fetch\nfetch()",
+                "c.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_only_2_callers(self, trees):
+        """Need 3+ callers to flag."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept ConnectionError:\n    pass",
+                "b.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_ignores_test_file_callers(self, trees):
+        """Test callers don't count toward the threshold."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept ConnectionError:\n    pass",
+                "b.py": "from lib import fetch\nfetch()",
+                "test_lib.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_nested_try_uses_innermost(self, trees):
+        """Call inside nested try uses the inner handler."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": """\
+from lib import fetch
+try:
+    try:
+        fetch()
+    except ConnectionError:
+        pass
+except Exception:
+    pass
+""",
+                "b.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+                "c.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 1
+        # a.py should be classified as "specific" (innermost)
+        assert "ConnectionError" in findings[0].message
+
+    def test_multiple_except_classified_as_specific(self, trees):
+        """try with both specific and broad handlers counts as specific."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": """\
+from lib import fetch
+try:
+    fetch()
+except ValueError:
+    pass
+except Exception:
+    pass
+""",
+                "b.py": "from lib import fetch\nfetch()",
+                "c.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 1
+        assert "ValueError" in findings[0].message
+
+    def test_method_calls_counted(self, trees):
+        """Attribute calls (obj.method()) are still counted."""
+        t = trees.files(
+            {
+                "lib.py": "def process():\n    pass",
+                "a.py": "import lib\ntry:\n    lib.process()\nexcept ValueError:\n    pass",
+                "b.py": "import lib\ntry:\n    lib.process()\nexcept Exception:\n    pass",
+                "c.py": "import lib\nlib.process()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 1
+
+    def test_broad_plus_unhandled_not_flagged(self, trees):
+        """Broad + unhandled without any specific — weakest signal, skip."""
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+                "b.py": "from lib import fetch\nfetch()",
+                "c.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 0
+
+    def test_message_format(self, trees):
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept TimeoutError:\n    pass",
+                "b.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+                "c.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 1
+        msg = findings[0].message
+        assert "1 catch specific (TimeoutError)" in msg
+        assert "1 catch broad Exception" in msg
+        assert "1 unhandled" in msg
+        assert "error contract is unclear" in msg
+
+    def test_severity_is_medium(self, trees):
+        t = trees.files(
+            {
+                "lib.py": "def fetch():\n    pass",
+                "a.py": "from lib import fetch\ntry:\n    fetch()\nexcept ConnectionError:\n    pass",
+                "b.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
+                "c.py": "from lib import fetch\nfetch()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t, verbose=False)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM

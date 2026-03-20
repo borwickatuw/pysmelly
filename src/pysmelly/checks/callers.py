@@ -9,10 +9,12 @@ from pathlib import Path
 
 from pysmelly.checks.helpers import (
     build_function_index,
+    build_parent_map,
     find_calls_to_function,
     is_imported_elsewhere,
     is_referenced_as_dotted_string,
     is_referenced_as_value,
+    is_test_file,
     is_used_as_decorator,
 )
 from pysmelly.registry import Finding, Severity, check
@@ -794,3 +796,153 @@ def _args_from_single_object(call_node: ast.Call) -> str | None:
     if isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name):
         return first.value.id
     return "one object"
+
+
+def _get_except_handler_names(handler: ast.ExceptHandler) -> list[str]:
+    """Extract exception type names from an except handler."""
+    if handler.type is None:
+        return ["bare except"]
+    if isinstance(handler.type, ast.Name):
+        return [handler.type.id]
+    if isinstance(handler.type, ast.Attribute):
+        return [handler.type.attr]
+    if isinstance(handler.type, ast.Tuple):
+        names = []
+        for elt in handler.type.elts:
+            if isinstance(elt, ast.Name):
+                names.append(elt.id)
+            elif isinstance(elt, ast.Attribute):
+                names.append(elt.attr)
+        return names
+    return []
+
+
+_BROAD_EXCEPTIONS = frozenset({"Exception", "BaseException"})
+
+
+def _classify_error_handling(call_node: ast.Call, tree: ast.Module) -> tuple[str, list[str]]:
+    """Classify the error handling context of a call node.
+
+    Returns (category, exception_names) where category is one of:
+    - "specific" — catches named exception types (not Exception/BaseException)
+    - "broad" — catches Exception, BaseException, or bare except
+    - "unhandled" — no enclosing try/except
+    """
+    parents = build_parent_map(tree)
+
+    # Walk up to find the innermost enclosing Try
+    current: ast.AST = call_node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, ast.Try):
+            # Check if the call is in the try body (not in except/else/finally)
+            call_line = call_node.lineno
+            try_body_lines = set()
+            for stmt in current.body:
+                for node in ast.walk(stmt):
+                    if hasattr(node, "lineno"):
+                        try_body_lines.add(node.lineno)
+            if call_line not in try_body_lines:
+                continue
+
+            # Classify the handlers
+            all_names: list[str] = []
+            has_specific = False
+            has_broad = False
+            for handler in current.handlers:
+                names = _get_except_handler_names(handler)
+                all_names.extend(names)
+                for name in names:
+                    if name in _BROAD_EXCEPTIONS or name == "bare except":
+                        has_broad = True
+                    else:
+                        has_specific = True
+
+            # If any handler catches specific types, classify as specific
+            if has_specific:
+                specific_names = [
+                    n for n in all_names if n not in _BROAD_EXCEPTIONS and n != "bare except"
+                ]
+                return "specific", specific_names
+            return "broad", all_names
+
+    return "unhandled", []
+
+
+@check(
+    "inconsistent-error-handling",
+    severity=Severity.MEDIUM,
+    description="Same function called with divergent error handling across callers",
+)
+def check_inconsistent_error_handling(
+    all_trees: dict[Path, ast.Module], verbose: bool
+) -> list[Finding]:
+    """Find functions called from 3+ sites with divergent error handling.
+
+    Flags when at least one caller catches specific exceptions (proving there's
+    a known failure mode) while other callers catch broad Exception or don't
+    handle errors at all.
+    """
+    findings = []
+    func_index = build_function_index(all_trees)
+
+    for func_name, defs in func_index.items():
+        if len(defs) != 1:
+            continue
+
+        calls = find_calls_to_function(all_trees, func_name)
+        # Filter out test file callers
+        calls = [c for c in calls if not is_test_file(Path(c["file"]))]
+        if len(calls) < 3:
+            continue
+
+        specific_callers: list[dict] = []
+        broad_callers: list[dict] = []
+        unhandled_callers: list[dict] = []
+        all_specific_names: set[str] = set()
+
+        for call in calls:
+            tree = all_trees[Path(call["file"])]
+            category, exc_names = _classify_error_handling(call["node"], tree)
+            call_info = {"file": call["file"], "line": call["line"]}
+            if category == "specific":
+                specific_callers.append(call_info)
+                all_specific_names.update(exc_names)
+            elif category == "broad":
+                broad_callers.append(call_info)
+            else:
+                unhandled_callers.append(call_info)
+
+        # Only flag when at least one caller catches specific exceptions
+        # AND at least one other caller is broad or unhandled
+        if not specific_callers:
+            continue
+        if not broad_callers and not unhandled_callers:
+            continue
+
+        def_info = defs[0]
+        parts = []
+        if specific_callers:
+            exc_str = ", ".join(sorted(all_specific_names))
+            parts.append(f"{len(specific_callers)} catch specific ({exc_str})")
+        if broad_callers:
+            parts.append(f"{len(broad_callers)} catch broad Exception")
+        if unhandled_callers:
+            parts.append(f"{len(unhandled_callers)} unhandled")
+
+        total = len(specific_callers) + len(broad_callers) + len(unhandled_callers)
+        findings.append(
+            Finding(
+                file=def_info["file"],
+                line=def_info["line"],
+                check="inconsistent-error-handling",
+                message=(
+                    f"{func_name}() has {total} callers with inconsistent "
+                    f"error handling: {', '.join(parts)} "
+                    f"— error contract is unclear"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings

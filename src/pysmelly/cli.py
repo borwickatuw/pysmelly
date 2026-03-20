@@ -135,6 +135,7 @@ CALLER_AWARE_CHECKS = {
     "pass-through-params",
     "scattered-constants",
     "scattered-isinstance",
+    "inconsistent-error-handling",
 }
 
 
