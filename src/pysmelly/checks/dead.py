@@ -1,12 +1,13 @@
 """Dead code extension checks — exceptions, dispatch entries, test helpers."""
 
+from __future__ import annotations
+
 import ast
 from pathlib import Path
 
 from pysmelly.checks.helpers import (
     build_exception_index,
     build_test_function_index,
-    find_calls_to_function,
     is_caught_anywhere,
     is_imported_elsewhere,
     is_in_dunder_all,
@@ -17,6 +18,7 @@ from pysmelly.checks.helpers import (
     is_subclassed,
     is_test_file,
 )
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 
@@ -25,31 +27,31 @@ from pysmelly.registry import Finding, Severity, check
     severity=Severity.HIGH,
     description="Custom exception classes never raised or caught anywhere",
 )
-def check_dead_exceptions(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_dead_exceptions(ctx: AnalysisContext) -> list[Finding]:
     """Find custom exception classes never raised, caught, imported, subclassed, or referenced."""
     findings = []
-    exc_defs = build_exception_index(all_trees)
+    exc_defs = build_exception_index(ctx.all_trees)
 
     for exc_name, defs in exc_defs.items():
         if len(defs) > 1:
             continue
 
         def_file = defs[0]["file"]
-        def_tree = all_trees[Path(def_file)]
+        def_tree = ctx.all_trees[Path(def_file)]
 
-        if is_raised_anywhere(exc_name, all_trees):
+        if is_raised_anywhere(exc_name, ctx.all_trees):
             continue
-        if is_caught_anywhere(exc_name, all_trees):
+        if is_caught_anywhere(exc_name, ctx.all_trees):
             continue
-        if is_imported_elsewhere(exc_name, def_file, all_trees):
+        if is_imported_elsewhere(exc_name, def_file, ctx):
             continue
-        if is_subclassed(exc_name, all_trees):
+        if is_subclassed(exc_name, ctx.all_trees):
             continue
-        if is_isinstance_target(exc_name, all_trees):
+        if is_isinstance_target(exc_name, ctx.all_trees):
             continue
-        if is_referenced_as_value(exc_name, all_trees):
+        if is_referenced_as_value(exc_name, ctx):
             continue
-        if is_referenced_as_dotted_string(exc_name, all_trees):
+        if is_referenced_as_dotted_string(exc_name, ctx):
             continue
         if is_in_dunder_all(exc_name, def_tree):
             continue
@@ -161,15 +163,15 @@ def _count_string_occurrences(
     severity=Severity.MEDIUM,
     description="Dispatch dict entries whose key strings appear nowhere else",
 )
-def check_dead_dispatch_entries(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_dead_dispatch_entries(ctx: AnalysisContext) -> list[Finding]:
     """Find entries in dispatch dicts whose key strings appear nowhere else in the codebase."""
     findings = []
-    dispatch_dicts = _find_dispatch_dicts(all_trees)
+    dispatch_dicts = _find_dispatch_dicts(ctx.all_trees)
 
     for dd in dispatch_dicts:
         var_name = dd["var_name"]
         filepath = dd["filepath"]
-        tree = all_trees[filepath]
+        tree = ctx.all_trees[filepath]
 
         # Suppress if the dict is passed to a function, returned, or reassigned
         if var_name and _is_dict_passed_or_returned(var_name, tree, dd["assign_node"]):
@@ -179,7 +181,7 @@ def check_dead_dispatch_entries(all_trees: dict[Path, ast.Module], verbose: bool
         key_lines = {k.lineno for k in d.keys if hasattr(k, "lineno")}
         for key_node in d.keys:
             key_value = key_node.value  # type: ignore[union-attr]
-            occurrences = _count_string_occurrences(key_value, all_trees, filepath, key_lines)
+            occurrences = _count_string_occurrences(key_value, ctx.all_trees, filepath, key_lines)
             if occurrences == 0:
                 display_name = var_name or "dict"
                 findings.append(
@@ -223,11 +225,11 @@ def _collect_fixture_param_names(all_trees: dict[Path, ast.Module]) -> set[str]:
     severity=Severity.MEDIUM,
     description="Test helper functions and unused fixtures with zero callers",
 )
-def check_orphaned_test_helpers(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_orphaned_test_helpers(ctx: AnalysisContext) -> list[Finding]:
     """Find helper functions and unused fixtures in test files with zero callers."""
     findings = []
-    test_funcs = build_test_function_index(all_trees)
-    fixture_params = _collect_fixture_param_names(all_trees)
+    test_funcs = build_test_function_index(ctx.all_trees)
+    fixture_params = _collect_fixture_param_names(ctx.all_trees)
 
     for func_info in test_funcs:
         name = func_info["name"]
@@ -252,12 +254,12 @@ def check_orphaned_test_helpers(all_trees: dict[Path, ast.Module], verbose: bool
             )
         else:
             # Non-fixture helpers: check calls, imports, value references
-            calls = find_calls_to_function(all_trees, name)
+            calls = ctx.call_index.get(name, [])
             if calls:
                 continue
-            if is_imported_elsewhere(name, def_file, all_trees):
+            if is_imported_elsewhere(name, def_file, ctx):
                 continue
-            if is_referenced_as_value(name, all_trees):
+            if is_referenced_as_value(name, ctx):
                 continue
             findings.append(
                 Finding(

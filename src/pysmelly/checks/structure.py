@@ -1,10 +1,13 @@
 """Structural checks — duplicate code blocks and parameter clumps."""
 
+from __future__ import annotations
+
 import ast
 from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.checks.helpers import is_test_file
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "log", "quiet"})
@@ -47,7 +50,7 @@ def _dedup_and_format_locations(
     severity=Severity.MEDIUM,
     description="Structurally identical code blocks across functions",
 )
-def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_duplicate_blocks(ctx: AnalysisContext) -> list[Finding]:
     """Find duplicate code blocks across functions.
 
     Uses AST normalization to match structurally identical code
@@ -56,7 +59,7 @@ def check_duplicate_blocks(all_trees: dict[Path, ast.Module], verbose: bool) -> 
     findings = []
 
     all_blocks = []
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         all_blocks.extend(_extract_statement_blocks(tree, filepath))
 
     by_sig: dict[str, list[dict]] = defaultdict(list)
@@ -204,9 +207,7 @@ def _extract_statement_blocks(
     severity=Severity.MEDIUM,
     description="Identical except handlers with same error messages across files",
 )
-def check_duplicate_except_blocks(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+def check_duplicate_except_blocks(ctx: AnalysisContext) -> list[Finding]:
     """Find duplicate except handlers across different files.
 
     Higher confidence than duplicate-blocks: matches exception type,
@@ -215,7 +216,7 @@ def check_duplicate_except_blocks(
     findings = []
 
     all_handlers: list[dict] = []
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         all_handlers.extend(_extract_except_handlers(tree, filepath))
 
     by_sig: dict[str, list[dict]] = defaultdict(list)
@@ -346,14 +347,14 @@ def _extract_except_handlers(tree: ast.Module, filepath: Path) -> list[dict]:
     severity=Severity.MEDIUM,
     description="Groups of 3+ parameters appearing together in 3+ function signatures",
 )
-def check_param_clumps(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_param_clumps(ctx: AnalysisContext) -> list[Finding]:
     """Find groups of parameters that recur together across function signatures.
 
     When 3+ parameters appear together in 3+ function signatures,
     it's a strong signal to extract a dataclass or config object.
     """
     findings = []
-    signatures = _extract_all_signatures(all_trees)
+    signatures = _extract_all_signatures(ctx.all_trees)
     clumps = _find_param_clumps(signatures)
 
     for clump in clumps:

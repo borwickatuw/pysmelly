@@ -1,10 +1,13 @@
 """Architectural checks — higher-level cross-file patterns."""
 
+from __future__ import annotations
+
 import ast
 from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.checks.helpers import is_test_file
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 # Methods that mutate containers
@@ -267,14 +270,12 @@ def _collect_mutations(
     severity=Severity.MEDIUM,
     description="Module-level mutable variables mutated from other files at import time",
 )
-def check_shared_mutable_module_state(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+def check_shared_mutable_module_state(ctx: AnalysisContext) -> list[Finding]:
     """Find module-level mutable variables mutated from other files at module scope."""
     findings = []
 
-    mutable_vars = _collect_mutable_module_vars(all_trees)
-    mutations = _collect_mutations(all_trees, mutable_vars)
+    mutable_vars = _collect_mutable_module_vars(ctx.all_trees)
+    mutations = _collect_mutations(ctx.all_trees, mutable_vars)
 
     for var_name, mutation_list in sorted(mutations.items()):
         if not mutation_list:

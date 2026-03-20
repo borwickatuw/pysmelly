@@ -1,8 +1,14 @@
 """Shared AST helpers used by multiple checks."""
 
+from __future__ import annotations
+
 import ast
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pysmelly.context import AnalysisContext
 
 
 def build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
@@ -36,22 +42,6 @@ _EXCEPTION_BASES = frozenset(
         "TimeoutError",
     }
 )
-
-
-def find_calls_to_function(all_trees: dict[Path, ast.Module], func_name: str) -> list[dict]:
-    """Find all call sites for a function name across the codebase."""
-    calls = []
-    for filepath, tree in all_trees.items():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            # Match direct calls: func_name(...)
-            if isinstance(node.func, ast.Name) and node.func.id == func_name:
-                calls.append({"file": str(filepath), "line": node.lineno, "node": node})
-            # Match attribute calls: obj.func_name(...)
-            elif isinstance(node.func, ast.Attribute) and node.func.attr == func_name:
-                calls.append({"file": str(filepath), "line": node.lineno, "node": node})
-    return calls
 
 
 def _find_main_entry_points(all_trees: dict[Path, ast.Module]) -> set[str]:
@@ -128,74 +118,124 @@ def build_function_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[di
                 if is_method:
                     break
             if not is_method:
-                func_defs[node.name].append({"file": str(filepath), "line": node.lineno})
+                func_defs[node.name].append(
+                    {"file": str(filepath), "line": node.lineno, "node": node}
+                )
     return func_defs
 
 
-def is_imported_elsewhere(func_name: str, def_file: str, all_trees: dict[Path, ast.Module]) -> bool:
-    """Check if a function is imported in any other file."""
+def build_call_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[dict]]:
+    """Build map of all function call sites across the codebase in a single pass.
+
+    Returns {func_name: [{file, line, node}, ...]} for every called name.
+    """
+    calls: dict[str, list[dict]] = defaultdict(list)
     for filepath, tree in all_trees.items():
-        if str(filepath) == def_file:
-            continue
         for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                calls[node.func.id].append(
+                    {"file": str(filepath), "line": node.lineno, "node": node}
+                )
+            elif isinstance(node.func, ast.Attribute):
+                calls[node.func.attr].append(
+                    {"file": str(filepath), "line": node.lineno, "node": node}
+                )
+    return calls
+
+
+def build_reference_indices(all_trees: dict[Path, ast.Module]) -> dict:
+    """Single-pass builder for import, value-reference, dotted-string, and decorator indices.
+
+    Returns a dict with keys:
+      import_index: dict[str, set[str]]  — name -> set of importing file paths
+      value_references: set[str]  — names used as dict values, list elements, or call args
+      dotted_string_suffixes: set[str]  — final components of dotted-path strings
+      decorator_names: set[str]  — names used as decorators
+    """
+    import_index: dict[str, set[str]] = defaultdict(set)
+    value_references: set[str] = set()
+    dotted_string_suffixes: set[str] = set()
+    decorator_names: set[str] = set()
+
+    for filepath, tree in all_trees.items():
+        file_str = str(filepath)
+        for node in ast.walk(tree):
+            # Import index
             if isinstance(node, ast.ImportFrom):
                 for alias in node.names:
-                    if alias.name == func_name:
-                        return True
-    return False
+                    import_index[alias.name].add(file_str)
 
+            # Value references (dict values, list/tuple elements, call args)
+            elif isinstance(node, ast.Dict):
+                for val in node.values:
+                    if val is not None:
+                        if isinstance(val, ast.Name):
+                            value_references.add(val.id)
+                        elif isinstance(val, ast.Attribute):
+                            value_references.add(val.attr)
+            elif isinstance(node, (ast.List, ast.Tuple)):
+                for elt in node.elts:
+                    if isinstance(elt, ast.Name):
+                        value_references.add(elt.id)
+                    elif isinstance(elt, ast.Attribute):
+                        value_references.add(elt.attr)
+            elif isinstance(node, ast.Call):
+                for arg in node.args:
+                    if isinstance(arg, ast.Name):
+                        value_references.add(arg.id)
+                    elif isinstance(arg, ast.Attribute):
+                        value_references.add(arg.attr)
+                for kw in node.keywords:
+                    if isinstance(kw.value, ast.Name):
+                        value_references.add(kw.value.id)
+                    elif isinstance(kw.value, ast.Attribute):
+                        value_references.add(kw.value.attr)
 
-def is_referenced_as_dotted_string(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
-    """Check if a function name appears as the final component of a dotted-path string.
-
-    Frameworks like Django reference functions by dotted paths in settings:
-    ``"myapp.context_processors.site_url"`` references ``site_url``.
-    """
-    suffix = f".{func_name}"
-    for tree in all_trees.values():
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and "." in node.value
-                and node.value.endswith(suffix)
+            # Dotted string suffixes
+            elif (
+                isinstance(node, ast.Constant) and isinstance(node.value, str) and "." in node.value
             ):
-                return True
-    return False
+                # Extract the final component after the last dot
+                suffix = node.value.rsplit(".", 1)[-1]
+                if suffix:
+                    dotted_string_suffixes.add(suffix)
+
+            # Decorator names
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                for deco in node.decorator_list:
+                    if isinstance(deco, ast.Name):
+                        decorator_names.add(deco.id)
+                    elif isinstance(deco, ast.Call) and isinstance(deco.func, ast.Name):
+                        decorator_names.add(deco.func.id)
+                    elif isinstance(deco, ast.Attribute):
+                        decorator_names.add(deco.attr)
+                    elif isinstance(deco, ast.Call) and isinstance(deco.func, ast.Attribute):
+                        decorator_names.add(deco.func.attr)
+
+    return {
+        "import_index": dict(import_index),
+        "value_references": value_references,
+        "dotted_string_suffixes": dotted_string_suffixes,
+        "decorator_names": decorator_names,
+    }
 
 
-def is_used_as_decorator(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
-    """Check if a function name is used as a decorator anywhere.
+def is_imported_elsewhere(func_name: str, def_file: str, ctx: "AnalysisContext") -> bool:
+    """Check if a function is imported in any other file (O(1) via cached index)."""
+    importing_files = ctx.import_index.get(func_name, set())
+    return bool(importing_files - {def_file})
 
-    Handles both @func_name and @func_name(...) forms,
-    as well as @module.func_name variants.
-    """
-    for tree in all_trees.values():
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            for deco in node.decorator_list:
-                # @func_name
-                if isinstance(deco, ast.Name) and deco.id == func_name:
-                    return True
-                # @func_name(...)
-                if (
-                    isinstance(deco, ast.Call)
-                    and isinstance(deco.func, ast.Name)
-                    and deco.func.id == func_name
-                ):
-                    return True
-                # @module.func_name
-                if isinstance(deco, ast.Attribute) and deco.attr == func_name:
-                    return True
-                # @module.func_name(...)
-                if (
-                    isinstance(deco, ast.Call)
-                    and isinstance(deco.func, ast.Attribute)
-                    and deco.func.attr == func_name
-                ):
-                    return True
-    return False
+
+def is_referenced_as_dotted_string(func_name: str, ctx: "AnalysisContext") -> bool:
+    """Check if a function name appears as the final component of a dotted-path string."""
+    return func_name in ctx.dotted_string_suffixes
+
+
+def is_used_as_decorator(func_name: str, ctx: "AnalysisContext") -> bool:
+    """Check if a function name is used as a decorator anywhere."""
+    return func_name in ctx.decorator_names
 
 
 def _is_name_or_attr(node: ast.expr, name: str) -> bool:
@@ -211,26 +251,9 @@ def _is_name_or_attr(node: ast.expr, name: str) -> bool:
     return False
 
 
-def is_referenced_as_value(func_name: str, all_trees: dict[Path, ast.Module]) -> bool:
-    """Check if a function name appears as a dict value, list element, or argument."""
-    for tree in all_trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Dict):
-                for val in node.values:
-                    if val is not None and _is_name_or_attr(val, func_name):
-                        return True
-            if isinstance(node, (ast.List, ast.Tuple)):
-                for elt in node.elts:
-                    if _is_name_or_attr(elt, func_name):
-                        return True
-            if isinstance(node, ast.Call):
-                for arg in node.args:
-                    if _is_name_or_attr(arg, func_name):
-                        return True
-                for kw in node.keywords:
-                    if _is_name_or_attr(kw.value, func_name):
-                        return True
-    return False
+def is_referenced_as_value(func_name: str, ctx: "AnalysisContext") -> bool:
+    """Check if a function name appears as a dict value, list element, or argument (O(1) via cached index)."""
+    return func_name in ctx.value_references
 
 
 def is_test_file(filepath: Path) -> bool:

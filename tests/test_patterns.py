@@ -22,7 +22,7 @@ def build():
     role = get_role()
     return Thing(name=name, age=age, email=email, role=role)
 """)
-        findings = check_foo_equals_foo(t, verbose=False)
+        findings = check_foo_equals_foo(t)
         assert len(findings) == 1
         assert "single-use locals" in findings[0].message
         assert findings[0].severity.value == "medium"
@@ -33,7 +33,7 @@ def build():
 def build(name, age, email, role):
     return Thing(name=name, age=age, email=email, role=role)
 """)
-        findings = check_foo_equals_foo(t, verbose=False)
+        findings = check_foo_equals_foo(t)
         assert len(findings) == 0
 
     def test_mixed_forwarded_and_single_use(self, trees):
@@ -46,7 +46,7 @@ def build(name):
     extra = get_extra()
     return Thing(name=name, age=age, email=email, role=role, extra=extra)
 """)
-        findings = check_foo_equals_foo(t, verbose=False)
+        findings = check_foo_equals_foo(t)
         assert len(findings) == 1
         assert "4 are single-use locals" in findings[0].message
         assert "name" not in findings[0].message.split("single-use locals")[1]
@@ -62,7 +62,7 @@ def build():
     log(name, age, email, role)
     return Thing(name=name, age=age, email=email, role=role)
 """)
-        findings = check_foo_equals_foo(t, verbose=False)
+        findings = check_foo_equals_foo(t)
         assert len(findings) == 0
 
     def test_ignores_below_threshold(self, trees):
@@ -72,7 +72,7 @@ def build():
     age = get_age()
     return Thing(name=name, age=age)
 """)
-        findings = check_foo_equals_foo(t, verbose=False)
+        findings = check_foo_equals_foo(t)
         assert len(findings) == 0
 
     def test_ignores_non_matching_kwargs(self, trees):
@@ -80,7 +80,7 @@ def build():
 def build(name, age, email, role):
     return Thing(name=name, age=42, email="x", role="admin")
 """)
-        findings = check_foo_equals_foo(t, verbose=False)
+        findings = check_foo_equals_foo(t)
         assert len(findings) == 0
 
 
@@ -91,7 +91,7 @@ COLORS = {"red": "#f00", "blue": "#00f"}
 
 x = COLORS.get("green", "#000")
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 1
         assert "non-trivial fallback" in findings[0].message
 
@@ -101,7 +101,7 @@ COLORS = {"red": "#f00"}
 
 x = COLORS.get("green", None)
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 0
 
     def test_ignores_empty_string_default(self, trees):
@@ -110,7 +110,7 @@ COLORS = {"red": "#f00"}
 
 x = COLORS.get("green", "")
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 0
 
     def test_ignores_no_default(self, trees):
@@ -119,7 +119,7 @@ COLORS = {"red": "#f00"}
 
 x = COLORS.get("green")
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 0
 
     def test_ignores_lowercase_dicts(self, trees):
@@ -128,7 +128,7 @@ colors = {"red": "#f00"}
 
 x = colors.get("green", "#000")
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 0
 
     def test_finds_setdefault_nontrivial(self, trees):
@@ -137,7 +137,7 @@ COLORS = {"red": "#f00", "blue": "#00f"}
 
 x = COLORS.setdefault("green", "#000")
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 1
         assert "setdefault()" in findings[0].message
         assert "non-trivial fallback" in findings[0].message
@@ -148,7 +148,7 @@ COLORS = {"red": "#f00"}
 
 x = COLORS.setdefault("green", None)
 """)
-        findings = check_suspicious_fallbacks(t, verbose=False)
+        findings = check_suspicious_fallbacks(t)
         assert len(findings) == 0
 
 
@@ -161,7 +161,7 @@ def build():
     parts.append("b")
     return ", ".join(parts)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert "temporary accumulator" in findings[0].message
 
@@ -174,7 +174,7 @@ def build():
     if errors:
         raise ValueError(str(errors))
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
 
     def test_ignores_single_append(self, trees):
@@ -184,7 +184,7 @@ def build():
     parts.append("a")
     return ", ".join(parts)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 0
 
     def test_ignores_nonempty_initial_list(self, trees):
@@ -195,7 +195,7 @@ def build():
     parts.append("b")
     return ", ".join(parts)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 0
 
     def test_loop_append_is_medium_severity(self, trees):
@@ -207,7 +207,7 @@ def build(items):
         parts.append(item.name)
     return ", ".join(parts)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert findings[0].severity.value == "medium"
         assert "comprehension" in findings[0].message
@@ -225,7 +225,7 @@ def build(config):
     if flags:
         run(flags)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert findings[0].severity.value == "low"
         assert "independent conditions" in findings[0].message
@@ -243,7 +243,7 @@ def process(items):
     if batch:
         send(batch)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 0
 
     def test_suppresses_batch_flush_with_clear(self, trees):
@@ -259,7 +259,7 @@ def process(items):
     if batch:
         send(batch)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 0
 
     def test_mixed_loop_and_conditional_is_medium(self, trees):
@@ -273,7 +273,7 @@ def build(items, extra):
         parts.append(extra)
     return ", ".join(parts)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert findings[0].severity.value == "medium"
 
@@ -286,7 +286,7 @@ def build():
         entries.append(item.name)
     manifest["metadata"] = entries
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert "manifest['metadata']" in findings[0].message
         assert "line 5" in findings[0].message
@@ -300,7 +300,7 @@ def build():
     tags.append("b")
     result.tags = tags
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert "result.tags" in findings[0].message
 
@@ -315,7 +315,7 @@ def build(config):
         flags.append("--debug")
     result.flags = flags
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert "result.flags" in findings[0].message
 
@@ -328,7 +328,7 @@ def build():
     parts.append("b")
     return ", ".join(parts)
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         assert "populate" not in findings[0].message
 
@@ -342,7 +342,7 @@ def build():
     result.items = items
     backup.items = items
 """)
-        findings = check_temp_accumulators(t, verbose=False)
+        findings = check_temp_accumulators(t)
         assert len(findings) == 1
         # Should not name a specific consumer since there are two
         assert "populate" not in findings[0].message
@@ -361,7 +361,7 @@ HANDLERS = {
     "c": handle_c,
 }
 """)
-        findings = check_constant_dispatch_dicts(t, verbose=False)
+        findings = check_constant_dispatch_dicts(t)
         assert len(findings) == 1
         assert "dispatch dict" in findings[0].message
 
@@ -375,7 +375,7 @@ HANDLERS = {
     "b": handle_b,
 }
 """)
-        findings = check_constant_dispatch_dicts(t, verbose=False)
+        findings = check_constant_dispatch_dicts(t)
         assert len(findings) == 0
 
     def test_ignores_non_name_values(self, trees):
@@ -386,7 +386,7 @@ CONFIG = {
     "debug": "true",
 }
 """)
-        findings = check_constant_dispatch_dicts(t, verbose=False)
+        findings = check_constant_dispatch_dicts(t)
         assert len(findings) == 0
 
     def test_ignores_uppercase_constant_values(self, trees):
@@ -398,7 +398,7 @@ _o365_settings = {
     "O365_TENANT_ID": O365_TENANT_ID,
 }
 """)
-        findings = check_constant_dispatch_dicts(t, verbose=False)
+        findings = check_constant_dispatch_dicts(t)
         assert len(findings) == 0
 
     def test_still_flags_mixed_case_values(self, trees):
@@ -410,7 +410,7 @@ HANDLERS = {
     "c": handle_c,
 }
 """)
-        findings = check_constant_dispatch_dicts(t, verbose=False)
+        findings = check_constant_dispatch_dicts(t)
         assert len(findings) == 1
 
 
@@ -420,7 +420,7 @@ class TestTrivialWrappers:
 def get_color(name):
     return COLORS[name]
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
         assert "COLORS[...]" in findings[0].message
 
@@ -429,7 +429,7 @@ def get_color(name):
 def get_name(user):
     return user.name
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
         assert "user.name" in findings[0].message
 
@@ -438,7 +438,7 @@ def get_name(user):
 def get_data(key):
     return fetch(key)
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
         assert "fetch(...)" in findings[0].message
 
@@ -448,7 +448,7 @@ def get_config(key):
     \"\"\"Get a config value.\"\"\"
     return CONFIG[key]
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
 
     def test_ignores_multi_statement(self, trees):
@@ -457,7 +457,7 @@ def process(data):
     result = transform(data)
     return result
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_private_functions(self, trees):
@@ -465,7 +465,7 @@ def process(data):
 def _helper(key):
     return CONFIG[key]
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_complex_return(self, trees):
@@ -473,7 +473,7 @@ def _helper(key):
 def compute(a, b):
     return a + b
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_abstract_method_impl(self, trees):
@@ -483,7 +483,7 @@ class MyHandler(BaseHandler):
     def name(self):
         return "my-handler"
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_subclass_method_with_attr_return(self, trees):
@@ -496,7 +496,7 @@ class EventSitemap(Sitemap):
     def location(self, obj):
         return obj.get_absolute_url()
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_flags_constant_return_without_base(self, trees):
@@ -506,7 +506,7 @@ class MyHandler:
     def name(self):
         return "my-handler"
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
 
     def test_ignores_self_method_chain(self, trees):
@@ -516,7 +516,7 @@ class Config:
     def to_json(self):
         return self.to_dict()
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_from_dict_with_complex_args(self, trees):
@@ -527,7 +527,7 @@ class Config:
     def from_dict(cls, data):
         return cls(name=data.get("name", ""), port=data.get("port", 8080))
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_call_with_extra_constant_kwarg(self, trees):
@@ -536,7 +536,7 @@ class Config:
 def encrypt_token_for_task(data):
     return signing.dumps(data, compress=True)
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_call_with_hardcoded_arg(self, trees):
@@ -545,7 +545,7 @@ def encrypt_token_for_task(data):
 def get_rds_client():
     return boto3.client("rds")
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_flags_call_with_simple_passthrough(self, trees):
@@ -554,7 +554,7 @@ def get_rds_client():
 def get_data(key):
     return fetch(key)
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
 
     def test_ignores_decorated_function(self, trees):
@@ -564,7 +564,7 @@ def get_data(key):
 def client():
     return Client()
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_property_decorator(self, trees):
@@ -575,7 +575,7 @@ class Config:
     def name(self):
         return self._name
 """)
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_ignores_multi_caller_wrapper(self, trees):
@@ -591,7 +591,7 @@ def get_data(key):
                 "c.py": "from client import get_data\nget_data('z')\n",
             }
         )
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 0
 
     def test_flags_single_caller_pure_forwarding(self, trees):
@@ -605,7 +605,7 @@ def get_data(key):
                 "a.py": "from client import get_data\nget_data('x')\n",
             }
         )
-        findings = check_trivial_wrappers(t, verbose=False)
+        findings = check_trivial_wrappers(t)
         assert len(findings) == 1
 
 
@@ -615,7 +615,7 @@ class TestEnvFallbacks:
 import os
 db = os.environ.get("DB_HOST", "localhost")
 """)
-        findings = check_env_fallbacks(t, verbose=False)
+        findings = check_env_fallbacks(t)
         assert len(findings) == 1
         assert "DB_HOST" in findings[0].message
         assert "fail fast" in findings[0].message
@@ -625,7 +625,7 @@ db = os.environ.get("DB_HOST", "localhost")
 import os
 port = os.getenv("PORT", "8080")
 """)
-        findings = check_env_fallbacks(t, verbose=False)
+        findings = check_env_fallbacks(t)
         assert len(findings) == 1
         assert "PORT" in findings[0].message
 
@@ -634,7 +634,7 @@ port = os.getenv("PORT", "8080")
 import os
 val = os.environ.get("KEY", None)
 """)
-        findings = check_env_fallbacks(t, verbose=False)
+        findings = check_env_fallbacks(t)
         assert len(findings) == 0
 
     def test_ignores_no_default(self, trees):
@@ -642,7 +642,7 @@ val = os.environ.get("KEY", None)
 import os
 val = os.environ.get("KEY")
 """)
-        findings = check_env_fallbacks(t, verbose=False)
+        findings = check_env_fallbacks(t)
         assert len(findings) == 0
 
     def test_ignores_bracket_access(self, trees):
@@ -650,7 +650,7 @@ val = os.environ.get("KEY")
 import os
 val = os.environ["KEY"]
 """)
-        findings = check_env_fallbacks(t, verbose=False)
+        findings = check_env_fallbacks(t)
         assert len(findings) == 0
 
     def test_finds_getenv_none_default_ignored(self, trees):
@@ -658,7 +658,7 @@ val = os.environ["KEY"]
 import os
 val = os.getenv("KEY", None)
 """)
-        findings = check_env_fallbacks(t, verbose=False)
+        findings = check_env_fallbacks(t)
         assert len(findings) == 0
 
 
@@ -671,7 +671,7 @@ def get_urls_with_maintenance(self):
 
 admin.site.get_urls = get_urls_with_maintenance
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 1
         assert "admin.site.get_urls" in findings[0].message
         assert "monkey-patch" in findings[0].message
@@ -686,7 +686,7 @@ def get_urls_with_maintenance(self):
 
 admin.site.get_urls = get_urls_with_maintenance
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 1
         assert "original_get_urls" in findings[0].message
 
@@ -698,7 +698,7 @@ def is_active_display(obj):
 
 MyModelAdmin.is_active_display = is_active_display
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 1
         assert "MyModelAdmin.is_active_display" in findings[0].message
 
@@ -710,7 +710,7 @@ def something():
 
 admin.site.site_header = "My Admin"
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 0
 
     def test_ignores_call_value(self, trees):
@@ -721,7 +721,7 @@ def make_handler():
 
 obj.handler = make_handler()
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 0
 
     def test_ignores_non_local_function(self, trees):
@@ -729,7 +729,7 @@ obj.handler = make_handler()
         t = trees.code("""\
 admin.site.get_urls = imported_func
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 0
 
     def test_ignores_assignment_inside_function(self, trees):
@@ -741,5 +741,5 @@ def my_func():
 def setup():
     admin.site.get_urls = my_func
 """)
-        findings = check_runtime_monkey_patch(t, verbose=False)
+        findings = check_runtime_monkey_patch(t)
         assert len(findings) == 0

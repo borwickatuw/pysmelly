@@ -1,10 +1,13 @@
 """Cross-file repetition checks — find patterns repeated across 3+ files."""
 
+from __future__ import annotations
+
 import ast
 from collections import defaultdict
 from pathlib import Path
 
-from pysmelly.checks.helpers import build_parent_map, is_test_file
+from pysmelly.checks.helpers import is_test_file
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 TRIVIAL_VALUES = frozenset({None, True, False, 0, 1, -1, 2, 0.0, 1.0, "", b""})
@@ -77,7 +80,13 @@ TRIVIAL_NUMBERS = frozenset(
         502,
         503,
         # Single-digit integers (almost always coincidental across files)
-        3, 4, 5, 6, 7, 8, 9,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
         # Common powers of 2 (buffer sizes, field lengths)
         64,
         128,
@@ -250,17 +259,17 @@ def _get_negative_value(node: ast.AST, parent: ast.AST | None) -> object | None:
     severity=Severity.LOW,
     description="Same literal value appears in assignments/comparisons across 3+ files",
 )
-def check_scattered_constants(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_scattered_constants(ctx: AnalysisContext) -> list[Finding]:
     """Find literal values repeated in 3+ files in assignment/comparison contexts."""
     findings = []
     # key: (type_name, repr_value), value: list of (filepath, line)
     occurrences: dict[tuple[str, str], list[tuple[Path, int]]] = defaultdict(list)
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath) or _is_migration_file(filepath):
             continue
 
-        parents = build_parent_map(tree)
+        parents = ctx.parent_map(tree)
         # Track which values we've already recorded for this file
         seen_in_file: set[tuple[str, str]] = set()
 
@@ -348,13 +357,13 @@ def check_scattered_constants(all_trees: dict[Path, ast.Module], verbose: bool) 
     severity=Severity.MEDIUM,
     description="isinstance checks for project-defined types scattered across 3+ files",
 )
-def check_scattered_isinstance(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_scattered_isinstance(ctx: AnalysisContext) -> list[Finding]:
     """Find isinstance/issubclass checks for project types repeated in 3+ files."""
     findings = []
 
     # Build project class set — skip classes defined in multiple files (ambiguous)
     class_defs: dict[str, list[tuple[Path, int]]] = defaultdict(list)
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 class_defs[node.name].append((filepath, node.lineno))
@@ -368,7 +377,7 @@ def check_scattered_isinstance(all_trees: dict[Path, ast.Module], verbose: bool)
     # key: class_name, value: list of (filepath, line)
     isinstance_locs: dict[str, list[tuple[Path, int]]] = defaultdict(list)
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath):
             continue
 

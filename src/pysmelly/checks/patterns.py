@@ -1,9 +1,11 @@
 """Pattern-based checks — detect specific code idioms that suggest refactoring."""
 
+from __future__ import annotations
+
 import ast
 from pathlib import Path
 
-from pysmelly.checks.helpers import build_parent_map, find_calls_to_function
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 
@@ -45,7 +47,7 @@ def _count_name_loads(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict
     severity=Severity.MEDIUM,
     description="Single-use locals gathered into an object — inline or build directly",
 )
-def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_foo_equals_foo(ctx: AnalysisContext) -> list[Finding]:
     """Find calls where many kwargs match local variable names (name=name).
 
     Distinguishes three cases:
@@ -59,8 +61,8 @@ def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> li
     findings = []
     threshold = 4
 
-    for filepath, tree in all_trees.items():
-        parents = build_parent_map(tree)
+    for filepath, tree in ctx.all_trees.items():
+        parents = ctx.parent_map(tree)
         func_cache: dict[int, tuple[set[str], dict[str, int]]] = {}
 
         for node in ast.walk(tree):
@@ -144,7 +146,7 @@ def check_foo_equals_foo(all_trees: dict[Path, ast.Module], verbose: bool) -> li
     severity=Severity.HIGH,
     description="dict.get()/setdefault() with non-trivial defaults on constant dicts",
 )
-def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_suspicious_fallbacks(ctx: AnalysisContext) -> list[Finding]:
     """Find .get()/.setdefault() on module-level constant dicts with non-trivial defaults.
 
     A default of None/0/False/"" is normal. A non-trivial default suggests
@@ -153,7 +155,7 @@ def check_suspicious_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool)
     """
     findings = []
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         constant_names: set[str] = set()
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
@@ -306,7 +308,7 @@ def _find_consumer(siblings: list[ast.AST], var_name: str) -> tuple[str | None, 
     severity=Severity.MEDIUM,
     description="Lists built by append then joined (use comprehension)",
 )
-def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_temp_accumulators(ctx: AnalysisContext) -> list[Finding]:
     """Find temporary lists used only to accumulate and join/check.
 
     Pattern: name = [], then appends, then join() or 'if name:'.
@@ -319,7 +321,7 @@ def check_temp_accumulators(all_trees: dict[Path, ast.Module], verbose: bool) ->
     """
     findings = []
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):
                 continue
@@ -474,9 +476,7 @@ def _find_siblings_after(tree: ast.Module, target: ast.AST) -> list[ast.AST]:
     severity=Severity.MEDIUM,
     description="Module-level string-to-function dispatch tables",
 )
-def check_constant_dispatch_dicts(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+def check_constant_dispatch_dicts(ctx: AnalysisContext) -> list[Finding]:
     """Find module-level dicts where all values are bare name references.
 
     These dispatch/registration tables can get out of sync with the functions
@@ -486,7 +486,7 @@ def check_constant_dispatch_dicts(
     findings = []
     min_entries = 3
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         for node in ast.iter_child_nodes(tree):
             if not isinstance(node, ast.Assign):
                 continue
@@ -587,7 +587,7 @@ def _collect_subclass_methods(tree: ast.Module) -> set[int]:
     severity=Severity.LOW,
     description="Functions whose body is a single return (inline candidate)",
 )
-def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_trivial_wrappers(ctx: AnalysisContext) -> list[Finding]:
     """Find functions whose only real statement is a return.
 
     Functions that just return a dict lookup, attribute access, or single
@@ -602,7 +602,7 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
     findings = []
     multi_caller_threshold = 3
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         subclass_methods = _collect_subclass_methods(tree)
 
         for node in ast.walk(tree):
@@ -648,7 +648,7 @@ def check_trivial_wrappers(all_trees: dict[Path, ast.Module], verbose: bool) -> 
                 continue
 
             # Suppress: multi-caller wrappers (central point for change)
-            callers = find_calls_to_function(all_trees, node.name)
+            callers = ctx.call_index.get(node.name, [])
             if len(callers) >= multi_caller_threshold:
                 continue
 
@@ -694,7 +694,7 @@ def _describe_trivial_return(value: ast.expr) -> str | None:
     severity=Severity.HIGH,
     description="os.environ.get() or os.getenv() with non-None defaults",
 )
-def check_env_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_env_fallbacks(ctx: AnalysisContext) -> list[Finding]:
     """Find environment variable lookups with non-None fallback defaults.
 
     If the config is required, it should fail fast on missing values rather
@@ -702,7 +702,7 @@ def check_env_fallbacks(all_trees: dict[Path, ast.Module], verbose: bool) -> lis
     """
     findings = []
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -746,7 +746,7 @@ def _attr_chain(node: ast.expr) -> str:
     severity=Severity.MEDIUM,
     description="Function assigned to attribute of external object at module scope",
 )
-def check_runtime_monkey_patch(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_runtime_monkey_patch(ctx: AnalysisContext) -> list[Finding]:
     """Find module-level monkey-patches: obj.attr = local_function.
 
     Monkey-patching replaces behavior at runtime, making code harder to
@@ -755,7 +755,7 @@ def check_runtime_monkey_patch(all_trees: dict[Path, ast.Module], verbose: bool)
     """
     findings = []
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         # Collect locally-defined function names at module level
         local_funcs: set[str] = set()
         for node in ast.iter_child_nodes(tree):

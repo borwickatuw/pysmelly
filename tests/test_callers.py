@@ -22,7 +22,7 @@ def greet(name, title=None):
 greet("Alice", title="Dr")
 greet("Bob", title="Mr")
 """)
-        findings = check_unused_defaults(t, verbose=False)
+        findings = check_unused_defaults(t)
         assert len(findings) == 1
         assert "title" in findings[0].message
         assert "make it required" in findings[0].message
@@ -36,7 +36,7 @@ def get_run_command(extra_args=None):
 get_run_command(args.extra_args)
 get_run_command(extra_args=config.args)
 """)
-        findings = check_unused_defaults(t, verbose=False)
+        findings = check_unused_defaults(t)
         assert len(findings) == 1
         assert "extra_args" in findings[0].message
 
@@ -48,7 +48,7 @@ def greet(name, title=None):
 greet("Alice", title="Dr")
 greet("Bob")
 """)
-        findings = check_unused_defaults(t, verbose=False)
+        findings = check_unused_defaults(t)
         assert len(findings) == 0
 
     def test_ignores_no_callers(self, trees):
@@ -56,7 +56,7 @@ greet("Bob")
 def greet(name, title=None):
     pass
 """)
-        findings = check_unused_defaults(t, verbose=False)
+        findings = check_unused_defaults(t)
         assert len(findings) == 0
 
     def test_ignores_private_functions(self, trees):
@@ -67,7 +67,7 @@ def _internal(x, y=None):
 _internal(1, y=2)
 _internal(3, y=4)
 """)
-        findings = check_unused_defaults(t, verbose=False)
+        findings = check_unused_defaults(t)
         assert len(findings) == 0
 
     def test_cross_file(self, trees):
@@ -84,7 +84,7 @@ process([3], fmt="csv")
 """,
             }
         )
-        findings = check_unused_defaults(t, verbose=False)
+        findings = check_unused_defaults(t)
         assert len(findings) == 1
         assert "fmt" in findings[0].message
 
@@ -100,7 +100,7 @@ def unused():
 
 used()
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 1
         assert "unused()" in findings[0].message
 
@@ -111,7 +111,7 @@ def helper():
 
 helper()
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_private_functions(self, trees):
@@ -119,7 +119,7 @@ helper()
 def _private():
     pass
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_decorated_functions(self, trees):
@@ -128,7 +128,7 @@ def _private():
 def index():
     pass
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_dict_value_references(self, trees):
@@ -138,7 +138,7 @@ def handler_a():
 
 HANDLERS = {"a": handler_a}
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_main_entry_point(self, trees):
@@ -149,7 +149,7 @@ def main():
 if __name__ == "__main__":
     main()
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_imported_function(self, trees):
@@ -164,7 +164,7 @@ from lib import helper
 """,
             }
         )
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_function_used_as_decorator(self, trees):
@@ -181,7 +181,7 @@ def get_inbox():
 def get_calendar():
     pass
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         dead_names = {f.message.split("()")[0] for f in findings}
         assert "wrap_raw" not in dead_names
 
@@ -195,7 +195,7 @@ def require_role(role):
 def admin_view():
     pass
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         dead_names = {f.message.split("()")[0] for f in findings}
         assert "require_role" not in dead_names
 
@@ -212,7 +212,7 @@ TEMPLATES = [{"OPTIONS": {"context_processors": ["myapp.context_processors.site_
 """,
             }
         )
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_dotted_string_in_same_file(self, trees):
@@ -223,7 +223,7 @@ def my_middleware(get_response):
 
 MIDDLEWARE = ["myapp.middleware.my_middleware"]
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_plain_string_does_not_suppress(self, trees):
@@ -234,7 +234,7 @@ def unused():
 
 x = "unused"
 """)
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 1
 
     def test_ignores_attribute_reference_in_call(self, trees):
@@ -254,7 +254,7 @@ urlpatterns = [
 """,
             }
         )
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
     def test_ignores_attribute_reference_in_list(self, trees):
@@ -271,7 +271,7 @@ STEPS = [handlers.process]
 """,
             }
         )
-        findings = check_dead_code(t, verbose=False)
+        findings = check_dead_code(t)
         assert len(findings) == 0
 
 
@@ -283,7 +283,7 @@ def helper():
 
 helper()
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 1
         assert "exactly 1 call site" in findings[0].message
         assert findings[0].severity == Severity.LOW
@@ -295,7 +295,7 @@ def format_row(name, age, role):
 
 format_row("Alice", 30, "admin")
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 1
         assert "3 params" in findings[0].message
         assert findings[0].severity == Severity.LOW
@@ -308,7 +308,7 @@ def format_row(name, age, role, dept):
 
 format_row("Alice", 30, "admin", "eng")
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 1
         assert "4 params" in findings[0].message
         assert findings[0].severity == Severity.MEDIUM
@@ -321,7 +321,7 @@ def format_row(name, cpu, mem):
 
 format_row(svc.name, svc.cpu, svc.mem)
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 1
         assert "all args from 'svc'" in findings[0].message
         assert findings[0].severity == Severity.MEDIUM
@@ -334,7 +334,7 @@ def process(name, count):
 
 process(svc.name, config.count)
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 1
         assert "all args from" not in findings[0].message
         assert findings[0].severity == Severity.LOW
@@ -353,7 +353,7 @@ stop()
 """,
             }
         )
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 0
 
     def test_finds_same_directory_calls(self, trees):
@@ -370,7 +370,7 @@ helpers.format_row()
 """,
             }
         )
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 1
 
     def test_ignores_long_functions_by_line_count(self, trees):
@@ -386,7 +386,7 @@ def wait_for_task():
 wait_for_task()
 """
         t = trees.code(code)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 0
 
     def test_ignores_multiple_callers(self, trees):
@@ -397,7 +397,7 @@ def helper():
 helper()
 helper()
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 0
 
     def test_ignores_zero_callers(self, trees):
@@ -406,7 +406,7 @@ helper()
 def helper():
     pass
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 0
 
     def test_ignores_main_entry_point(self, trees):
@@ -418,7 +418,7 @@ def main():
 if __name__ == "__main__":
     main()
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 0
 
     def test_ignores_long_functions(self, trees):
@@ -433,7 +433,7 @@ def setup_logging():
 
 setup_logging()
 """)
-        findings = check_single_call_site(t, verbose=False)
+        findings = check_single_call_site(t)
         assert len(findings) == 0
 
 
@@ -446,7 +446,7 @@ def helper():
 helper()
 helper()
 """)
-        findings = check_internal_only(t, verbose=False)
+        findings = check_internal_only(t)
         assert len(findings) == 1
         assert "only called within same file" in findings[0].message
 
@@ -466,7 +466,7 @@ helper()
 """,
             }
         )
-        findings = check_internal_only(t, verbose=False)
+        findings = check_internal_only(t)
         assert len(findings) == 0
 
     def test_ignores_single_internal_call(self, trees):
@@ -477,7 +477,7 @@ def helper():
 
 helper()
 """)
-        findings = check_internal_only(t, verbose=False)
+        findings = check_internal_only(t)
         assert len(findings) == 0
 
 
@@ -491,7 +491,7 @@ deploy("myapp", "production")
 deploy("myapp", "production")
 deploy("myapp", "production")
 """)
-        findings = check_constant_args(t, verbose=False)
+        findings = check_constant_args(t)
         assert len(findings) == 2
         names = {f.message.split("'")[1] for f in findings}
         assert names == {"app", "env"}
@@ -504,7 +504,7 @@ def process(data, fmt):
 process("a", "json")
 process("b", "csv")
 """)
-        findings = check_constant_args(t, verbose=False)
+        findings = check_constant_args(t)
         assert len(findings) == 0
 
     def test_finds_one_constant_one_varying(self, trees):
@@ -515,7 +515,7 @@ def send(msg, channel):
 send("hello", "general")
 send("world", "general")
 """)
-        findings = check_constant_args(t, verbose=False)
+        findings = check_constant_args(t)
         assert len(findings) == 1
         assert "channel" in findings[0].message
         assert "'general'" in findings[0].message
@@ -528,7 +528,7 @@ def process(data, fmt):
 
 process("x", "json")
 """)
-        findings = check_constant_args(t, verbose=False)
+        findings = check_constant_args(t)
         assert len(findings) == 0
 
     def test_works_with_keyword_args(self, trees):
@@ -539,7 +539,7 @@ def fetch(url, timeout):
 fetch("http://a.com", timeout=30)
 fetch("http://b.com", timeout=30)
 """)
-        findings = check_constant_args(t, verbose=False)
+        findings = check_constant_args(t)
         assert len(findings) == 1
         assert "timeout" in findings[0].message
 
@@ -552,7 +552,7 @@ x = "json"
 process("a", x)
 process("b", x)
 """)
-        findings = check_constant_args(t, verbose=False)
+        findings = check_constant_args(t)
         assert len(findings) == 0
 
 
@@ -573,7 +573,7 @@ result = find_user("bob")
 if result is None:
     handle_error()
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 1
         assert "find_user()" in findings[0].message
         assert "2 of 2" in findings[0].message
@@ -594,7 +594,7 @@ y = lookup("b")
 if y is None:
     pass
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 1
 
     def test_is_not_none_guard(self, trees):
@@ -612,7 +612,7 @@ val = get_item(1)
 if val is not None:
     use(val)
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 1
 
     def test_truthiness_guard(self, trees):
@@ -630,7 +630,7 @@ r = find("y")
 if r:
     use(r)
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 1
 
     def test_cross_file_callers(self, trees):
@@ -656,7 +656,7 @@ if val is None:
 """,
             }
         )
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 1
 
     def test_ignores_void_function(self, trees):
@@ -674,7 +674,7 @@ y = log_it("bye")
 if y is None:
     pass
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
     def test_ignores_single_caller(self, trees):
@@ -688,7 +688,7 @@ result = find_user("alice")
 if result is None:
     pass
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
     def test_ignores_no_callers(self, trees):
@@ -698,7 +698,7 @@ def find_user(name):
         return users[name]
     return None
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
     def test_ignores_unguarded_callers(self, trees):
@@ -715,7 +715,7 @@ use(result)
 result = find_user("bob")
 use(result)
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
     def test_ignores_generator(self, trees):
@@ -734,7 +734,7 @@ y = gen_items([1])
 if y is None:
     pass
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
     def test_ignores_discarded_return(self, trees):
@@ -748,7 +748,7 @@ def find_user(name):
 find_user("alice")
 find_user("bob")
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
     def test_ignores_single_return(self, trees):
@@ -765,7 +765,7 @@ y = get_value("b")
 if y is None:
     pass
 """)
-        findings = check_return_none_instead_of_raise(t, verbose=False)
+        findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 0
 
 
@@ -781,7 +781,7 @@ def outer(data, mode):
 
 outer("x", "fast")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 2
         params = {f.message.split("'")[1] for f in findings}
         assert params == {"data", "mode"}
@@ -798,7 +798,7 @@ def outer(x, mode):
 
 outer(1, "test")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 2
         params = {f.message.split("'")[1] for f in findings}
         assert params == {"x", "mode"}
@@ -817,7 +817,7 @@ def get_graph_root(request):
 
 get_graph_root(req)
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_param_used_beyond_forwarding(self, trees):
@@ -833,7 +833,7 @@ def outer(data, mode):
 
 outer("x", "fast")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_forwarding_to_unknown_function(self, trees):
@@ -844,7 +844,7 @@ def outer(data):
 
 outer("x")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_args_kwargs_excluded(self, trees):
@@ -858,7 +858,7 @@ def outer(*args, **kwargs):
 
 outer(1)
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_param_with_attribute_access(self, trees):
@@ -873,7 +873,7 @@ def outer(mode):
 
 outer("test")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_dead_function_not_reported(self, trees):
@@ -885,7 +885,7 @@ def inner(x):
 def outer(x):
     inner(x)
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_private_functions_excluded(self, trees):
@@ -899,7 +899,7 @@ def _wrapper(x):
 
 _wrapper(1)
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
     def test_cross_file_forwarding(self, trees):
@@ -918,7 +918,7 @@ handle("x", "fast")
 """,
             }
         )
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 2
         params = {f.message.split("'")[1] for f in findings}
         assert params == {"data", "mode"}
@@ -938,7 +938,7 @@ def process(data, mode):
 
 process("x", "fast")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 2
         for f in findings:
             assert "validate()" in f.message
@@ -956,7 +956,7 @@ def outer(mode="default"):
 outer()
 outer("fast")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 1
         assert "mode" in findings[0].message
 
@@ -973,7 +973,7 @@ def outer(mode):
 
 outer("fast")
 """)
-        findings = check_pass_through_params(t, verbose=False)
+        findings = check_pass_through_params(t)
         assert len(findings) == 0
 
 
@@ -1003,7 +1003,7 @@ fetch()
 """,
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
         assert "fetch()" in findings[0].message
         assert "inconsistent" in findings[0].message
@@ -1019,7 +1019,7 @@ fetch()
                 "c.py": "from lib import fetch\ntry:\n    fetch()\nexcept ValueError:\n    pass",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 0
 
     def test_ignores_consistent_broad(self, trees):
@@ -1032,7 +1032,7 @@ fetch()
                 "c.py": "from lib import fetch\ntry:\n    fetch()\nexcept Exception:\n    pass",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 0
 
     def test_ignores_all_unhandled(self, trees):
@@ -1045,7 +1045,7 @@ fetch()
                 "c.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 0
 
     def test_ignores_only_2_callers(self, trees):
@@ -1057,7 +1057,7 @@ fetch()
                 "b.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 0
 
     def test_ignores_test_file_callers(self, trees):
@@ -1070,7 +1070,7 @@ fetch()
                 "test_lib.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 0
 
     def test_nested_try_uses_innermost(self, trees):
@@ -1092,7 +1092,7 @@ except Exception:
                 "c.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
         # a.py should be classified as "specific" (innermost)
         assert "ConnectionError" in findings[0].message
@@ -1115,7 +1115,7 @@ except Exception:
                 "c.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
         assert "ValueError" in findings[0].message
 
@@ -1129,7 +1129,7 @@ except Exception:
                 "c.py": "import lib\nlib.process()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
 
     def test_broad_plus_unhandled_not_flagged(self, trees):
@@ -1142,7 +1142,7 @@ except Exception:
                 "c.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 0
 
     def test_message_format(self, trees):
@@ -1154,7 +1154,7 @@ except Exception:
                 "c.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
         msg = findings[0].message
         assert "1 catch specific (TimeoutError)" in msg
@@ -1171,6 +1171,6 @@ except Exception:
                 "c.py": "from lib import fetch\nfetch()",
             }
         )
-        findings = check_inconsistent_error_handling(t, verbose=False)
+        findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM

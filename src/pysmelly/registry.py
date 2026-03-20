@@ -1,10 +1,13 @@
 """Check registry and finding dataclass."""
 
-import ast
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from pysmelly.context import AnalysisContext
 
 
 class Severity(Enum):
@@ -27,7 +30,7 @@ class Finding:
 
 
 # Type for check functions
-CheckFn = Callable[[dict[Path, ast.Module], bool], list[Finding]]
+CheckFn = Callable[["AnalysisContext"], list[Finding]]
 
 # Global registry
 CHECKS: dict[str, CheckFn] = {}

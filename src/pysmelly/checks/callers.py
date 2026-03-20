@@ -4,19 +4,19 @@ These checks build a picture of who calls what and flag functions
 whose usage pattern suggests they should be refactored.
 """
 
+from __future__ import annotations
+
 import ast
 from pathlib import Path
 
 from pysmelly.checks.helpers import (
-    build_function_index,
-    build_parent_map,
-    find_calls_to_function,
     is_imported_elsewhere,
     is_referenced_as_dotted_string,
     is_referenced_as_value,
     is_test_file,
     is_used_as_decorator,
 )
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 
@@ -54,7 +54,7 @@ def _find_function_defaults(tree: ast.Module, filepath: Path) -> list[dict]:
     severity=Severity.HIGH,
     description="Params defaulting to None that every caller always passes",
 )
-def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_unused_defaults(ctx: AnalysisContext) -> list[Finding]:
     """Find Optional params where every caller always passes a value.
 
     If a parameter defaults to None but no caller ever relies on that
@@ -63,14 +63,14 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
     findings = []
 
     all_defaults = []
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         all_defaults.extend(_find_function_defaults(tree, filepath))
 
     for func_info in all_defaults:
         func_name = func_info["func"]
         param_name = func_info["param"]
 
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
         if not calls:
             continue
 
@@ -78,7 +78,7 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
         for call in calls:
             node = call["node"]
             param_index = None
-            for tree2 in all_trees.values():
+            for tree2 in ctx.all_trees.values():
                 for fnode in ast.walk(tree2):
                     if (
                         isinstance(fnode, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -127,28 +127,28 @@ def check_unused_defaults(all_trees: dict[Path, ast.Module], verbose: bool) -> l
 @check(
     "dead-code", severity=Severity.HIGH, description="Public functions with zero callers anywhere"
 )
-def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_dead_code(ctx: AnalysisContext) -> list[Finding]:
     """Find public functions with no callers at all.
 
     Checks direct calls, imports, dict/list references, callback passing,
     and dotted-path string references (e.g., Django settings).
     """
     findings = []
-    func_defs = build_function_index(all_trees)
+    func_defs = ctx.function_index
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
             continue
 
         def_file = defs[0]["file"]
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
 
         if (
             not calls
-            and not is_imported_elsewhere(func_name, def_file, all_trees)
-            and not is_referenced_as_value(func_name, all_trees)
-            and not is_referenced_as_dotted_string(func_name, all_trees)
-            and not is_used_as_decorator(func_name, all_trees)
+            and not is_imported_elsewhere(func_name, def_file, ctx)
+            and not is_referenced_as_value(func_name, ctx)
+            and not is_referenced_as_dotted_string(func_name, ctx)
+            and not is_used_as_decorator(func_name, ctx)
         ):
             findings.append(
                 Finding(
@@ -168,7 +168,7 @@ def check_dead_code(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Fi
     severity=Severity.LOW,
     description="Short functions called exactly once (inline candidate)",
 )
-def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
     """Find short public functions called exactly once (candidate for inlining).
 
     Filters:
@@ -181,7 +181,7 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
     recomposing a data structure).
     """
     findings = []
-    func_defs = build_function_index(all_trees)
+    func_defs = ctx.function_index
     max_body_stmts = 4
     max_body_lines = 30
 
@@ -190,14 +190,14 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
             continue
 
         def_file = defs[0]["file"]
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
         if len(calls) != 1:
             continue
 
-        if is_imported_elsewhere(func_name, def_file, all_trees):
+        if is_imported_elsewhere(func_name, def_file, ctx):
             continue
 
-        func_node = _find_func_node(all_trees, func_name)
+        func_node = defs[0].get("node")
 
         # Skip functions with 5+ statements — extracted for readability
         if func_node and len(func_node.body) > max_body_stmts:
@@ -259,20 +259,20 @@ def check_single_call_site(all_trees: dict[Path, ast.Module], verbose: bool) -> 
     severity=Severity.LOW,
     description="Public functions only called within their own file",
 )
-def check_internal_only(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_internal_only(ctx: AnalysisContext) -> list[Finding]:
     """Find public functions only called within their own file (2+ calls).
 
     These are candidates for renaming to _private.
     """
     findings = []
-    func_defs = build_function_index(all_trees)
+    func_defs = ctx.function_index
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
             continue
 
         def_file = defs[0]["file"]
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
         if not calls:
             continue
 
@@ -282,7 +282,7 @@ def check_internal_only(all_trees: dict[Path, ast.Module], verbose: bool) -> lis
         if (
             not external_calls
             and len(internal_calls) >= 2
-            and not is_imported_elsewhere(func_name, def_file, all_trees)
+            and not is_imported_elsewhere(func_name, def_file, ctx)
         ):
             findings.append(
                 Finding(
@@ -305,25 +305,25 @@ def check_internal_only(all_trees: dict[Path, ast.Module], verbose: bool) -> lis
     severity=Severity.MEDIUM,
     description="Param always receives the same literal value from every caller",
 )
-def check_constant_args(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_constant_args(ctx: AnalysisContext) -> list[Finding]:
     """Find parameters where every caller passes the same literal value.
 
     If all callers pass the same constant, the value should be a default
     or a module-level constant rather than repeated at each call site.
     """
     findings = []
-    func_defs = build_function_index(all_trees)
+    func_defs = ctx.function_index
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
             continue
 
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
         if len(calls) < 2:
             continue
 
         # Find the actual function node to get parameter names
-        func_node = _find_func_node(all_trees, func_name)
+        func_node = defs[0].get("node")
         if func_node is None:
             continue
 
@@ -377,17 +377,6 @@ def _count_meaningful_stmts(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -
     return count
 
 
-def _find_func_node(
-    all_trees: dict[Path, ast.Module], func_name: str
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Find the first function definition node matching func_name."""
-    for tree in all_trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
-                return node
-    return None
-
-
 def _get_arg_value(call_node: ast.Call, param_idx: int, param_name: str) -> str | None:
     """Extract the constant value passed for a parameter, or None if not a constant."""
     # Check positional args first
@@ -417,29 +406,27 @@ def _get_arg_value(call_node: ast.Call, param_idx: int, param_name: str) -> str 
     severity=Severity.MEDIUM,
     description="Functions returning None on error where callers all guard against None",
 )
-def check_return_none_instead_of_raise(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+def check_return_none_instead_of_raise(ctx: AnalysisContext) -> list[Finding]:
     """Find functions with mixed returns (None + non-None) where callers guard against None.
 
     If a function returns None on error paths and most callers check
     ``if result is None:``, the function should raise instead.
     """
     findings = []
-    func_defs = build_function_index(all_trees)
+    func_defs = ctx.function_index
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
             continue
 
-        func_node = _find_func_node(all_trees, func_name)
+        func_node = defs[0].get("node")
         if func_node is None:
             continue
 
         if not _has_mixed_returns(func_node):
             continue
 
-        guarded, unguarded = _count_none_guards(all_trees, func_name)
+        guarded, unguarded = _count_none_guards(ctx.all_trees, func_name)
         if guarded >= 2:
             total = guarded + unguarded
             findings.append(
@@ -602,7 +589,7 @@ def _find_guard_in_tree(tree: ast.Module, assign_node: ast.Assign, var_name: str
     severity=Severity.MEDIUM,
     description="Params received by a function and only forwarded to another function",
 )
-def check_pass_through_params(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_pass_through_params(ctx: AnalysisContext) -> list[Finding]:
     """Find parameters that a function receives but only passes through to other functions.
 
     If a parameter is never used by the intermediary function — only
@@ -610,19 +597,19 @@ def check_pass_through_params(all_trees: dict[Path, ast.Module], verbose: bool) 
     pass directly to the consumer, or a context/config object should be used.
     """
     findings = []
-    func_defs = build_function_index(all_trees)
+    func_defs = ctx.function_index
     known_funcs = set(func_defs.keys())
 
     for func_name, defs in func_defs.items():
         if len(defs) > 1:
             continue
 
-        func_node = _find_func_node(all_trees, func_name)
+        func_node = defs[0].get("node")
         if func_node is None:
             continue
 
         # Skip orphan functions — dead-code handles those
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
         if not calls:
             continue
 
@@ -820,7 +807,9 @@ def _get_except_handler_names(handler: ast.ExceptHandler) -> list[str]:
 _BROAD_EXCEPTIONS = frozenset({"Exception", "BaseException"})
 
 
-def _classify_error_handling(call_node: ast.Call, tree: ast.Module) -> tuple[str, list[str]]:
+def _classify_error_handling(
+    call_node: ast.Call, tree: ast.Module, ctx: AnalysisContext
+) -> tuple[str, list[str]]:
     """Classify the error handling context of a call node.
 
     Returns (category, exception_names) where category is one of:
@@ -828,7 +817,7 @@ def _classify_error_handling(call_node: ast.Call, tree: ast.Module) -> tuple[str
     - "broad" — catches Exception, BaseException, or bare except
     - "unhandled" — no enclosing try/except
     """
-    parents = build_parent_map(tree)
+    parents = ctx.parent_map(tree)
 
     # Walk up to find the innermost enclosing Try
     current: ast.AST = call_node
@@ -874,9 +863,7 @@ def _classify_error_handling(call_node: ast.Call, tree: ast.Module) -> tuple[str
     severity=Severity.MEDIUM,
     description="Same function called with divergent error handling across callers",
 )
-def check_inconsistent_error_handling(
-    all_trees: dict[Path, ast.Module], verbose: bool
-) -> list[Finding]:
+def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
     """Find functions called from 3+ sites with divergent error handling.
 
     Flags when at least one caller catches specific exceptions (proving there's
@@ -884,13 +871,13 @@ def check_inconsistent_error_handling(
     handle errors at all.
     """
     findings = []
-    func_index = build_function_index(all_trees)
+    func_index = ctx.function_index
 
     for func_name, defs in func_index.items():
         if len(defs) != 1:
             continue
 
-        calls = find_calls_to_function(all_trees, func_name)
+        calls = ctx.call_index.get(func_name, [])
         # Filter out test file callers
         calls = [c for c in calls if not is_test_file(Path(c["file"]))]
         if len(calls) < 3:
@@ -902,8 +889,8 @@ def check_inconsistent_error_handling(
         all_specific_names: set[str] = set()
 
         for call in calls:
-            tree = all_trees[Path(call["file"])]
-            category, exc_names = _classify_error_handling(call["node"], tree)
+            tree = ctx.all_trees[Path(call["file"])]
+            category, exc_names = _classify_error_handling(call["node"], tree, ctx)
             call_info = {"file": call["file"], "line": call["line"]}
             if category == "specific":
                 specific_callers.append(call_info)

@@ -13,7 +13,7 @@ class TestScatteredConstants:
                 "c.py": 'default = "active"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         assert "'active'" in findings[0].message
         assert "3 files" in findings[0].message
@@ -26,7 +26,7 @@ class TestScatteredConstants:
                 "c.py": "if z == 42: pass",
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         assert "42" in findings[0].message
 
@@ -37,7 +37,7 @@ class TestScatteredConstants:
                 "b.py": 'state = "active"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_trivial_values(self, trees):
@@ -48,7 +48,7 @@ class TestScatteredConstants:
                 "c.py": "x = None\ny = True\nz = 0\nw = 1",
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_trivial_strings(self, trees):
@@ -59,7 +59,7 @@ class TestScatteredConstants:
                 "c.py": 'enc = "utf-8"\nx = "a"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_http_status_codes(self, trees):
@@ -70,7 +70,7 @@ class TestScatteredConstants:
                 "c.py": "if code == 200: pass\nif code == 404: pass",
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_migration_files(self, trees):
@@ -82,7 +82,7 @@ class TestScatteredConstants:
                 "b.py": "max_length = 255",
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         # Only a.py and b.py count — 2 files, below threshold
         assert len(findings) == 0
 
@@ -95,7 +95,7 @@ class TestScatteredConstants:
                 "migrations/helpers.py": 'x = "special"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
 
     def test_ignores_common_round_numbers(self, trees):
@@ -106,7 +106,7 @@ class TestScatteredConstants:
                 "c.py": "limit = 100",
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_http_headers(self, trees):
@@ -117,7 +117,7 @@ class TestScatteredConstants:
                 "c.py": 'h = d["Content-Type"]',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_media_types(self, trees):
@@ -128,7 +128,7 @@ class TestScatteredConstants:
                 "c.py": 'ct = "application/json"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_test_files(self, trees):
@@ -139,7 +139,7 @@ class TestScatteredConstants:
                 "tests/c.py": 'status = "active"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_docstrings(self, trees):
@@ -150,7 +150,7 @@ class TestScatteredConstants:
                 "c.py": 'def baz():\n    """This is a docstring with magic value."""\n    pass',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_raise_messages(self, trees):
@@ -161,7 +161,7 @@ class TestScatteredConstants:
                 "c.py": 'raise TypeError("something broke")',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_log_call_kwargs(self, trees):
@@ -174,7 +174,7 @@ class TestScatteredConstants:
         )
         # The keyword arg values in log calls should be ignored
         # but the positional args are also not in interesting context (Call args)
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_includes_subscript_keys(self, trees):
@@ -185,7 +185,7 @@ class TestScatteredConstants:
                 "c.py": 'z = d["config_key"]',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         assert "'config_key'" in findings[0].message
 
@@ -197,7 +197,7 @@ class TestScatteredConstants:
                 "c.py": "another(timeout=30)",
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         assert "30" in findings[0].message
 
@@ -210,7 +210,7 @@ class TestScatteredConstants:
                 "c.py": 'y = d["pending"]',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         assert "3 files" in findings[0].message
 
@@ -221,7 +221,7 @@ class TestScatteredConstants:
                 "b.py": 'a = "magic"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_ignores_dunder_all_entries(self, trees):
@@ -232,7 +232,7 @@ class TestScatteredConstants:
                 "c.py": '__all__ = ["MyClass", "helper"]',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 0
 
     def test_message_format(self, trees):
@@ -243,7 +243,7 @@ class TestScatteredConstants:
                 "c.py": 'z = "sentinel"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         msg = findings[0].message
         assert "Literal" in msg
@@ -257,7 +257,7 @@ class TestScatteredConstants:
                 "c.py": 'z = "sentinel"',
             }
         )
-        findings = check_scattered_constants(t, verbose=False)
+        findings = check_scattered_constants(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.LOW
 
@@ -272,7 +272,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 1
         assert "MyModel" in findings[0].message
         assert "3 files" in findings[0].message
@@ -285,7 +285,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(x, list): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 0
 
     def test_ignores_types_not_in_codebase(self, trees):
@@ -296,7 +296,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(x, SomeExternal): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 0
 
     def test_ignores_checks_in_only_2_files(self, trees):
@@ -307,7 +307,7 @@ class TestScatteredIsinstance:
                 "b.py": "if isinstance(y, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 0
 
     def test_ignores_test_files(self, trees):
@@ -319,7 +319,7 @@ class TestScatteredIsinstance:
                 "tests/c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 0
 
     def test_includes_issubclass(self, trees):
@@ -331,7 +331,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 1
 
     def test_tuple_isinstance_counted_per_element(self, trees):
@@ -343,7 +343,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 1
         assert "MyModel" in findings[0].message
 
@@ -356,7 +356,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 1
         assert findings[0].file == "models.py"
         assert findings[0].line == 1
@@ -369,7 +369,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(x, Handler): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 0
 
     def test_attribute_isinstance_counted(self, trees):
@@ -381,7 +381,7 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 1
 
     def test_multiple_classes_flagged_independently(self, trees):
@@ -393,7 +393,7 @@ class TestScatteredIsinstance:
                 "c.py": "isinstance(x, Foo)\nisinstance(x, Bar)",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 2
         names = {f.message.split("isinstance(x, ")[1].split(")")[0] for f in findings}
         assert names == {"Foo", "Bar"}
@@ -408,7 +408,7 @@ class TestScatteredIsinstance:
                 "test_c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 0
 
     def test_severity_is_medium(self, trees):
@@ -420,6 +420,6 @@ class TestScatteredIsinstance:
                 "c.py": "if isinstance(z, MyModel): pass",
             }
         )
-        findings = check_scattered_isinstance(t, verbose=False)
+        findings = check_scattered_isinstance(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM

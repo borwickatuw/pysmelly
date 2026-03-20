@@ -11,7 +11,7 @@ try:
 except ImportError:
     import tomli as tomllib
 """)
-        findings = check_compat_shims(t, verbose=False)
+        findings = check_compat_shims(t)
         assert len(findings) == 1
         assert "compatibility shim" in findings[0].message
         assert "tomllib" in findings[0].message
@@ -23,7 +23,7 @@ try:
 except ModuleNotFoundError:
     OrderedDict = dict
 """)
-        findings = check_compat_shims(t, verbose=False)
+        findings = check_compat_shims(t)
         assert len(findings) == 1
 
     def test_ignores_non_import_try(self, trees):
@@ -33,7 +33,7 @@ try:
 except ImportError:
     result = None
 """)
-        findings = check_compat_shims(t, verbose=False)
+        findings = check_compat_shims(t)
         assert len(findings) == 0
 
     def test_ignores_other_exception_types(self, trees):
@@ -43,5 +43,5 @@ try:
 except ValueError:
     pass
 """)
-        findings = check_compat_shims(t, verbose=False)
+        findings = check_compat_shims(t)
         assert len(findings) == 0

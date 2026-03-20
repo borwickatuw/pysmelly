@@ -30,7 +30,7 @@ def func_b(things):
     validated = check(output)
     return validated
 """)
-        findings = check_duplicate_blocks(t, verbose=False)
+        findings = check_duplicate_blocks(t)
         assert len(findings) >= 1
         assert "duplicate statements" in findings[0].message
         assert "repeated in:" in findings[0].message
@@ -47,7 +47,7 @@ def func_b():
     x = 1
     return x
 """)
-        findings = check_duplicate_blocks(t, verbose=False)
+        findings = check_duplicate_blocks(t)
         assert len(findings) == 0
 
     def test_ignores_nested_function_same_code(self, trees):
@@ -64,7 +64,7 @@ def can_manage_list(view_func):
         return view_func(request, *args, **kwargs)
     return _wrapped_view
 """)
-        findings = check_duplicate_blocks(t, verbose=False)
+        findings = check_duplicate_blocks(t)
         assert len(findings) == 0
 
     def test_ignores_unique_blocks(self, trees):
@@ -83,7 +83,7 @@ def func_b():
     d = fix(c)
     return output(d)
 """)
-        findings = check_duplicate_blocks(t, verbose=False)
+        findings = check_duplicate_blocks(t)
         assert len(findings) == 0
 
 
@@ -109,7 +109,7 @@ def push():
 """,
             }
         )
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 1
         assert "except ValueError" in findings[0].message
         assert "duplicate handler" in findings[0].message
@@ -135,7 +135,7 @@ def run_b():
 """,
             }
         )
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 1
         assert "CalledProcessError" in findings[0].message
 
@@ -160,7 +160,7 @@ def run_b():
 """,
             }
         )
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 1
 
     def test_different_messages_no_match(self, trees):
@@ -185,7 +185,7 @@ def run_b():
 """,
             }
         )
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 0
 
     def test_different_exception_type_no_match(self, trees):
@@ -210,7 +210,7 @@ def run_b():
 """,
             }
         )
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 0
 
     def test_trivial_handlers_skipped(self, trees):
@@ -233,7 +233,7 @@ def run_b():
 """,
             }
         )
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 0
 
     def test_same_file_only_no_match(self, trees):
@@ -253,7 +253,7 @@ def func_b():
         log("Failed")
         cleanup()
 """)
-        findings = check_duplicate_except_blocks(t, verbose=False)
+        findings = check_duplicate_except_blocks(t)
         assert len(findings) == 0
 
 
@@ -270,7 +270,7 @@ def update_user(first_name, last_name, email, phone):
 def validate_user(first_name, last_name, email, phone):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 1
         assert "first_name" in findings[0].message
         assert "3 functions" in findings[0].message
@@ -294,7 +294,7 @@ def admin_create_user(first_name, last_name, email):
 """,
             }
         )
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 1
 
     def test_methods_included(self, trees):
@@ -310,7 +310,7 @@ class UserService:
 def validate_user(first_name, last_name, email):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 1
 
     def test_intersection_discovery(self, trees):
@@ -325,7 +325,7 @@ def func_b(a, b, c, x, y):
 def func_c(a, b, c, z):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) >= 1
         # Should find {a, b, c} as common
         found = False
@@ -346,7 +346,7 @@ def create_user(first_name, last_name, email):
 def update_user(first_name, last_name, email):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 1
 
     def test_only_two_functions_no_finding(self, trees):
@@ -358,7 +358,7 @@ def create_user(first_name, last_name, email):
 def update_user(first_name, last_name, email):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 0
 
     def test_only_two_shared_params_no_finding(self, trees):
@@ -373,7 +373,7 @@ def func_b(x, y, extra2):
 def func_c(x, y, extra3):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         # Only x and y are shared, which is < 3
         assert len(findings) == 0
 
@@ -389,7 +389,7 @@ def func_b(data, verbose, debug, timeout):
 def func_c(data, verbose, debug, timeout):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         # After filtering noise params, only {data} remains (< 3)
         assert len(findings) == 0
 
@@ -405,7 +405,7 @@ def test_update_user(first_name, last_name, email):
 def test_validate_user(first_name, last_name, email):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 0
 
     def test_test_files_excluded(self, trees):
@@ -424,7 +424,7 @@ def validate_user(first_name, last_name, email):
 """,
             }
         )
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 0
 
     def test_superset_suppresses_subset(self, trees):
@@ -439,7 +439,7 @@ def func_b(a, b, c, d):
 def func_c(a, b, c, d):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         assert len(findings) == 1
         assert "d" in findings[0].message  # The full set should be reported
 
@@ -455,6 +455,6 @@ def func_b(x, y, verbose):
 def func_c(x, y, verbose):
     pass
 """)
-        findings = check_param_clumps(t, verbose=False)
+        findings = check_param_clumps(t)
         # After filtering verbose, only {x, y} remains (< 3)
         assert len(findings) == 0

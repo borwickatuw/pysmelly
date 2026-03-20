@@ -15,7 +15,7 @@ MIDDLEWARE.append("debug_toolbar")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
         assert "MIDDLEWARE" in findings[0].message
 
@@ -29,7 +29,7 @@ SETTINGS["debug"] = True
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
         assert "SETTINGS" in findings[0].message
 
@@ -43,7 +43,7 @@ APPS += ["debug_toolbar"]
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
         assert "APPS" in findings[0].message
 
@@ -59,7 +59,7 @@ def setup():
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 0
 
     def test_ignores_mutation_inside_class(self, trees):
@@ -73,7 +73,7 @@ class Setup:
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 0
 
     def test_ignores_non_mutable_assignments(self, trees):
@@ -85,7 +85,7 @@ from base import VERSION
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 0
 
     def test_ignores_mutation_of_local_variable(self, trees):
@@ -99,7 +99,7 @@ LOCAL_LIST.append("something")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 0
 
     def test_ignores_test_files(self, trees):
@@ -112,7 +112,7 @@ MIDDLEWARE.append("test_middleware")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 0
 
     def test_ignores_same_file_mutations(self, trees):
@@ -125,7 +125,7 @@ MIDDLEWARE.append("common_middleware")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 0
 
     def test_multiple_mutation_sites_grouped(self, trees):
@@ -139,7 +139,7 @@ APPS.append("app2")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
 
     def test_finding_anchored_at_definition(self, trees):
@@ -152,7 +152,7 @@ MIDDLEWARE.append("debug_toolbar")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
         assert findings[0].file == "config/base.py"
         assert findings[0].line == 1
@@ -167,7 +167,7 @@ MIDDLEWARE.append("debug_toolbar")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
         assert "config/settings.py" in findings[0].message
 
@@ -181,7 +181,7 @@ MIDDLEWARE.append("debug_toolbar")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
 
@@ -198,7 +198,7 @@ if DEBUG:
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
 
     def test_extend_method_detected(self, trees):
@@ -211,7 +211,7 @@ APPS.extend(["app1", "app2"])
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
 
     def test_insert_method_detected(self, trees):
@@ -224,5 +224,5 @@ MIDDLEWARE.insert(0, "first_middleware")
 """,
             }
         )
-        findings = check_shared_mutable_module_state(t, verbose=False)
+        findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1

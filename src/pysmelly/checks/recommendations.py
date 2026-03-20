@@ -1,10 +1,13 @@
 """Stdlib alternatives check — detect stdlib usage where well-known libraries are better."""
 
+from __future__ import annotations
+
 import ast
 import tomllib
 from importlib.resources import files
 from pathlib import Path
 
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 
@@ -107,10 +110,10 @@ def _format_locations(matches: list[tuple[Path, int]], max_shown: int = 3) -> st
     severity=Severity.LOW,
     description="stdlib modules where well-known third-party libraries are better",
 )
-def check_stdlib_alternatives(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_stdlib_alternatives(ctx: AnalysisContext) -> list[Finding]:
     """Detect stdlib usage patterns where well-known libraries are better."""
     catalog = _load_catalog()
-    all_imports = _collect_imports(all_trees)
+    all_imports = _collect_imports(ctx.all_trees)
     findings = []
 
     for pattern in catalog:
@@ -143,7 +146,7 @@ def check_stdlib_alternatives(all_trees: dict[Path, ast.Module], verbose: bool) 
         if condition_fn_name:
             matched_files = {filepath for filepath, _ in matches}
             fn = CONDITION_FNS[condition_fn_name]
-            if not fn(all_trees, matched_files):
+            if not fn(ctx.all_trees, matched_files):
                 continue
 
         # Deduplicate by file — keep first occurrence per file

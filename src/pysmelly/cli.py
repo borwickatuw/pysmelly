@@ -10,6 +10,7 @@ from pathlib import Path
 
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
+from pysmelly.context import AnalysisContext
 from pysmelly.discovery import get_changed_lines, get_git_root, get_python_files, parse_file
 from pysmelly.output import format_text
 from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding, Severity
@@ -379,9 +380,10 @@ def main(argv: list[str] | None = None) -> None:
         checks_to_run = {name: fn for name, fn in CHECKS.items() if name not in args.skip}
 
     # Run checks
+    ctx = AnalysisContext(all_trees, args.verbose)
     all_findings: list[Finding] = []
     for name, check_fn in checks_to_run.items():
-        all_findings.extend(check_fn(all_trees, args.verbose))
+        all_findings.extend(check_fn(ctx))
 
     # Filter by minimum severity
     severity_order = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2}

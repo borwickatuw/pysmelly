@@ -10,19 +10,19 @@ from pysmelly.registry import Severity
 class TestStdlibAlternatives:
     def test_flags_urllib_import(self, trees):
         t = trees.code("import urllib.request\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         assert len(findings) == 1
         assert "urllib.request" in findings[0].message
 
     def test_flags_from_import(self, trees):
         t = trees.code("from urllib.request import urlopen\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         assert len(findings) == 1
         assert "urllib.request" in findings[0].message
 
     def test_ignores_unrelated_stdlib(self, trees):
         t = trees.code("import json\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         assert len(findings) == 0
 
     def test_conditional_fires_when_both_present(self, trees):
@@ -32,7 +32,7 @@ class TestStdlibAlternatives:
                 "b.py": "import pathlib\n",
             }
         )
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         names = [f.check for f in findings]
         assert "stdlib-alternatives" in names
         matching = [f for f in findings if "os.path" in f.message]
@@ -40,7 +40,7 @@ class TestStdlibAlternatives:
 
     def test_conditional_skips_when_missing(self, trees):
         t = trees.code("import os.path\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         os_path_findings = [f for f in findings if "os.path" in f.message]
         assert len(os_path_findings) == 0
 
@@ -52,14 +52,14 @@ class TestStdlibAlternatives:
                 "c.py": "from urllib.request import urlopen\n",
             }
         )
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         urllib_findings = [f for f in findings if "urllib.request" in f.message]
         assert len(urllib_findings) == 1
         assert "3 files" in urllib_findings[0].message
 
     def test_severity_is_low(self, trees):
         t = trees.code("import urllib.request\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         for f in findings:
             assert f.severity == Severity.LOW
 
@@ -75,7 +75,7 @@ class TestStdlibAlternatives:
 
     def test_message_includes_suggestion(self, trees):
         t = trees.code("import urllib.request\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         assert len(findings) == 1
         assert "requests or httpx" in findings[0].message
 
@@ -87,7 +87,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("filename")
 parser.add_argument("--verbose", action="store_true")
 """)
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "argparse" in f.message]
         assert len(matching) == 0
 
@@ -102,7 +102,7 @@ parser.add_argument("--verbose", action="store_true")
 parser.add_argument("--format", choices=["json", "csv"])
 parser.add_argument("--limit", type=int, default=100)
 """)
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "argparse" in f.message]
         assert len(matching) == 1
         assert "click or typer" in matching[0].message
@@ -116,7 +116,7 @@ subparsers = parser.add_subparsers()
 subparsers.add_parser("init")
 subparsers.add_parser("run")
 """)
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "argparse" in f.message]
         assert len(matching) == 1
 
@@ -129,27 +129,27 @@ group = parser.add_mutually_exclusive_group()
 group.add_argument("--json", action="store_true")
 group.add_argument("--csv", action="store_true")
 """)
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "argparse" in f.message]
         assert len(matching) == 1
 
     def test_flags_deprecated_stdlib(self, trees):
         t = trees.code("import cgi\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "cgi" in f.message]
         assert len(matching) == 1
         assert "removed" in matching[0].message.lower()
 
     def test_flags_deprecated_third_party(self, trees):
         t = trees.code("import six\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "six" in f.message]
         assert len(matching) == 1
         assert "Python 3" in matching[0].message
 
     def test_flags_pkg_resources(self, trees):
         t = trees.code("from pkg_resources import get_distribution\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "pkg_resources" in f.message]
         assert len(matching) == 1
         assert "importlib" in matching[0].message
@@ -157,7 +157,7 @@ group.add_argument("--csv", action="store_true")
     def test_unittest_conditional_on_pytest(self, trees):
         """unittest alone is fine; only flag when pytest is also used."""
         t = trees.code("import unittest\n")
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         unittest_findings = [f for f in findings if "unittest" in f.message]
         assert len(unittest_findings) == 0
 
@@ -168,7 +168,7 @@ group.add_argument("--csv", action="store_true")
                 "test_new.py": "import pytest\n",
             }
         )
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         matching = [f for f in findings if "unittest" in f.message]
         assert len(matching) == 1
         assert "pytest" in matching[0].message
@@ -181,7 +181,7 @@ group.add_argument("--csv", action="store_true")
                 "test_app.py": "import pytest\n",
             }
         )
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         unittest_findings = [f for f in findings if "unittest" in f.message]
         assert len(unittest_findings) == 0
 
@@ -193,7 +193,7 @@ group.add_argument("--csv", action="store_true")
                 "test_app.py": "import pytest\n",
             }
         )
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         unittest_findings = [f for f in findings if "unittest" in f.message]
         assert len(unittest_findings) == 0
 
@@ -205,7 +205,7 @@ group.add_argument("--csv", action="store_true")
                 "test_new.py": "import pytest\n",
             }
         )
-        findings = check_stdlib_alternatives(t, verbose=False)
+        findings = check_stdlib_alternatives(t)
         unittest_findings = [f for f in findings if "unittest" in f.message]
         assert len(unittest_findings) == 1
 

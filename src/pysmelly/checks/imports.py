@@ -1,8 +1,10 @@
 """Import-related checks — compatibility shims."""
 
-import ast
-from pathlib import Path
+from __future__ import annotations
 
+import ast
+
+from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
 
@@ -11,7 +13,7 @@ from pysmelly.registry import Finding, Severity, check
     severity=Severity.HIGH,
     description="try/except ImportError patterns from old Python support",
 )
-def check_compat_shims(all_trees: dict[Path, ast.Module], verbose: bool) -> list[Finding]:
+def check_compat_shims(ctx: AnalysisContext) -> list[Finding]:
     """Find try/except ImportError patterns (compatibility shims).
 
     These are often left over from supporting older Python versions
@@ -19,7 +21,7 @@ def check_compat_shims(all_trees: dict[Path, ast.Module], verbose: bool) -> list
     """
     findings = []
 
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):
                 continue
