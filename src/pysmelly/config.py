@@ -10,11 +10,21 @@ from pathlib import Path
 LIST_KEYS = frozenset({"exclude", "skip"})
 
 # Keys that accept string values
-STRING_KEYS = frozenset({"min-severity", "check"})
+STRING_KEYS = frozenset({"min-severity", "check", "git-window", "commit-messages"})
 
-VALID_KEYS = LIST_KEYS | STRING_KEYS
+# Keys that accept boolean values
+BOOL_KEYS = frozenset({"git-history"})
+
+# Keys that accept TOML table values (check name -> list of file patterns)
+TABLE_KEYS = frozenset({"ignore-files"})
+
+VALID_KEYS = LIST_KEYS | STRING_KEYS | BOOL_KEYS | TABLE_KEYS
 
 VALID_SEVERITIES = frozenset({"low", "medium", "high"})
+
+VALID_COMMIT_MESSAGES = frozenset({"auto", "structured", "unstructured"})
+
+_WINDOW_RE = __import__("re").compile(r"^\d+[dmy]$")
 
 
 class ConfigError(Exception):
@@ -67,6 +77,12 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
                 f"{source}: '{key}' must be a string, got {type(config[key]).__name__}"
             )
 
+    for key in BOOL_KEYS:
+        if key in config and not isinstance(config[key], bool):
+            raise ConfigError(
+                f"{source}: '{key}' must be a boolean, got {type(config[key]).__name__}"
+            )
+
     if "min-severity" in config and config["min-severity"] not in VALID_SEVERITIES:
         raise ConfigError(
             f"{source}: invalid min-severity '{config['min-severity']}'. "
@@ -86,6 +102,42 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
                 f"{source}: unknown check(s) in skip: {', '.join(bad)}. "
                 f"Use --list-checks to see available checks"
             )
+
+    if "commit-messages" in config and config["commit-messages"] not in VALID_COMMIT_MESSAGES:
+        raise ConfigError(
+            f"{source}: invalid commit-messages '{config['commit-messages']}'. "
+            f"Valid values: {', '.join(sorted(VALID_COMMIT_MESSAGES))}"
+        )
+
+    if "git-window" in config and not _WINDOW_RE.match(config["git-window"]):
+        raise ConfigError(
+            f"{source}: invalid git-window '{config['git-window']}'. "
+            f"Expected format like 6m, 1y, 90d (number + d/m/y)"
+        )
+
+    if "ignore-files" in config:
+        table = config["ignore-files"]
+        if not isinstance(table, dict):
+            raise ConfigError(
+                f"{source}: 'ignore-files' must be a table, got {type(table).__name__}"
+            )
+        for check_name, patterns in table.items():
+            if check_name not in valid_check_names:
+                raise ConfigError(
+                    f"{source}: unknown check '{check_name}' in [ignore-files]. "
+                    f"Use --list-checks to see available checks"
+                )
+            if not isinstance(patterns, list):
+                raise ConfigError(
+                    f"{source}: ignore-files.{check_name} must be a list, "
+                    f"got {type(patterns).__name__}"
+                )
+            for item in patterns:
+                if not isinstance(item, str):
+                    raise ConfigError(
+                        f"{source}: ignore-files.{check_name} items must be strings, "
+                        f"got {type(item).__name__}"
+                    )
 
 
 def load_config(target_dir: Path, valid_check_names: set[str]) -> dict:

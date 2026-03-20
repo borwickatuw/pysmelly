@@ -14,7 +14,14 @@ from pysmelly.config import load_config
 from pysmelly.context import AnalysisContext
 from pysmelly.discovery import get_changed_lines, get_git_root, get_python_files, parse_file
 from pysmelly.output import format_text
-from pysmelly.registry import CHECK_DESCRIPTIONS, CHECK_SEVERITY, CHECKS, Finding, Severity
+from pysmelly.registry import (
+    CHECK_CATEGORIES,
+    CHECK_DESCRIPTIONS,
+    CHECK_SEVERITY,
+    CHECKS,
+    Finding,
+    Severity,
+)
 
 EPILOG = """\
 pysmelly finds code smells that survive after design changes — vestigial
@@ -111,6 +118,17 @@ def _is_excluded(rel: Path, patterns: list[str]) -> bool:
             # Filename-only pattern
             if fnmatch.fnmatch(name, pattern):
                 return True
+    return False
+
+
+def _is_ignored_file(file: str, check: str, ignore_files: dict[str, list[str]]) -> bool:
+    """Check if a finding's file matches any ignore-files pattern for its check."""
+    patterns = ignore_files.get(check)
+    if not patterns:
+        return False
+    for pattern in patterns:
+        if fnmatch.fnmatch(file, pattern):
+            return True
     return False
 
 
@@ -241,8 +259,10 @@ def _print_check_list() -> None:
     name_width = max(len(name) for name in CHECKS)
     for name in CHECKS:
         severity = CHECK_SEVERITY[name].value
+        category = CHECK_CATEGORIES.get(name, "ast")
+        tag = " [git]" if category == "git-history" else ""
         description = CHECK_DESCRIPTIONS.get(name, "")
-        print(f"  {name:<{name_width}}  [{severity:<6}]  {description}")
+        print(f"  {name:<{name_width}}  [{severity:<6}]{tag}  {description}")
 
 
 GUIDANCE_CONTENT = """\
@@ -455,6 +475,23 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Show all findings (default: top 10 highest-confidence)",
     )
+    parser.add_argument(
+        "--git-history",
+        action="store_true",
+        help="Enable git history checks (requires git repo with commit history)",
+    )
+    parser.add_argument(
+        "--git-window",
+        default="6m",
+        metavar="PERIOD",
+        help="Time window for git history analysis (default: 6m; e.g., 3m, 1y, 90d)",
+    )
+    parser.add_argument(
+        "--commit-messages",
+        choices=["auto", "structured", "unstructured"],
+        default="auto",
+        help="Commit message quality (default: auto-detect)",
+    )
     args = parser.parse_args(argv)
 
     if args.list_checks:
@@ -477,6 +514,12 @@ def main(argv: list[str] | None = None) -> None:
         args.min_severity = config["min-severity"]
     if "check" in config and args.check is None:
         args.check = config["check"]
+    if "git-history" in config and not args.git_history:
+        args.git_history = config["git-history"]
+    if "git-window" in config and args.git_window == "6m":
+        args.git_window = config["git-window"]
+    if "commit-messages" in config and args.commit_messages == "auto":
+        args.commit_messages = config["commit-messages"]
 
     for root in roots:
         if not root.is_dir():
@@ -501,12 +544,37 @@ def main(argv: list[str] | None = None) -> None:
 
     # Determine which checks to run
     if args.check:
+        if CHECK_CATEGORIES.get(args.check) == "git-history" and not args.git_history:
+            print(
+                f"Error: --check {args.check} requires --git-history",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         checks_to_run = {args.check: CHECKS[args.check]}
     else:
-        checks_to_run = {name: fn for name, fn in CHECKS.items() if name not in args.skip}
+        checks_to_run = {
+            name: fn
+            for name, fn in CHECKS.items()
+            if name not in args.skip
+            and (CHECK_CATEGORIES.get(name, "ast") != "git-history" or args.git_history)
+        }
+
+    # Resolve git root for history checks
+    git_root = None
+    if args.git_history:
+        git_root = get_git_root(base)
+        if git_root is None:
+            print("Error: --git-history requires a git repository", file=sys.stderr)
+            sys.exit(1)
 
     # Run checks
-    ctx = AnalysisContext(all_trees, args.verbose)
+    ctx = AnalysisContext(
+        all_trees,
+        args.verbose,
+        git_root=git_root,
+        git_window=args.git_window,
+        commit_messages=args.commit_messages,
+    )
     all_findings: list[Finding] = []
     for name, check_fn in checks_to_run.items():
         all_findings.extend(check_fn(ctx))
@@ -542,6 +610,13 @@ def main(argv: list[str] | None = None) -> None:
 
     # Filter suppressed findings (# pysmelly: ignore / # pysmelly: ignore[check-name])
     all_findings = [f for f in all_findings if not _is_suppressed(f, source_lines)]
+
+    # Filter by ignore-files config
+    ignore_files = config.get("ignore-files", {})
+    if ignore_files:
+        all_findings = [
+            f for f in all_findings if not _is_ignored_file(f.file, f.check, ignore_files)
+        ]
 
     # Build guidance preamble for LLM consumers (on by default)
     context: list[str] | None = None
