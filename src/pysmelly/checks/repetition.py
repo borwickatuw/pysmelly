@@ -707,6 +707,9 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # Skip private attrs
             if attr_name.startswith("_"):
                 continue
+            # Skip common/framework attrs (stable APIs like .pk, .save, .user)
+            if attr_name in COMMON_ATTRS:
+                continue
             # Only flag attributes defined in project classes
             if attr_name not in project_attrs:
                 continue

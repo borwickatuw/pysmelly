@@ -2336,6 +2336,14 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
             if root == "self" and "request" in chain_attrs:
                 continue
 
+            # Skip static namespace traversal (module.Class.InnerClass.CONST)
+            # If all intermediate attrs start uppercase, it's PEP 8 class/enum
+            # namespace resolution, not runtime object coupling
+            # chain_attrs[0] is the leaf, chain_attrs[1:] are intermediates
+            intermediate_attrs = chain_attrs[1:]
+            if intermediate_attrs and all(a[0].isupper() for a in intermediate_attrs):
+                continue
+
             chain = _chain_str(node)
             line = node.lineno
             if line not in line_findings or depth > line_findings[line][0]:
