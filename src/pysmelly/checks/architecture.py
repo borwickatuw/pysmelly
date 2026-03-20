@@ -427,3 +427,365 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
             )
 
     return findings
+
+
+# --- temporal-coupling helpers ---
+
+
+def _is_staticmethod_or_classmethod(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a method has @staticmethod or @classmethod decorator."""
+    for deco in method.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id in ("staticmethod", "classmethod"):
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr in ("staticmethod", "classmethod"):
+            return True
+    return False
+
+
+def _is_property(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check if a method has @property decorator."""
+    for deco in method.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id == "property":
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr == "property":
+            return True
+    return False
+
+
+def _collect_self_attr_ops(
+    class_node: ast.ClassDef,
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Collect self.attr assignments and reads per method.
+
+    Returns (writes, reads) where each is {method_name: {attr_name, ...}}.
+    """
+    writes: dict[str, set[str]] = defaultdict(set)
+    reads: dict[str, set[str]] = defaultdict(set)
+
+    for item in class_node.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _is_staticmethod_or_classmethod(item):
+            continue
+        if _is_property(item):
+            continue
+
+        method_name = item.name
+        for node in ast.walk(item):
+            if not isinstance(node, ast.Attribute):
+                continue
+            if not isinstance(node.value, ast.Name):
+                continue
+            if node.value.id != "self":
+                continue
+            if isinstance(node.ctx, ast.Store):
+                writes[method_name].add(node.attr)
+            elif isinstance(node.ctx, ast.Load):
+                reads[method_name].add(node.attr)
+
+    return writes, reads
+
+
+@check(
+    "temporal-coupling",
+    severity=Severity.MEDIUM,
+    description="Methods reading self.x only set by another non-__init__ method",
+)
+def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
+    """Find attributes that create temporal coupling between methods."""
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if _has_dataclass_decorator(node):
+                continue
+
+            # Need at least 3 methods
+            methods = [
+                item
+                for item in node.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and not _is_staticmethod_or_classmethod(item)
+                and not _is_property(item)
+            ]
+            if len(methods) < 3:
+                continue
+
+            writes, reads = _collect_self_attr_ops(node)
+            init_writes = writes.get("__init__", set())
+
+            for method_name, method_reads in reads.items():
+                for attr in method_reads:
+                    # Skip private attributes
+                    if attr.startswith("_"):
+                        continue
+                    # Skip if set in __init__
+                    if attr in init_writes:
+                        continue
+                    # Skip if set in same method
+                    if attr in writes.get(method_name, set()):
+                        continue
+
+                    # Find which method(s) set this attr
+                    setters = [
+                        m
+                        for m, w in writes.items()
+                        if attr in w and m != "__init__" and m != method_name
+                    ]
+                    if setters:
+                        setter_str = ", ".join(sorted(setters))
+                        findings.append(
+                            Finding(
+                                file=str(filepath),
+                                line=node.lineno,
+                                check="temporal-coupling",
+                                message=(
+                                    f"{node.name}.{method_name}() reads self.{attr}"
+                                    f" only set by {setter_str}() (not __init__)"
+                                    f" — temporal coupling: {setter_str}() must be"
+                                    f" called first"
+                                ),
+                                severity=Severity.MEDIUM,
+                            )
+                        )
+
+    return findings
+
+
+# --- feature-envy ---
+
+
+def _is_dunder(name: str) -> bool:
+    """Check if a name is a dunder method."""
+    return name.startswith("__") and name.endswith("__")
+
+
+@check(
+    "feature-envy",
+    severity=Severity.MEDIUM,
+    description="Methods accessing 3+ attrs of another param, more than self",
+)
+def check_feature_envy(ctx: AnalysisContext) -> list[Finding]:
+    """Find methods that use another object's attributes more than self."""
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for class_node in ast.walk(tree):
+            if not isinstance(class_node, ast.ClassDef):
+                continue
+
+            for item in class_node.body:
+                if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if _is_dunder(item.name):
+                    continue
+                if _is_staticmethod_or_classmethod(item):
+                    continue
+
+                # Get parameter names (excluding self/cls)
+                param_names: set[str] = set()
+                for arg in item.args.args:
+                    if arg.arg not in ("self", "cls"):
+                        param_names.add(arg.arg)
+
+                if not param_names:
+                    continue
+
+                # Count attribute accesses per target
+                attr_counts: dict[str, int] = defaultdict(int)  # target -> count
+                for node in ast.walk(item):
+                    if not isinstance(node, ast.Attribute):
+                        continue
+                    if not isinstance(node.ctx, ast.Load):
+                        continue
+                    if not isinstance(node.value, ast.Name):
+                        continue
+                    name = node.value.id
+                    if name == "self" or name in param_names:
+                        attr_counts[name] = attr_counts.get(name, 0) + 1
+
+                self_count = attr_counts.get("self", 0)
+
+                for param in param_names:
+                    param_count = attr_counts.get(param, 0)
+                    if param_count >= 3 and param_count > self_count:
+                        findings.append(
+                            Finding(
+                                file=str(filepath),
+                                line=item.lineno,
+                                check="feature-envy",
+                                message=(
+                                    f"{class_node.name}.{item.name}() accesses"
+                                    f" {param_count} attributes of '{param}' but"
+                                    f" only {self_count} of 'self'"
+                                    f" — consider moving this logic to"
+                                    f" {param}'s class"
+                                ),
+                                severity=Severity.MEDIUM,
+                            )
+                        )
+
+    return findings
+
+
+# --- anemic-domain ---
+
+_DATA_CLASS_BASES = frozenset({"BaseModel", "NamedTuple", "TypedDict"})
+
+_DATA_CLASS_DECORATORS = frozenset({"dataclass", "attrs", "define", "attr.s", "attr.attrs"})
+
+
+def _is_data_class_like(node: ast.ClassDef) -> bool:
+    """Check if a class is a dataclass, NamedTuple, TypedDict, Pydantic BaseModel, or attrs."""
+    if _has_dataclass_decorator(node):
+        return True
+    for deco in node.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id in _DATA_CLASS_DECORATORS:
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr in _DATA_CLASS_DECORATORS:
+            return True
+        if isinstance(deco, ast.Call):
+            func = deco.func
+            if isinstance(func, ast.Name) and func.id in _DATA_CLASS_DECORATORS:
+                return True
+            if isinstance(func, ast.Attribute) and func.attr in _DATA_CLASS_DECORATORS:
+                return True
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id in _DATA_CLASS_BASES:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in _DATA_CLASS_BASES:
+            return True
+    return False
+
+
+def _count_init_attrs(class_node: ast.ClassDef) -> set[str]:
+    """Get the set of attribute names assigned in __init__."""
+    attrs: set[str] = set()
+    for item in class_node.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if item.name != "__init__":
+            continue
+        for node in ast.walk(item):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and isinstance(node.ctx, ast.Store)
+            ):
+                attrs.add(node.attr)
+    return attrs
+
+
+def _has_non_dunder_methods(class_node: ast.ClassDef) -> bool:
+    """Check if a class has any non-dunder instance methods."""
+    for item in class_node.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _is_dunder(item.name):
+            continue
+        if _is_staticmethod_or_classmethod(item):
+            continue
+        return True
+    return False
+
+
+def _base_has_methods(class_node: ast.ClassDef, all_trees: dict[Path, ast.Module]) -> bool:
+    """Check if any base class (within analyzed files) has non-dunder methods."""
+    base_names: set[str] = set()
+    for base in class_node.bases:
+        if isinstance(base, ast.Name):
+            base_names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            base_names.add(base.attr)
+
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in base_names:
+                if _has_non_dunder_methods(node):
+                    return True
+    return False
+
+
+@check(
+    "anemic-domain",
+    severity=Severity.MEDIUM,
+    description="Classes with 5+ __init__ attrs but zero non-dunder methods",
+)
+def check_anemic_domain(ctx: AnalysisContext) -> list[Finding]:
+    """Find classes that are data bags with no behavior."""
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if _is_data_class_like(node):
+                continue
+
+            init_attrs = _count_init_attrs(node)
+            if len(init_attrs) < 5:
+                continue
+
+            if _has_non_dunder_methods(node):
+                continue
+
+            if _base_has_methods(node, ctx.all_trees):
+                continue
+
+            # Cross-file feature-envy evidence
+            envy_files: set[str] = set()
+            attr_names = init_attrs
+            for other_path, other_tree in ctx.all_trees.items():
+                if other_path == filepath:
+                    continue
+                if is_test_file(other_path):
+                    continue
+                # Count how many of this class's attrs are accessed
+                accessed: set[str] = set()
+                for n in ast.walk(other_tree):
+                    if (
+                        isinstance(n, ast.Attribute)
+                        and isinstance(n.ctx, ast.Load)
+                        and n.attr in attr_names
+                    ):
+                        accessed.add(n.attr)
+                if len(accessed) >= 3:
+                    envy_files.add(str(other_path))
+
+            if envy_files:
+                msg = (
+                    f"{node.name} has {len(init_attrs)} attributes but no"
+                    f" behavior — external functions in {len(envy_files)}"
+                    f" file{'s' if len(envy_files) != 1 else ''} access 3+"
+                    f" attributes — move behavior into the class"
+                )
+            else:
+                msg = (
+                    f"{node.name} has {len(init_attrs)} attributes but no"
+                    f" behavior methods — consider adding methods or"
+                    f" converting to a dataclass"
+                )
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="anemic-domain",
+                    message=msg,
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings

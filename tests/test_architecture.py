@@ -1,7 +1,10 @@
 """Tests for architectural checks."""
 
 from pysmelly.checks.architecture import (
+    check_anemic_domain,
+    check_feature_envy,
     check_shared_mutable_module_state,
+    check_temporal_coupling,
     check_write_only_attributes,
 )
 from pysmelly.registry import Severity
@@ -363,3 +366,371 @@ def use(c):
         findings = check_write_only_attributes(t)
         assert len(findings) == 1
         assert "unused_field" in findings[0].message
+
+
+class TestTemporalCoupling:
+    def test_finds_coupling(self, trees):
+        t = trees.code("""\
+class Server:
+    def __init__(self):
+        self.host = "localhost"
+
+    def connect(self):
+        self.connection = make_conn()
+
+    def handle_request(self):
+        return self.connection.send("hello")
+
+    def close(self):
+        self.connection.close()
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert "connection" in messages
+        assert "connect()" in messages
+
+    def test_ignores_init_set_attrs(self, trees):
+        t = trees.code("""\
+class Server:
+    def __init__(self):
+        self.connection = None
+
+    def connect(self):
+        self.connection = make_conn()
+
+    def handle_request(self):
+        return self.connection.send("hello")
+
+    def close(self):
+        self.connection.close()
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_ignores_same_method_set_and_read(self, trees):
+        t = trees.code("""\
+class Worker:
+    def __init__(self):
+        self.x = 0
+
+    def process(self):
+        self.result = compute()
+        return self.result
+
+    def cleanup(self):
+        pass
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_skips_property(self, trees):
+        t = trees.code("""\
+class Server:
+    def __init__(self):
+        pass
+
+    def connect(self):
+        self.connection = make_conn()
+
+    @property
+    def status(self):
+        return self.connection
+
+    def close(self):
+        self.connection.close()
+""")
+        findings = check_temporal_coupling(t)
+        # property methods are skipped
+        assert not any("status()" in f.message for f in findings)
+
+    def test_skips_classmethod(self, trees):
+        t = trees.code("""\
+class Factory:
+    def __init__(self):
+        pass
+
+    def setup(self):
+        self.data = load()
+
+    @classmethod
+    def create(cls):
+        return cls()
+
+    def process(self):
+        return self.data
+""")
+        findings = check_temporal_coupling(t)
+        assert not any("create()" in f.message for f in findings)
+
+    def test_skips_small_class(self, trees):
+        t = trees.code("""\
+class Small:
+    def setup(self):
+        self.data = load()
+
+    def process(self):
+        return self.data
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_skips_dataclass(self, trees):
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    host: str
+    port: int
+
+    def setup(self):
+        self.connection = connect()
+
+    def query(self):
+        return self.connection
+
+    def close(self):
+        pass
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_multiple_couplings(self, trees):
+        t = trees.code("""\
+class App:
+    def __init__(self):
+        pass
+
+    def init_db(self):
+        self.db = connect_db()
+
+    def init_cache(self):
+        self.cache = connect_cache()
+
+    def run(self):
+        self.db.query()
+        self.cache.get("x")
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) >= 2
+
+
+class TestFeatureEnvy:
+    def test_finds_envy(self, trees):
+        t = trees.code("""\
+class Formatter:
+    def render(self, document):
+        title = document.title
+        body = document.body
+        author = document.author
+        date = document.date
+        return f"{title} by {author} on {date}: {body}"
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 1
+        assert "document" in findings[0].message
+        assert "Formatter.render()" in findings[0].message
+
+    def test_ignores_balanced_access(self, trees):
+        t = trees.code("""\
+class Formatter:
+    def render(self, document):
+        title = document.title
+        body = document.body
+        tmpl = self.template
+        style = self.style
+        fmt = self.format
+        return tmpl.format(title=title, body=body, style=style, fmt=fmt)
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
+
+    def test_ignores_dunder(self, trees):
+        t = trees.code("""\
+class MyClass:
+    def __init__(self, other):
+        self.x = other.a
+        self.y = other.b
+        self.z = other.c
+        self.w = other.d
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
+
+    def test_ignores_staticmethod(self, trees):
+        t = trees.code("""\
+class MyClass:
+    @staticmethod
+    def process(obj):
+        return obj.a + obj.b + obj.c + obj.d
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
+
+    def test_ignores_few_accesses(self, trees):
+        t = trees.code("""\
+class MyClass:
+    def process(self, obj):
+        return obj.a + obj.b
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_envy.py": """\
+class TestFormatter:
+    def test_render(self, document):
+        x = document.title
+        y = document.body
+        z = document.author
+        w = document.date
+"""})
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
+
+    def test_message_identifies_envied_param(self, trees):
+        t = trees.code("""\
+class Reporter:
+    def summarize(self, stats):
+        return f"{stats.mean} {stats.median} {stats.mode} {stats.count}"
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 1
+        assert "'stats'" in findings[0].message
+
+    def test_ignores_classmethod(self, trees):
+        t = trees.code("""\
+class MyClass:
+    @classmethod
+    def from_config(cls, config):
+        return cls(config.a, config.b, config.c, config.d)
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
+
+
+class TestAnemicDomain:
+    def test_finds_anemic(self, trees):
+        t = trees.code("""\
+class Config:
+    def __init__(self):
+        self.host = "localhost"
+        self.port = 8080
+        self.timeout = 30
+        self.retries = 3
+        self.debug = False
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 1
+        assert "Config" in findings[0].message
+        assert "5 attributes" in findings[0].message
+
+    def test_ignores_class_with_methods(self, trees):
+        t = trees.code("""\
+class Config:
+    def __init__(self):
+        self.host = "localhost"
+        self.port = 8080
+        self.timeout = 30
+        self.retries = 3
+        self.debug = False
+
+    def validate(self):
+        if self.port < 0:
+            raise ValueError("bad port")
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 0
+
+    def test_ignores_dataclass(self, trees):
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    host: str = "localhost"
+    port: int = 8080
+    timeout: int = 30
+    retries: int = 3
+    debug: bool = False
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 0
+
+    def test_ignores_namedtuple(self, trees):
+        t = trees.code("""\
+from typing import NamedTuple
+
+class Config(NamedTuple):
+    host: str
+    port: int
+    timeout: int
+    retries: int
+    debug: bool
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 0
+
+    def test_ignores_few_attrs(self, trees):
+        t = trees.code("""\
+class Config:
+    def __init__(self):
+        self.host = "localhost"
+        self.port = 8080
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 0
+
+    def test_ignores_base_with_methods(self, trees):
+        t = trees.code("""\
+class Base:
+    def validate(self):
+        pass
+
+class Config(Base):
+    def __init__(self):
+        self.host = "localhost"
+        self.port = 8080
+        self.timeout = 30
+        self.retries = 3
+        self.debug = False
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 0
+
+    def test_cross_file_envy_enhances_message(self, trees):
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.host = "localhost"
+        self.port = 8080
+        self.timeout = 30
+        self.retries = 3
+        self.debug = False
+""",
+                "app.py": """\
+def setup(config):
+    connect(config.host, config.port, config.timeout)
+""",
+            }
+        )
+        findings = check_anemic_domain(t)
+        assert len(findings) == 1
+        assert "external functions" in findings[0].message
+
+    def test_ignores_pydantic(self, trees):
+        t = trees.code("""\
+from pydantic import BaseModel
+
+class Config(BaseModel):
+    host: str = "localhost"
+    port: int = 8080
+    timeout: int = 30
+    retries: int = 3
+    debug: bool = False
+""")
+        findings = check_anemic_domain(t)
+        assert len(findings) == 0
