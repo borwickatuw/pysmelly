@@ -40,14 +40,14 @@ make self-check                        # Run pysmelly on itself
 - **Check registration** via `@check("name", severity=Severity.X)` decorator
 - **Each check** receives `AnalysisContext` (all parsed files + cached indices) and returns `list[Finding]`
 - **File discovery** uses `git ls-files` when in a repo, falls back to rglob
-- **Severity levels**: HIGH (investigate and fix), MEDIUM (investigate and decide), LOW (note during review)
+- **Severity levels**: HIGH (fix), MEDIUM (fix unless specific reason not to), LOW (review and fix where it makes sense)
 
 ## Design Principles
 
 - Cross-file analysis is the differentiator — don't reimplement what ruff/pylint already do well
-- Findings are **investigation pointers**, not mandates — the consumer (Claude Code) reads the code and decides
-- Include cross-file context (caller counts, blast radius) so findings are actionable
-- Grey areas are fine — Claude Code can apply judgment about whether a finding warrants action
+- Findings should drive action, not analysis paralysis — the default is to fix, not to explain why it's OK
+- Include cross-file context (caller counts, blast radius) so fixes can be applied across the codebase
+- Grey areas exist, but Claude Code should lean toward fixing rather than defending the status quo
 - Minimal dependencies preferred — don't add deps without clear justification
 - Calls `git` via subprocess (list args, no shell) for file discovery and diff mode
 

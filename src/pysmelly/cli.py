@@ -167,8 +167,12 @@ def _build_guidance(excludes: list[str], checks_with_findings: set[str]) -> list
     guidance = [
         "pysmelly performs cross-file call-graph analysis to find vestigial "
         "code patterns — the kind of cruft that survives after design changes. "
-        "Findings are signals for review, not mandates — use judgment about "
-        "whether each finding represents a real problem in context.",
+        "Your default response to each finding should be to FIX it, not to "
+        "explain why it's acceptable. Most fixes are small (delete dead code, "
+        "remove an unused parameter, replace an elif chain with a dict). "
+        "If you choose not to fix a finding, state the specific reason "
+        "(framework requirement, public API contract) — not a general defense "
+        "of the existing code.",
     ]
 
     if _has_test_excludes(excludes):
@@ -254,45 +258,38 @@ min-severity = "medium"
 
 CLI arguments extend list values and override scalar values.
 
-## How to interpret findings
+## How to act on findings
 
-**Findings are investigation pointers.** pysmelly tells you where to look and
-provides cross-file context so you can investigate effectively. A finding like
-"format_type is declared but never used in parse_body() — 12 callers still
-pass it" is not saying "delete this parameter" — it's saying "this parameter
-appears vestigial, investigate the call chain and decide."
+**Your default should be to fix each finding, not to explain why it's OK.**
+Most fixes are small: delete dead code, remove an unused parameter, replace
+an elif chain with a dict, inline a trivial wrapper. These take seconds. The
+temptation is to write a paragraph defending the existing code — resist that.
+If the fix is easy, just do it.
 
-**Take findings seriously.** Each finding looks "fine" when you examine the
-code in isolation, because the code *is* fine in isolation. The smell is in
-the cross-file picture: a function that exists but has no callers, a parameter
-that every caller passes the same value for, a constant defined but never
-referenced.
+**Do not dismiss findings by defending the code in isolation.** Each finding
+looks "fine" in isolation, because the code *is* fine in isolation. The smell
+is in the cross-file picture: a function with no callers, a parameter every
+caller passes the same value for, a constant nobody references. Looking at
+the function and saying "it's well-structured" misses the point — pysmelly is
+telling you how it's *used* (or not used) across the codebase.
 
-**Do not dismiss findings by defending the code in isolation.** The most common
-mistake is to look at a finding like "single-call-site" and say "but the
-function is well-named and readable." That's not the point — the point is that
-the abstraction has exactly one consumer, which means the indirection may no
-longer be earning its keep.
+**If you choose not to fix a finding, state the specific reason.** Valid
+reasons: framework requires this signature, public API contract, the method
+is called via reflection/dispatch. Invalid reasons: "the code is readable,"
+"it might be useful later," "the abstraction makes sense in isolation."
 
-**Use the cross-file context to investigate.** When pysmelly says a parameter
-has "18 callers still passing it," trace those callers. When it says a constant
+**Use the cross-file context.** When pysmelly says a parameter has "18 callers
+still passing it," trace those callers and update them. When it says a constant
 is "never referenced anywhere," check whether the code that used it was removed
-or rewritten with different string literals. The context in the finding message
-is there to guide your investigation.
+and delete the constant. The context in the finding message tells you the blast
+radius of the fix.
 
-**Evaluate each finding in context**, but lean toward action:
-- **HIGH severity**: Investigate and fix — these are almost always real
-  problems (dead code, unused defaults, unreachable code after return).
-- **MEDIUM severity**: Investigate and decide — the finding shows where to
-  look and provides context. Most warrant a fix, but some may be justified
-  by context pysmelly can't see (framework conventions, public API contracts).
-- **LOW severity**: Note during review. Skim for surprises. These flag
-  patterns worth knowing about but not necessarily acting on.
-
-**Grey areas are expected.** pysmelly flags patterns that *may* indicate
-vestigial design. You apply judgment about whether each finding warrants
-action. But start from the assumption that the finding is valid and look
-for evidence to confirm, not to dismiss.
+**Severity guides priority, not whether to act:**
+- **HIGH**: Fix these. Dead code, unused defaults, unreachable code.
+- **MEDIUM**: Fix these unless there's a specific reason not to (framework
+  convention, public API contract). State the reason if you skip one.
+- **LOW**: Review and fix where it makes sense. These are investigation
+  pointers — look at the code and decide, but don't ignore them.
 """
 
 CLAUDE_MD_REFERENCE = """\

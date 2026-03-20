@@ -147,10 +147,10 @@ This creates a guidance file that tells Claude Code what pysmelly is, how to run
 pysmelly src/
 ```
 
-The text output includes a guidance preamble that helps LLMs interpret findings in context. The three severity levels map to AI review actions:
-- **High**: Investigate and fix — these are almost always real problems
-- **Medium**: Investigate and decide — the finding shows where to look, Claude Code determines what (if anything) to do
-- **Low**: Note during review — useful context, may or may not warrant action
+The text output includes a guidance preamble that tells Claude Code to **default to fixing findings**, not explaining why they're acceptable. The three severity levels guide priority:
+- **High**: Fix these — dead code, unused defaults, unreachable code
+- **Medium**: Fix unless there's a specific reason not to (framework convention, public API). State the reason if skipping.
+- **Low**: Review and fix where it makes sense — investigation pointers, not mandates
 
 ### What makes findings actionable for AI review
 
