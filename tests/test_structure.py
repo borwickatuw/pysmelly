@@ -3,6 +3,7 @@
 from pysmelly.checks.structure import (
     check_duplicate_blocks,
     check_duplicate_except_blocks,
+    check_middle_man,
     check_param_clumps,
 )
 
@@ -557,3 +558,133 @@ def validate_user(first_name, last_name, email):
 """)
         findings = check_param_clumps(t)
         assert len(findings) == 1
+
+
+class TestMiddleMan:
+    def test_finds_pure_delegation_class(self, trees):
+        t = trees.code("""\
+class ReportMiddleman:
+    def __init__(self, generator):
+        self.generator = generator
+
+    def get_user_report(self):
+        return self.generator.generate_user_report()
+
+    def get_order_report(self):
+        return self.generator.generate_order_report()
+
+    def get_inventory_report(self):
+        return self.generator.generate_inventory_report()
+
+    def get_all_reports(self):
+        return self.generator.generate_all_reports()
+""")
+        findings = check_middle_man(t)
+        assert len(findings) == 1
+        assert "ReportMiddleman" in findings[0].message
+        assert "4/4" in findings[0].message
+        assert "self.generator" in findings[0].message
+
+    def test_finds_void_delegation(self, trees):
+        """Methods that delegate without returning (void delegation)."""
+        t = trees.code("""\
+class LogProxy:
+    def __init__(self, logger):
+        self.logger = logger
+
+    def info(self, msg):
+        self.logger.info(msg)
+
+    def warning(self, msg):
+        self.logger.warning(msg)
+
+    def error(self, msg):
+        self.logger.error(msg)
+""")
+        findings = check_middle_man(t)
+        assert len(findings) == 1
+
+    def test_no_finding_too_few_methods(self, trees):
+        t = trees.code("""\
+class ThinWrapper:
+    def __init__(self, inner):
+        self.inner = inner
+
+    def do_thing(self):
+        return self.inner.do_thing()
+
+    def do_other(self):
+        return self.inner.do_other()
+""")
+        findings = check_middle_man(t)
+        assert len(findings) == 0
+
+    def test_no_finding_methods_add_logic(self, trees):
+        """Methods that transform results are not pure delegation."""
+        t = trees.code("""\
+import json
+
+class ReportAdapter:
+    def __init__(self, generator):
+        self.generator = generator
+
+    def get_user_report(self):
+        return json.dumps(self.generator.generate_user_report())
+
+    def get_order_report(self):
+        return json.dumps(self.generator.generate_order_report())
+
+    def get_inventory_report(self):
+        return json.dumps(self.generator.generate_inventory_report())
+""")
+        findings = check_middle_man(t)
+        assert len(findings) == 0
+
+    def test_no_finding_mixed_delegation_targets(self, trees):
+        """Methods delegate to different attributes — not a middleman."""
+        t = trees.code("""\
+class Coordinator:
+    def __init__(self, a, b, c):
+        self.a = a
+        self.b = b
+        self.c = c
+
+    def do_a(self):
+        return self.a.run()
+
+    def do_b(self):
+        return self.b.run()
+
+    def do_c(self):
+        return self.c.run()
+""")
+        findings = check_middle_man(t)
+        assert len(findings) == 0
+
+    def test_ratio_threshold(self, trees):
+        """Some methods delegate, some add logic — below 75% threshold."""
+        t = trees.code("""\
+class Wrapper:
+    def __init__(self, inner):
+        self.inner = inner
+
+    def get_a(self):
+        return self.inner.get_a()
+
+    def get_b(self):
+        return self.inner.get_b()
+
+    def get_c(self):
+        return self.inner.get_c()
+
+    def get_d(self):
+        result = self.inner.get_d()
+        return result.upper()
+
+    def get_e(self):
+        result = self.inner.get_e()
+        return result.upper()
+""")
+        findings = check_middle_man(t)
+        # 3 out of 5 delegate = 60% < 75%
+        assert len(findings) == 0

@@ -539,3 +539,128 @@ def _find_param_clumps(
                     to_remove.add(i)
 
     return [c for i, c in enumerate(clumps) if i not in to_remove]
+
+
+# --- middle-man helpers ---
+
+
+def _get_non_dunder_methods(
+    class_node: ast.ClassDef,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Get all methods except dunder methods from a class body."""
+    methods = []
+    for item in class_node.body:
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not item.name.startswith("__"):
+                methods.append(item)
+    return methods
+
+
+def _get_delegation_target(
+    method: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Check if a method body is pure delegation to self.X.
+
+    Returns the delegated attribute name (X in self.X.method()), or None.
+    Handles: return self.X.method(...), self.X.method(...) as expression,
+    and return self.X.attr (property-style).
+    """
+    body = method.body
+    # Strip docstring
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+
+    if len(body) != 1:
+        return None
+
+    stmt = body[0]
+
+    # return self.X.method(...) or return self.X.attr
+    if isinstance(stmt, ast.Return) and stmt.value is not None:
+        return _extract_self_delegation_attr(stmt.value)
+
+    # self.X.method(...) as expression statement (void delegation)
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+        return _extract_self_delegation_attr(stmt.value)
+
+    return None
+
+
+def _extract_self_delegation_attr(expr: ast.expr) -> str | None:
+    """Extract the delegated attribute name from self.X.method(...) or self.X.attr."""
+    # Unwrap Call to get the function being called
+    inner = expr
+    if isinstance(inner, ast.Call):
+        inner = inner.func
+
+    # self.X.method or self.X.attr
+    if (
+        isinstance(inner, ast.Attribute)
+        and isinstance(inner.value, ast.Attribute)
+        and isinstance(inner.value.value, ast.Name)
+        and inner.value.value.id == "self"
+    ):
+        return inner.value.attr
+
+    return None
+
+
+@check(
+    "middle-man",
+    severity=Severity.MEDIUM,
+    description="Classes that delegate most methods to a single wrapped object",
+)
+def check_middle_man(ctx: AnalysisContext) -> list[Finding]:
+    """Find classes where most methods just delegate to self.X.method().
+
+    Middle-man classes appear after migrations complete but the adapter layer
+    stays, or after refactoring extracts real logic from a wrapper, leaving
+    a pure pass-through that adds indirection without value.
+    """
+    findings = []
+    min_methods = 3
+    min_ratio = 0.75
+
+    for filepath, tree in ctx.all_trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+
+            methods = _get_non_dunder_methods(node)
+            if len(methods) < min_methods:
+                continue
+
+            # Count delegation targets per attribute
+            delegation_counts: dict[str, int] = {}
+            for method in methods:
+                attr = _get_delegation_target(method)
+                if attr:
+                    delegation_counts[attr] = delegation_counts.get(attr, 0) + 1
+
+            if not delegation_counts:
+                continue
+
+            best_attr = max(delegation_counts, key=lambda k: delegation_counts[k])
+            best_count = delegation_counts[best_attr]
+
+            if best_count >= min_methods and best_count / len(methods) >= min_ratio:
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=node.lineno,
+                        check="middle-man",
+                        message=(
+                            f"{node.name} delegates {best_count}/{len(methods)} "
+                            f"methods to self.{best_attr} — consider removing "
+                            f"the middleman"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings

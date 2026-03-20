@@ -324,3 +324,106 @@ def check_shared_mutable_module_state(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+# --- write-only-attributes helpers ---
+
+
+def _has_dataclass_decorator(node: ast.ClassDef) -> bool:
+    """Check if a class has @dataclass or @dataclasses.dataclass decorator."""
+    for deco in node.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id == "dataclass":
+            return True
+        if (
+            isinstance(deco, ast.Call)
+            and isinstance(deco.func, ast.Name)
+            and deco.func.id == "dataclass"
+        ):
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr == "dataclass":
+            return True
+        if (
+            isinstance(deco, ast.Call)
+            and isinstance(deco.func, ast.Attribute)
+            and deco.func.attr == "dataclass"
+        ):
+            return True
+    return False
+
+
+def _collect_dataclass_fields(
+    all_trees: dict[Path, ast.Module],
+) -> list[dict]:
+    """Find @dataclass classes and their annotated fields."""
+    fields: list[dict] = []
+    for filepath, tree in all_trees.items():
+        if is_test_file(filepath):
+            continue
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not _has_dataclass_decorator(node):
+                continue
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    field_name = item.target.id
+                    if field_name.startswith("_"):
+                        continue
+                    fields.append(
+                        {
+                            "class_name": node.name,
+                            "field_name": field_name,
+                            "file": str(filepath),
+                            "line": item.lineno,
+                        }
+                    )
+    return fields
+
+
+def _collect_all_attr_reads(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Collect all attribute names read (Load context) across the codebase."""
+    reads: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                reads.add(node.attr)
+    return reads
+
+
+@check(
+    "write-only-attributes",
+    severity=Severity.MEDIUM,
+    description="Dataclass fields that are never read anywhere in the codebase",
+)
+def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
+    """Find @dataclass fields with no attribute reads across the entire codebase.
+
+    Config classes accumulate fields as features iterate: each round adds
+    parameters, but removal doesn't clean them up. Fields like
+    async_max_connections or cache_compression persist long after the
+    feature they configured was changed or dropped.
+    """
+    findings = []
+
+    dc_fields = _collect_dataclass_fields(ctx.all_trees)
+    if not dc_fields:
+        return findings
+
+    all_reads = _collect_all_attr_reads(ctx.all_trees)
+
+    for field in dc_fields:
+        if field["field_name"] not in all_reads:
+            findings.append(
+                Finding(
+                    file=field["file"],
+                    line=field["line"],
+                    check="write-only-attributes",
+                    message=(
+                        f"{field['class_name']}.{field['field_name']} is never "
+                        f"read anywhere in the codebase — vestigial field?"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings

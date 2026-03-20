@@ -1,6 +1,7 @@
 """Tests for dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers)."""
 
 from pysmelly.checks.dead import (
+    check_dead_abstractions,
     check_dead_dispatch_entries,
     check_dead_exceptions,
     check_orphaned_test_helpers,
@@ -601,3 +602,115 @@ def test_something():
         findings = check_orphaned_test_helpers(t)
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
+
+
+class TestDeadAbstraction:
+    def test_finds_abc_with_no_subclasses(self, trees):
+        t = trees.code("""\
+from abc import ABC, abstractmethod
+
+class BasePlugin(ABC):
+    @abstractmethod
+    def initialize(self, config):
+        pass
+
+    @abstractmethod
+    def execute(self):
+        pass
+""")
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 1
+        assert "BasePlugin" in findings[0].message
+        assert "2 abstract method(s)" in findings[0].message
+
+    def test_no_finding_when_subclassed(self, trees):
+        t = trees.code("""\
+from abc import ABC, abstractmethod
+
+class BaseHandler(ABC):
+    @abstractmethod
+    def handle(self, data):
+        pass
+
+class ConcreteHandler(BaseHandler):
+    def handle(self, data):
+        return data
+""")
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 0
+
+    def test_no_finding_when_subclassed_cross_file(self, trees):
+        t = trees.files(
+            {
+                "base.py": """\
+from abc import ABC, abstractmethod
+
+class BaseService(ABC):
+    @abstractmethod
+    def run(self):
+        pass
+""",
+                "impl.py": """\
+from base import BaseService
+
+class MyService(BaseService):
+    def run(self):
+        return "done"
+""",
+            }
+        )
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 0
+
+    def test_finds_metaclass_abc(self, trees):
+        t = trees.code("""\
+from abc import ABCMeta, abstractmethod
+
+class BaseMiddleware(metaclass=ABCMeta):
+    @abstractmethod
+    def before_request(self, request):
+        pass
+""")
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 1
+
+    def test_finds_abc_detected_by_abstractmethod(self, trees):
+        t = trees.code("""\
+from abc import abstractmethod
+
+class Serializer:
+    @abstractmethod
+    def serialize(self, data):
+        pass
+
+    @abstractmethod
+    def deserialize(self, raw):
+        pass
+""")
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 1
+        assert "2 abstract method(s)" in findings[0].message
+
+    def test_no_finding_when_in_dunder_all(self, trees):
+        t = trees.code("""\
+from abc import ABC, abstractmethod
+
+__all__ = ["BasePlugin"]
+
+class BasePlugin(ABC):
+    @abstractmethod
+    def run(self):
+        pass
+""")
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 0
+
+    def test_no_finding_concrete_class(self, trees):
+        """Non-abstract classes should not be flagged."""
+        t = trees.code("""\
+class RegularClass:
+    def do_stuff(self):
+        pass
+""")
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 0

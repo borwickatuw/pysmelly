@@ -1,6 +1,9 @@
 """Tests for architectural checks."""
 
-from pysmelly.checks.architecture import check_shared_mutable_module_state
+from pysmelly.checks.architecture import (
+    check_shared_mutable_module_state,
+    check_write_only_attributes,
+)
 from pysmelly.registry import Severity
 
 
@@ -226,3 +229,137 @@ MIDDLEWARE.insert(0, "first_middleware")
         )
         findings = check_shared_mutable_module_state(t)
         assert len(findings) == 1
+
+
+class TestWriteOnlyAttributes:
+    def test_finds_unread_dataclass_field(self, trees):
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    timeout: int = 30
+    vestigial_field: str = "never_used"
+
+def use_config(c):
+    return c.timeout
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 1
+        assert "vestigial_field" in findings[0].message
+        assert "Config" in findings[0].message
+
+    def test_no_finding_when_field_is_read(self, trees):
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    timeout: int = 30
+    retries: int = 3
+
+def use_config(c):
+    print(c.timeout, c.retries)
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+    def test_cross_file_read(self, trees):
+        t = trees.files(
+            {
+                "config.py": """\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    timeout: int = 30
+    secret_field: str = "hidden"
+""",
+                "app.py": """\
+from config import Config
+
+c = Config()
+print(c.timeout)
+""",
+            }
+        )
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 1
+        assert "secret_field" in findings[0].message
+
+    def test_skips_private_fields(self, trees):
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    _internal: int = 0
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+    def test_no_finding_non_dataclass(self, trees):
+        t = trees.code("""\
+class Config:
+    timeout: int = 30
+    vestigial: str = "unused"
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+    def test_field_read_in_own_method(self, trees):
+        """Field read by the class's own methods should not be flagged."""
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    timeout: int = 30
+    max_retries: int = 3
+
+    def validate(self):
+        if self.timeout <= 0:
+            raise ValueError("bad timeout")
+        if self.max_retries < 0:
+            raise ValueError("bad retries")
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+    def test_multiple_vestigial_fields(self, trees):
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class FetchConfig:
+    base_url: str = ""
+    async_max_connections: int = 100
+    cache_compression: bool = False
+    experimental_features: dict = None
+
+def fetch(config):
+    return config.base_url
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 3
+        names = {f.message.split(".")[1].split(" ")[0] for f in findings}
+        assert "async_max_connections" in names
+        assert "cache_compression" in names
+        assert "experimental_features" in names
+
+    def test_dataclass_with_call_decorator(self, trees):
+        """@dataclass(frozen=True) should also be detected."""
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Config:
+    timeout: int = 30
+    unused_field: str = "vestigial"
+
+def use(c):
+    return c.timeout
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 1
+        assert "unused_field" in findings[0].message

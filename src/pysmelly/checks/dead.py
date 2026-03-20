@@ -275,3 +275,92 @@ def check_orphaned_test_helpers(ctx: AnalysisContext) -> list[Finding]:
             )
 
     return findings
+
+
+# --- dead-abstraction helpers ---
+
+
+def _is_abstract_class(node: ast.ClassDef) -> bool:
+    """Check if a class is abstract (inherits from ABC or has @abstractmethod methods)."""
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id == "ABC":
+            return True
+        if isinstance(base, ast.Attribute) and base.attr == "ABC":
+            return True
+    for kw in node.keywords:
+        if kw.arg == "metaclass":
+            if isinstance(kw.value, ast.Name) and kw.value.id == "ABCMeta":
+                return True
+            if isinstance(kw.value, ast.Attribute) and kw.value.attr == "ABCMeta":
+                return True
+    for item in node.body:
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for deco in item.decorator_list:
+                if isinstance(deco, ast.Name) and deco.id == "abstractmethod":
+                    return True
+                if isinstance(deco, ast.Attribute) and deco.attr == "abstractmethod":
+                    return True
+    return False
+
+
+def _count_abstract_methods(node: ast.ClassDef) -> int:
+    """Count the number of @abstractmethod decorated methods in a class."""
+    count = 0
+    for item in node.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for deco in item.decorator_list:
+            if isinstance(deco, ast.Name) and deco.id == "abstractmethod":
+                count += 1
+            elif isinstance(deco, ast.Attribute) and deco.attr == "abstractmethod":
+                count += 1
+    return count
+
+
+@check(
+    "dead-abstraction",
+    severity=Severity.MEDIUM,
+    description="Abstract base classes with no concrete implementations",
+)
+def check_dead_abstractions(ctx: AnalysisContext) -> list[Finding]:
+    """Find ABCs that have no concrete subclasses anywhere in the codebase.
+
+    ABCs are created 'for extensibility' that never materializes. The plugin
+    system ships, nobody writes plugins, the ABC lives on as a monument to
+    speculative generality.
+    """
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not _is_abstract_class(node):
+                continue
+
+            if is_subclassed(node.name, ctx.all_trees):
+                continue
+            if is_in_dunder_all(node.name, tree):
+                continue
+            if is_imported_elsewhere(node.name, str(filepath), ctx):
+                continue
+            if is_referenced_as_value(node.name, ctx):
+                continue
+
+            abstract_count = _count_abstract_methods(node)
+            method_desc = f"with {abstract_count} abstract method(s)" if abstract_count else ""
+
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="dead-abstraction",
+                    message=(
+                        f"{node.name} (ABC {method_desc}) has no concrete "
+                        f"implementations — speculative generality?"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings

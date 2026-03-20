@@ -1,14 +1,18 @@
 """Tests for pattern-based checks."""
 
 from pysmelly.checks.patterns import (
+    check_boolean_param_explosion,
     check_constant_dispatch_dicts,
     check_env_fallbacks,
+    check_exception_flow_control,
     check_foo_equals_foo,
     check_fossilized_toggles,
+    check_isinstance_chain,
     check_runtime_monkey_patch,
     check_suspicious_fallbacks,
     check_temp_accumulators,
     check_trivial_wrappers,
+    check_unreachable_after_return,
 )
 
 
@@ -1026,4 +1030,343 @@ if FLAG:
     do_something()
 """)
         findings = check_fossilized_toggles(t)
+        assert len(findings) == 0
+
+
+class TestUnreachableAfterReturn:
+    def test_code_after_return(self, trees):
+        t = trees.code("""\
+def foo():
+    return 42
+    x = 1
+    y = 2
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 1
+        assert "2 statement(s)" in findings[0].message
+        assert "after return" in findings[0].message
+        assert findings[0].severity.value == "high"
+
+    def test_code_after_raise(self, trees):
+        t = trees.code("""\
+def foo():
+    raise ValueError("bad")
+    cleanup()
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 1
+        assert "after raise" in findings[0].message
+
+    def test_code_after_exhaustive_if_else(self, trees):
+        t = trees.code("""\
+def calculate(x):
+    if x > 0:
+        return x
+    else:
+        return -x
+    # Was the main path before refactoring
+    log(x)
+    notify(x)
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 1
+        assert "exhaustive if/else" in findings[0].message
+
+    def test_code_after_if_elif_else_all_returning(self, trees):
+        t = trees.code("""\
+def classify(x):
+    if x == "a":
+        return 1
+    elif x == "b":
+        return 2
+    else:
+        return 3
+    dead_code()
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 1
+
+    def test_no_finding_if_without_else(self, trees):
+        t = trees.code("""\
+def foo(x):
+    if x:
+        return 1
+    do_other_things()
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 0
+
+    def test_no_finding_if_only_one_branch_returns(self, trees):
+        t = trees.code("""\
+def foo(x):
+    if x > 0:
+        return x
+    else:
+        log(x)
+    process(x)
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 0
+
+    def test_no_finding_return_is_last_statement(self, trees):
+        t = trees.code("""\
+def foo():
+    x = compute()
+    return x
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 0
+
+    def test_no_finding_empty_function(self, trees):
+        t = trees.code("""\
+def foo():
+    pass
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 0
+
+    def test_nested_if_else_both_raise(self, trees):
+        t = trees.code("""\
+def validate(x):
+    if x is None:
+        raise ValueError("missing")
+    else:
+        if x < 0:
+            raise ValueError("negative")
+        else:
+            raise ValueError("unknown")
+    # Dead
+    return x
+""")
+        findings = check_unreachable_after_return(t)
+        assert len(findings) == 1
+
+
+class TestIsinstanceChain:
+    def test_finds_chain_of_five(self, trees):
+        t = trees.code("""\
+def process(x):
+    if isinstance(x, int):
+        return x + 1
+    elif isinstance(x, str):
+        return len(x)
+    elif isinstance(x, list):
+        return sum(x)
+    elif isinstance(x, dict):
+        return len(x)
+    elif isinstance(x, tuple):
+        return x[0]
+    return None
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 1
+        assert "5 isinstance()" in findings[0].message
+        assert "process()" in findings[0].message
+
+    def test_no_finding_four_checks(self, trees):
+        t = trees.code("""\
+def process(x):
+    if isinstance(x, int):
+        return x
+    elif isinstance(x, str):
+        return x
+    elif isinstance(x, list):
+        return x
+    elif isinstance(x, dict):
+        return x
+    return None
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 0
+
+    def test_separate_functions_counted_independently(self, trees):
+        t = trees.code("""\
+def foo(x):
+    if isinstance(x, int): pass
+    if isinstance(x, str): pass
+    if isinstance(x, list): pass
+
+def bar(x):
+    if isinstance(x, int): pass
+    if isinstance(x, str): pass
+    if isinstance(x, list): pass
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 0
+
+    def test_finds_high_count(self, trees):
+        t = trees.code("""\
+def flexible_add(a, b):
+    if isinstance(a, int) and isinstance(b, int):
+        return a + b
+    if isinstance(a, str) and isinstance(b, str):
+        return a + b
+    if isinstance(a, list) and isinstance(b, list):
+        return a + b
+    if isinstance(a, dict):
+        return a
+    if isinstance(b, dict):
+        return b
+    return None
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 1
+        assert "8 isinstance()" in findings[0].message
+
+
+class TestBooleanParamExplosion:
+    def test_finds_four_booleans(self, trees):
+        t = trees.code("""\
+def execute(task, data, use_hooks=True, use_retry=False,
+            validate_first=True, track_metrics=False):
+    pass
+""")
+        findings = check_boolean_param_explosion(t)
+        assert len(findings) == 1
+        assert "4 boolean parameters" in findings[0].message
+        assert "use_hooks" in findings[0].message
+
+    def test_no_finding_three_booleans(self, trees):
+        t = trees.code("""\
+def execute(task, data, use_hooks=True, use_retry=False, validate=True):
+    pass
+""")
+        findings = check_boolean_param_explosion(t)
+        assert len(findings) == 0
+
+    def test_counts_kwonly_booleans(self, trees):
+        t = trees.code("""\
+def execute(task, *, use_hooks=True, use_retry=False,
+            validate=True, track=False):
+    pass
+""")
+        findings = check_boolean_param_explosion(t)
+        assert len(findings) == 1
+
+    def test_ignores_non_boolean_defaults(self, trees):
+        t = trees.code("""\
+def execute(task, timeout=30, name="default", retries=3, verbose=True):
+    pass
+""")
+        findings = check_boolean_param_explosion(t)
+        assert len(findings) == 0
+
+    def test_mixed_positional_and_kwonly(self, trees):
+        t = trees.code("""\
+def execute(task, use_hooks=True, use_retry=False, *,
+            validate=True, track=False):
+    pass
+""")
+        findings = check_boolean_param_explosion(t)
+        assert len(findings) == 1
+        assert "4 boolean parameters" in findings[0].message
+
+
+class TestExceptionFlowControl:
+    def test_finds_found_it_pattern(self, trees):
+        t = trees.code("""\
+class FoundIt(Exception):
+    pass
+
+def search(data, target):
+    try:
+        for item in data:
+            if item == target:
+                raise FoundIt()
+    except FoundIt:
+        return True
+    return False
+""")
+        findings = check_exception_flow_control(t)
+        assert len(findings) == 1
+        assert "FoundIt" in findings[0].message
+        assert "search()" in findings[0].message
+
+    def test_finds_skip_item_pattern(self, trees):
+        t = trees.code("""\
+class SkipItem(Exception):
+    pass
+
+def process(items):
+    for item in items:
+        try:
+            if bad(item):
+                raise SkipItem()
+            do_work(item)
+        except SkipItem:
+            continue
+""")
+        findings = check_exception_flow_control(t)
+        assert len(findings) == 1
+
+    def test_finds_exception_defined_inside_function(self, trees):
+        t = trees.code("""\
+def search(data, target):
+    class FoundIt(Exception):
+        pass
+    try:
+        for item in data:
+            if item == target:
+                raise FoundIt()
+    except FoundIt:
+        return True
+    return False
+""")
+        findings = check_exception_flow_control(t)
+        assert len(findings) == 1
+
+    def test_no_finding_external_exception(self, trees):
+        """Exception not defined in same file — could be from called function."""
+        t = trees.code("""\
+def process(data):
+    try:
+        result = transform(data)
+    except ValueError:
+        return None
+""")
+        findings = check_exception_flow_control(t)
+        assert len(findings) == 0
+
+    def test_no_finding_different_try_except(self, trees):
+        """Exception raised in one try, caught in another — not flow control."""
+        t = trees.code("""\
+class AppError(Exception):
+    pass
+
+def outer():
+    try:
+        inner()
+    except AppError:
+        handle()
+
+def inner():
+    raise AppError()
+""")
+        findings = check_exception_flow_control(t)
+        assert len(findings) == 0
+
+    def test_no_finding_only_caught_not_raised(self, trees):
+        t = trees.code("""\
+class AppError(Exception):
+    pass
+
+def handler():
+    try:
+        external_call()
+    except AppError:
+        log_error()
+""")
+        findings = check_exception_flow_control(t)
+        assert len(findings) == 0
+
+    def test_no_finding_stdlib_exception(self, trees):
+        """Don't flag stdlib exceptions like ValueError — they come from external calls."""
+        t = trees.code("""\
+def parse(text):
+    try:
+        return int(text)
+    except ValueError:
+        return None
+""")
+        findings = check_exception_flow_control(t)
         assert len(findings) == 0
