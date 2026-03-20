@@ -36,15 +36,22 @@ CheckFn = Callable[["AnalysisContext"], list[Finding]]
 CHECKS: dict[str, CheckFn] = {}
 CHECK_SEVERITY: dict[str, Severity] = {}
 CHECK_DESCRIPTIONS: dict[str, str] = {}
+CHECK_CATEGORIES: dict[str, str] = {}
 
 
-def check(name: str, severity: Severity = Severity.MEDIUM, description: str = ""):
-    """Register a lint check function by name, severity, and description."""
+def check(
+    name: str,
+    severity: Severity = Severity.MEDIUM,
+    description: str = "",
+    category: str = "ast",
+):
+    """Register a lint check function by name, severity, description, and category."""
 
     def decorator(fn: CheckFn) -> CheckFn:
         CHECKS[name] = fn
         CHECK_SEVERITY[name] = severity
         CHECK_DESCRIPTIONS[name] = description
+        CHECK_CATEGORIES[name] = category
         return fn
 
     return decorator
