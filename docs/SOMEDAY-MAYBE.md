@@ -56,6 +56,17 @@ re-exports might serve external consumers outside the scanned codebase.
   conditionally assembling a dict through mutation. The signal would be: function has N if blocks that each do dict[key] 
   = ... or dict.update(...) on the same variable, with the dict passed to a single API call at the end. That's a pattern 
   that correlates strongly with "hard to read" and "should be decomposed."                                             
+## Framework method override detection
+
+Caller-aware checks (unused-defaults, constant-args, etc.) flag Django
+ModelAdmin method overrides like `get_form(self, request, obj=None)` where
+the signature is dictated by the framework and can't change. Could
+auto-detect methods on classes inheriting from known framework bases
+(ModelAdmin, View, Form, etc.) and suppress findings on overridden methods.
+The challenge is knowing which base classes to recognize — a hardcoded
+Django list would be fragile, and detecting "overrides a parent method"
+requires resolving the MRO which pysmelly doesn't currently do.
+
 ## review trivial-wrappers value
 
 After many rounds of suppression (decorated functions, subclass methods,
