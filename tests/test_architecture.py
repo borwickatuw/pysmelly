@@ -515,12 +515,31 @@ class App:
         findings = check_temporal_coupling(t)
         assert len(findings) >= 2
 
+    def test_skips_testcase_setup(self, trees):
+        """TestCase.setUp() is framework-guaranteed initialization."""
+        t = trees.code("""\
+from django.test import TestCase
+
+class MyTests(TestCase):
+    def setUp(self):
+        self.client = self.client_class()
+
+    def test_index(self):
+        response = self.client.get("/")
+
+    def test_about(self):
+        response = self.client.get("/about")
+""")
+        findings = check_temporal_coupling(t)
+        assert not any("client" in f.message for f in findings)
+
 
 class TestFeatureEnvy:
     def test_finds_envy(self, trees):
+        """Envy on second+ param (first param after self is excluded)."""
         t = trees.code("""\
 class Formatter:
-    def render(self, document):
+    def render(self, template, document):
         title = document.title
         body = document.body
         author = document.author
@@ -531,6 +550,20 @@ class Formatter:
         assert len(findings) == 1
         assert "document" in findings[0].message
         assert "Formatter.render()" in findings[0].message
+
+    def test_ignores_first_param_after_self(self, trees):
+        """First param is the method's subject — framework hooks pass it."""
+        t = trees.code("""\
+class Admin:
+    def formfield_for_foreignkey(self, db_field, request):
+        x = db_field.name
+        y = db_field.remote_field
+        z = db_field.related_model
+        w = db_field.formfield
+        return w
+""")
+        findings = check_feature_envy(t)
+        assert len(findings) == 0
 
     def test_ignores_balanced_access(self, trees):
         t = trees.code("""\
@@ -590,9 +623,10 @@ class TestFormatter:
         assert len(findings) == 0
 
     def test_message_identifies_envied_param(self, trees):
+        """Second param triggers envy, message names it."""
         t = trees.code("""\
 class Reporter:
-    def summarize(self, stats):
+    def summarize(self, topic, stats):
         return f"{stats.mean} {stats.median} {stats.mode} {stats.count}"
 """)
         findings = check_feature_envy(t)

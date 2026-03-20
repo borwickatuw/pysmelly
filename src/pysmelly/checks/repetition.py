@@ -556,6 +556,32 @@ COMMON_ATTRS = frozenset(
         "read",
         "write",
         "send",
+        # ORM/model field access (stable API, not design-level coupling)
+        "pk",
+        "id",
+        "slug",
+        "save",
+        "delete",
+        "filter",
+        "exclude",
+        "create",
+        "all",
+        "exists",
+        "first",
+        "last",
+        "order_by",
+        "select_related",
+        "prefetch_related",
+        "objects",
+        "queryset",
+        # Web framework (request/response/timezone — stable APIs)
+        "user",
+        "method",
+        "session",
+        "headers",
+        "now",
+        "filename",
+        "add_argument",
     }
 )
 

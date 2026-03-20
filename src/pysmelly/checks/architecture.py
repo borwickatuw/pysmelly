@@ -486,6 +486,21 @@ def _collect_self_attr_ops(
     return writes, reads
 
 
+_TEST_CASE_BASES = frozenset(
+    {"TestCase", "TransactionTestCase", "SimpleTestCase", "LiveServerTestCase"}
+)
+
+
+def _is_test_case_class(node: ast.ClassDef) -> bool:
+    """Check if a class inherits from TestCase or similar test base classes."""
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id in _TEST_CASE_BASES:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in _TEST_CASE_BASES:
+            return True
+    return False
+
+
 @check(
     "temporal-coupling",
     severity=Severity.MEDIUM,
@@ -518,6 +533,12 @@ def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
 
             writes, reads = _collect_self_attr_ops(node)
             init_writes = writes.get("__init__", set())
+
+            # TestCase subclasses: setUp/setUpClass are framework-guaranteed
+            # initialization — treat like __init__
+            if _is_test_case_class(node):
+                init_writes = init_writes | writes.get("setUp", set())
+                init_writes = init_writes | writes.get("setUpClass", set())
 
             for method_name, method_reads in reads.items():
                 for attr in method_reads:
@@ -590,11 +611,13 @@ def check_feature_envy(ctx: AnalysisContext) -> list[Finding]:
                 if _is_staticmethod_or_classmethod(item):
                     continue
 
-                # Get parameter names (excluding self/cls)
-                param_names: set[str] = set()
-                for arg in item.args.args:
-                    if arg.arg not in ("self", "cls"):
-                        param_names.add(arg.arg)
+                # Get parameter names (excluding self/cls and the first
+                # positional param — framework hooks pass the "subject"
+                # as the first arg, and operating on it is the purpose)
+                non_self_args = [
+                    a.arg for a in item.args.args if a.arg not in ("self", "cls")
+                ]
+                param_names: set[str] = set(non_self_args[1:]) if non_self_args else set()
 
                 if not param_names:
                     continue
