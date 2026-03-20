@@ -3,6 +3,7 @@
 from pysmelly.checks.callers import (
     check_constant_args,
     check_dead_code,
+    check_god_dict,
     check_inconsistent_error_handling,
     check_internal_only,
     check_pass_through_params,
@@ -1529,3 +1530,87 @@ def helper(data, unused):
         )
         findings = check_vestigial_params(t)
         assert len(findings) == 0
+
+
+class TestGodDict:
+    def test_finds_large_dict_return(self, trees):
+        t = trees.code("""\
+def get_user_data(user):
+    return {
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+    }
+""")
+        findings = check_god_dict(t)
+        assert len(findings) == 1
+        assert "get_user_data()" in findings[0].message
+        assert "4 string keys" in findings[0].message
+        assert "dataclass" in findings[0].message
+
+    def test_ignores_small_dict(self, trees):
+        t = trees.code("""\
+def get_info():
+    return {"name": "foo", "age": 42}
+""")
+        findings = check_god_dict(t)
+        assert len(findings) == 0
+
+    def test_ignores_non_string_keys(self, trees):
+        t = trees.code("""\
+def get_mapping():
+    return {1: "a", 2: "b", 3: "c", 4: "d"}
+""")
+        findings = check_god_dict(t)
+        assert len(findings) == 0
+
+    def test_cross_file_access(self, trees):
+        t = trees.files(
+            {
+                "models.py": """\
+def get_user_data(user):
+    return {
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+    }
+""",
+                "views.py": """\
+def show_user(user):
+    data = get_user_data(user)
+    print(data["name"])
+    print(data["email"])
+""",
+            }
+        )
+        findings = check_god_dict(t)
+        assert len(findings) == 1
+        assert "1 file" in findings[0].message
+
+    def test_skips_test_files(self, trees):
+        t = trees.files({"tests/test_data.py": """\
+def get_fixture():
+    return {"a": 1, "b": 2, "c": 3, "d": 4}
+"""})
+        findings = check_god_dict(t)
+        assert len(findings) == 0
+
+    def test_severity_is_medium(self, trees):
+        t = trees.code("""\
+def get_config():
+    return {"host": "h", "port": 80, "timeout": 30, "retries": 3}
+""")
+        findings = check_god_dict(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM
+
+    def test_lists_key_names(self, trees):
+        t = trees.code("""\
+def make_record():
+    return {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
+""")
+        findings = check_god_dict(t)
+        assert len(findings) == 1
+        assert "first" in findings[0].message

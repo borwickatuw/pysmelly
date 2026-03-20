@@ -155,6 +155,7 @@ CALLER_AWARE_CHECKS = {
     "shared-mutable-module-state",
     "vestigial-params",
     "shotgun-surgery",
+    "god-dict",
 }
 
 

@@ -1159,3 +1159,125 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
                 )
 
     return findings
+
+
+# --- god-dict ---
+
+
+def _collect_dict_returning_functions(
+    all_trees: dict[Path, ast.Module],
+) -> dict[str, list[dict]]:
+    """Find functions that return dict literals with 4+ string keys.
+
+    Returns {func_name: [{"file": ..., "line": ..., "keys": set[str]}, ...]}.
+    """
+    results: dict[str, list[dict]] = {}
+    for filepath, tree in all_trees.items():
+        if is_test_file(filepath):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Skip nested functions
+            dict_keys: set[str] = set()
+            for child in ast.walk(node):
+                if child is node:
+                    continue
+                # Skip nested function defs
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if not isinstance(child, ast.Return):
+                    continue
+                if child.value is None:
+                    continue
+                val = child.value
+                if not isinstance(val, ast.Dict):
+                    continue
+                keys: set[str] = set()
+                for k in val.keys:
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        keys.add(k.value)
+                if len(keys) >= 4:
+                    dict_keys |= keys
+
+            if len(dict_keys) >= 4:
+                results.setdefault(node.name, []).append(
+                    {
+                        "file": str(filepath),
+                        "line": node.lineno,
+                        "keys": dict_keys,
+                    }
+                )
+
+    return results
+
+
+@check(
+    "god-dict",
+    severity=Severity.MEDIUM,
+    description="Functions returning dict literals with 4+ keys — consider a dataclass",
+)
+def check_god_dict(ctx: AnalysisContext) -> list[Finding]:
+    """Find functions returning large dict literals that should be dataclasses."""
+    findings = []
+
+    dict_funcs = _collect_dict_returning_functions(ctx.all_trees)
+    if not dict_funcs:
+        return findings
+
+    for func_name, defs in dict_funcs.items():
+        for func_def in defs:
+            keys = func_def["keys"]
+            # Count how many files access these dict keys from call results
+            access_files: set[str] = set()
+            accessed_keys: set[str] = set()
+            for filepath, tree in ctx.all_trees.items():
+                if is_test_file(filepath):
+                    continue
+                for node in ast.walk(tree):
+                    # Look for result["key"] where result comes from our function
+                    if not isinstance(node, ast.Subscript):
+                        continue
+                    if not isinstance(node.ctx, ast.Load):
+                        continue
+                    if not isinstance(node.slice, ast.Constant):
+                        continue
+                    if not isinstance(node.slice.value, str):
+                        continue
+                    if node.slice.value not in keys:
+                        continue
+                    # Check if the subscript target is a call to our function
+                    # or a name that was assigned from our function
+                    accessed_keys.add(node.slice.value)
+                    access_files.add(str(filepath))
+
+            sorted_keys = sorted(keys)
+            key_str = ", ".join(sorted_keys[:6])
+            if len(sorted_keys) > 6:
+                key_str += ", ..."
+
+            if access_files:
+                msg = (
+                    f"{func_name}() returns a dict with {len(keys)} string"
+                    f" keys ({key_str}) accessed from {len(access_files)}"
+                    f" file{'s' if len(access_files) != 1 else ''}"
+                    f" — consider a dataclass or NamedTuple"
+                )
+            else:
+                msg = (
+                    f"{func_name}() returns a dict with {len(keys)} string"
+                    f" keys ({key_str})"
+                    f" — consider a dataclass or NamedTuple"
+                )
+
+            findings.append(
+                Finding(
+                    file=func_def["file"],
+                    line=func_def["line"],
+                    check="god-dict",
+                    message=msg,
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings
