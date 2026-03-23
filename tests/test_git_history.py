@@ -4,7 +4,14 @@ from unittest.mock import patch
 
 import pytest
 
-from pysmelly.git_history import GitHistory, _is_quality_message, _parse_window, classify_commit
+from pysmelly.git_history import (
+    GitHistory,
+    TimeSlice,
+    _is_quality_message,
+    _parse_window,
+    _window_to_days,
+    classify_commit,
+)
 
 
 class TestParseWindow:
@@ -299,6 +306,122 @@ class TestClassifyCommit:
 
     def test_empty_message(self):
         assert classify_commit("") == set()
+
+    def test_emergency_hotfix(self):
+        assert "emergency" in classify_commit("hotfix: patch auth crash")
+
+    def test_emergency_revert(self):
+        assert "emergency" in classify_commit("Revert 'Add new billing flow'")
+
+    def test_emergency_rollback(self):
+        assert "emergency" in classify_commit("rollback deploy to v2.3")
+
+    def test_emergency_cherry_pick(self):
+        assert "emergency" in classify_commit("cherry-pick fix from main")
+
+    def test_emergency_urgent(self):
+        assert "emergency" in classify_commit("urgent: fix production outage")
+
+
+class TestWindowToDays:
+    def test_days(self):
+        assert _window_to_days("90d") == 90
+
+    def test_months(self):
+        assert _window_to_days("6m") == 180
+
+    def test_years(self):
+        assert _window_to_days("1y") == 365
+
+    def test_invalid_fallback(self):
+        assert _window_to_days("invalid") == 180
+
+
+class TestAuthorParsing:
+    def test_author_in_commit_info(self, git_repo):
+        """Author is parsed from git log output."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        history = GitHistory(git_repo, window="6m")
+        assert len(history._commits) == 1
+        assert history._commits[0].author == "Test"
+
+    def test_authors_for_file_populated(self, git_repo):
+        """authors_for_file index is built from commits."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        (git_repo / "app.py").write_text("x = 2\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "fix: update")
+
+        history = GitHistory(git_repo, window="6m")
+        assert "app.py" in history.authors_for_file
+        assert history.authors_for_file["app.py"]["Test"] == 2
+
+
+class TestTimeSlices:
+    def test_time_slices_created(self, git_repo):
+        """Time slices are created from commits."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        history = GitHistory(git_repo, window="6m")
+        assert len(history.time_slices) >= 1
+        assert history.time_slices[0].commits  # at least one commit in a slice
+
+    def test_empty_repo_no_slices(self, git_repo):
+        """Empty repo produces no time slices."""
+        history = GitHistory(git_repo, window="6m")
+        assert history.time_slices == []
+
+    def test_commits_per_slice(self, git_repo):
+        """commits_per_slice is computed."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        history = GitHistory(git_repo, window="6m")
+        assert history.commits_per_slice >= 1.0
+
+    def test_is_coarse_grained_with_few_commits(self, git_repo):
+        """Single commit produces coarse-grained assessment."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        history = GitHistory(git_repo, window="6m")
+        # With 1 commit in 1 slice, commits_per_slice = 1.0 < 2.0
+        assert history.is_coarse_grained
+
+    def test_files_touched_populated(self, git_repo):
+        """Time slice files_touched includes committed files."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        history = GitHistory(git_repo, window="6m")
+        all_touched = set()
+        for ts in history.time_slices:
+            all_touched |= ts.files_touched
+        assert "app.py" in all_touched
+
+    def test_files_by_category_populated(self, git_repo):
+        """Time slice files_by_category includes categorized files."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: add module")
+
+        history = GitHistory(git_repo, window="6m")
+        found_feature = False
+        for ts in history.time_slices:
+            if "feature" in ts.files_by_category and "app.py" in ts.files_by_category["feature"]:
+                found_feature = True
+        assert found_feature
 
 
 def _git(cwd, *args):

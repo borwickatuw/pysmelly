@@ -15,12 +15,18 @@ from pysmelly.checks.history import (
     check_churn_without_growth,
     check_conscious_debt,
     check_divergent_change,
+    check_emergency_hotspots,
+    check_fix_follows_feature,
     check_fix_propagation,
     check_growth_trajectory,
+    check_hotspot_acceleration,
+    check_knowledge_silo,
+    check_no_refactoring,
+    check_stabilization_failure,
     check_yo_yo_code,
 )
 from pysmelly.context import AnalysisContext
-from pysmelly.git_history import CommitInfo, FileStats, GitHistory
+from pysmelly.git_history import CommitInfo, FileStats, GitHistory, TimeSlice
 
 
 def _make_ctx(
@@ -29,6 +35,9 @@ def _make_ctx(
     commits: list[CommitInfo] | None = None,
     file_stats: dict[str, FileStats] | None = None,
     message_quality: float = 0.5,
+    authors_for_file: dict[str, dict[str, int]] | None = None,
+    time_slices: list[TimeSlice] | None = None,
+    commits_per_slice: float | None = None,
 ) -> AnalysisContext:
     """Build an AnalysisContext with a mocked git_history."""
     all_trees = {Path(name): ast.parse(code) for name, code in files.items()}
@@ -44,12 +53,24 @@ def _make_ctx(
     history._commits = commits or []
     history._numstat_parsed = True
     history._file_stats = file_stats or {}
+    history.authors_for_file = authors_for_file or {}
+    history._time_slices = time_slices
+    history._commits_per_slice = commits_per_slice
 
     # Build commits_for_file from commits
     if commits:
         for commit in commits:
             for filepath in commit.files:
                 history.commits_for_file.setdefault(filepath, []).append(commit)
+
+    # Build authors_for_file from commits if not provided
+    if not authors_for_file and commits:
+        history.authors_for_file = {}
+        for commit in commits:
+            if commit.author:
+                for filepath in commit.files:
+                    author_counts = history.authors_for_file.setdefault(filepath, {})
+                    author_counts[commit.author] = author_counts.get(commit.author, 0) + 1
 
     ctx._git_history = history
     ctx._git_history_computed = True
@@ -1075,3 +1096,680 @@ class TestDivergentChange:
     def test_no_git_history(self):
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_divergent_change(ctx) == []
+
+
+# --- knowledge-silo tests ---
+
+
+class TestKnowledgeSilo:
+    def test_dominant_author(self):
+        """One author with >= 80% of commits -> finding."""
+        files = {"services/billing.py": "x = 1"}
+        authors = {"services/billing.py": {"Alice": 8, "Bob": 2}}
+        ctx = _make_ctx(files, authors_for_file=authors)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 1
+        assert "Alice" in findings[0].message
+        assert "bus-factor" in findings[0].message
+
+    def test_shared_ownership_no_finding(self):
+        """Multiple authors with no dominant one -> no finding."""
+        files = {"app.py": "x = 1"}
+        authors = {"app.py": {"Alice": 4, "Bob": 3, "Charlie": 3}}
+        ctx = _make_ctx(files, authors_for_file=authors)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 5 commits -> no finding."""
+        files = {"app.py": "x = 1"}
+        authors = {"app.py": {"Alice": 4}}
+        ctx = _make_ctx(files, authors_for_file=authors)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        files = {"test_billing.py": "x = 1"}
+        authors = {"test_billing.py": {"Alice": 10}}
+        ctx = _make_ctx(files, authors_for_file=authors)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_knowledge_silo(ctx) == []
+
+    def test_dominance_exactly_80_percent(self):
+        """Dominance at exactly 80% threshold -> finding."""
+        files = {"app.py": "x = 1"}
+        authors = {"app.py": {"Alice": 8, "Bob": 2}}
+        ctx = _make_ctx(files, authors_for_file=authors)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 1
+
+    def test_dominance_below_threshold(self):
+        """Dominance at 79% -> no finding."""
+        files = {"app.py": "x = 1"}
+        # 79/100 = 0.79, below 0.8
+        authors = {"app.py": {"Alice": 79, "Bob": 21}}
+        ctx = _make_ctx(files, authors_for_file=authors)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 0
+
+
+# --- emergency-hotspots tests ---
+
+
+def _emergency_commits(filepath: str, count: int) -> list[CommitInfo]:
+    """Create emergency/hotfix commits touching a file."""
+    return [
+        CommitInfo(
+            hash=f"emrg{i:04d}",
+            date=_RECENT - timedelta(days=i),
+            message=f"hotfix: urgent fix #{i}",
+            files=[filepath],
+        )
+        for i in range(count)
+    ]
+
+
+class TestEmergencyHotspots:
+    def test_high_emergency_ratio(self):
+        """File with >= 30% emergency commits and >= 3 -> finding."""
+        files = {"services/payment.py": "x = 1", "other/safe.py": "y = 2"}
+        # payment.py: 4 emergency + 5 feat = 9 commits, 44% emergency
+        # safe.py: 10 feat commits (dilutes project-wide emergency rate)
+        # project total: 4 emergency / 19 = 21% < 30% -> check runs
+        commits = (
+            _emergency_commits("services/payment.py", 4)
+            + _feat_commits("services/payment.py", 5)
+            + _feat_commits("other/safe.py", 10)
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_emergency_hotspots(ctx)
+        assert len(findings) == 1
+        assert "emergency" in findings[0].check
+        assert "emergency/hotfix" in findings[0].message
+
+    def test_low_emergency_ratio_no_finding(self):
+        """File with < 30% emergency commits -> no finding."""
+        files = {"app.py": "x = 1"}
+        commits = _emergency_commits("app.py", 2) + _feat_commits("app.py", 10)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_emergency_hotspots(ctx)
+        assert len(findings) == 0
+
+    def test_few_emergency_commits(self):
+        """File with < 3 emergency commits -> no finding."""
+        files = {"app.py": "x = 1"}
+        commits = _emergency_commits("app.py", 2)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_emergency_hotspots(ctx)
+        assert len(findings) == 0
+
+    def test_project_wide_high_emergency_suppressed(self):
+        """If project emergency rate > 30%, suppress all findings."""
+        files = {"app.py": "x = 1"}
+        # All commits are emergencies — project-wide rate is 100%
+        commits = _emergency_commits("app.py", 5)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_emergency_hotspots(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_emergency_hotspots(ctx) == []
+
+
+# --- no-refactoring tests ---
+
+
+class TestNoRefactoring:
+    def test_no_refactoring_detected(self):
+        """File with many fixes/features but zero refactoring -> finding."""
+        files = {"models/user.py": _make_large_file(100)}
+        commits = _fix_commits("models/user.py", 5) + _feat_commits("models/user.py", 5)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 1
+        assert "zero refactoring" in findings[0].message
+
+    def test_has_refactoring_no_finding(self):
+        """File with some refactoring -> no finding."""
+        files = {"app.py": _make_large_file(100)}
+        commits = (
+            _fix_commits("app.py", 5)
+            + _feat_commits("app.py", 3)
+            + [
+                CommitInfo(
+                    hash="refac001",
+                    date=_RECENT,
+                    message="refactor: simplify logic",
+                    files=["app.py"],
+                )
+            ]
+        )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 8 commits -> no finding."""
+        files = {"app.py": _make_large_file(100)}
+        commits = _fix_commits("app.py", 4) + _feat_commits("app.py", 3)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 0
+
+    def test_few_fix_feature_skipped(self):
+        """File with < 6 fix+feature commits -> no finding."""
+        files = {"app.py": _make_large_file(100)}
+        commits = (
+            _fix_commits("app.py", 2)
+            + _feat_commits("app.py", 2)
+            + [
+                CommitInfo(
+                    hash=f"misc{i:04d}",
+                    date=_RECENT - timedelta(days=i),
+                    message=f"chore: cleanup #{i}",
+                    files=["app.py"],
+                )
+                for i in range(6)
+            ]
+        )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 0
+
+    def test_small_file_skipped(self):
+        """File < 50 lines -> no finding."""
+        files = {"small.py": _make_large_file(30)}
+        commits = _fix_commits("small.py", 5) + _feat_commits("small.py", 5)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        files = {"test_user.py": _make_large_file(100)}
+        commits = _fix_commits("test_user.py", 5) + _feat_commits("test_user.py", 5)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 0
+
+    def test_low_message_quality_skipped(self):
+        """Low message quality -> semantic checks skip."""
+        files = {"app.py": _make_large_file(100)}
+        commits = _fix_commits("app.py", 5) + _feat_commits("app.py", 5)
+        ctx = _make_ctx(files, commits=commits, message_quality=0.3)
+        findings = check_no_refactoring(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_no_refactoring(ctx) == []
+
+
+# --- Time-slice based check helpers ---
+
+
+def _make_time_slices(
+    file_str: str,
+    pattern: list[str],
+    period_days: int = 14,
+) -> list[TimeSlice]:
+    """Create time slices with specified activity pattern.
+
+    pattern is a list of strings like "feature", "fix", "both", "active", "inactive".
+    """
+    from pysmelly.git_history import classify_commit
+
+    slices = []
+    base = _NOW - timedelta(days=len(pattern) * period_days)
+    for i, kind in enumerate(pattern):
+        start = base + timedelta(days=i * period_days)
+        end = start + timedelta(days=period_days)
+        ts = TimeSlice(start=start, end=end)
+        if kind == "inactive":
+            pass
+        elif kind == "feature":
+            c = CommitInfo(
+                hash=f"feat_s{i:04d}",
+                date=start + timedelta(days=1),
+                message=f"feat: feature in slice {i}",
+                files=[file_str],
+            )
+            ts.commits.append(c)
+            ts.files_touched.add(file_str)
+            ts.files_by_category.setdefault("feature", set()).add(file_str)
+        elif kind == "fix":
+            c = CommitInfo(
+                hash=f"fix_s{i:04d}",
+                date=start + timedelta(days=1),
+                message=f"fix: fix in slice {i}",
+                files=[file_str],
+            )
+            ts.commits.append(c)
+            ts.files_touched.add(file_str)
+            ts.files_by_category.setdefault("fix", set()).add(file_str)
+        elif kind == "both":
+            c1 = CommitInfo(
+                hash=f"feat_s{i:04d}",
+                date=start + timedelta(days=1),
+                message=f"feat: feature in slice {i}",
+                files=[file_str],
+            )
+            c2 = CommitInfo(
+                hash=f"fix_s{i:04d}",
+                date=start + timedelta(days=2),
+                message=f"fix: fix in slice {i}",
+                files=[file_str],
+            )
+            ts.commits.extend([c1, c2])
+            ts.files_touched.add(file_str)
+            ts.files_by_category.setdefault("feature", set()).add(file_str)
+            ts.files_by_category.setdefault("fix", set()).add(file_str)
+        elif kind == "active":
+            c = CommitInfo(
+                hash=f"act_s{i:04d}",
+                date=start + timedelta(days=1),
+                message=f"chore: work in slice {i}",
+                files=[file_str],
+            )
+            ts.commits.append(c)
+            ts.files_touched.add(file_str)
+        slices.append(ts)
+
+    return slices
+
+
+def _commits_from_slices(slices: list[TimeSlice]) -> list[CommitInfo]:
+    """Extract all commits from time slices."""
+    commits = []
+    for ts in slices:
+        commits.extend(ts.commits)
+    return commits
+
+
+# --- fix-follows-feature tests ---
+
+
+class TestFixFollowsFeature:
+    def test_feature_then_fix_pattern(self):
+        """Feature slices followed by fix slices -> finding."""
+        pattern = [
+            "feature",
+            "fix",  # pair 1
+            "feature",
+            "fix",  # pair 2
+            "feature",
+            "fix",  # pair 3
+            "inactive",
+            "inactive",
+        ]
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=1.0,
+            time_slices=slices,
+            commits_per_slice=3.0,
+        )
+        findings = check_fix_follows_feature(ctx)
+        assert len(findings) == 1
+        assert "feature→fix" in findings[0].message
+
+    def test_fewer_than_3_pairs_no_finding(self):
+        """Only 2 feature->fix pairs -> no finding."""
+        pattern = [
+            "feature",
+            "fix",  # pair 1
+            "feature",
+            "fix",  # pair 2
+            "inactive",
+            "inactive",
+            "inactive",
+            "inactive",
+        ]
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=1.0,
+            time_slices=slices,
+            commits_per_slice=3.0,
+        )
+        findings = check_fix_follows_feature(ctx)
+        assert len(findings) == 0
+
+    def test_coarse_grained_skipped(self):
+        """Coarse-grained history -> skip."""
+        pattern = ["feature", "fix"] * 4
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=1.0,
+            time_slices=slices,
+            commits_per_slice=1.0,  # coarse
+        )
+        findings = check_fix_follows_feature(ctx)
+        assert len(findings) == 0
+
+    def test_low_message_quality_skipped(self):
+        """Low message quality -> skip."""
+        pattern = ["feature", "fix"] * 4
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.3,
+            time_slices=slices,
+            commits_per_slice=3.0,
+        )
+        findings = check_fix_follows_feature(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        pattern = ["feature", "fix"] * 4
+        slices = _make_time_slices("test_app.py", pattern)
+        commits = _commits_from_slices(slices)
+        files = {"test_app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=1.0,
+            time_slices=slices,
+            commits_per_slice=3.0,
+        )
+        findings = check_fix_follows_feature(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_fix_follows_feature(ctx) == []
+
+
+# --- stabilization-failure tests ---
+
+
+class TestStabilizationFailure:
+    def test_repeated_bursts(self):
+        """File with 3+ bursts separated by gaps -> finding."""
+        # burst1(2 active), gap(3 inactive), burst2(2), gap(3), burst3(2), gap(3)
+        pattern = (
+            ["active", "active"]
+            + ["inactive"] * 3
+            + ["active", "active"]
+            + ["inactive"] * 3
+            + ["active", "active"]
+            + ["inactive"] * 3
+        )
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        # Need >= 8 total commits — each active slice has 1, so 6 total
+        # Add more commits to the active slices
+        extra = [
+            CommitInfo(
+                hash=f"extra{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"fix: extra fix #{i}",
+                files=["app.py"],
+            )
+            for i in range(4)
+        ]
+        commits.extend(extra)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_stabilization_failure(ctx)
+        assert len(findings) == 1
+        assert "bursts" in findings[0].message
+
+    def test_no_gaps_no_finding(self):
+        """Continuous activity with no gaps -> no finding."""
+        pattern = ["active"] * 12
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_stabilization_failure(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 8 commits -> no finding."""
+        pattern = (
+            ["active", "active"]
+            + ["inactive"] * 3
+            + ["active", "active"]
+            + ["inactive"] * 3
+            + ["active", "active"]
+            + ["inactive"] * 3
+        )
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        # Only 6 commits from slices, which is < 8
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_stabilization_failure(ctx)
+        assert len(findings) == 0
+
+    def test_too_few_slices(self):
+        """Fewer than 6 slices -> no finding."""
+        pattern = ["active", "active", "inactive", "active", "active"]
+        slices = _make_time_slices("app.py", pattern)
+        commits = _commits_from_slices(slices)
+        extra = [
+            CommitInfo(
+                hash=f"extra{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"fix: #{i}",
+                files=["app.py"],
+            )
+            for i in range(5)
+        ]
+        commits.extend(extra)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_stabilization_failure(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_stabilization_failure(ctx) == []
+
+
+# --- hotspot-acceleration tests ---
+
+
+class TestHotspotAcceleration:
+    def test_accelerating_hotspot(self):
+        """Second half has 2x+ more activity -> finding."""
+        # First half: 1 commit per slice; second half: 3 per slice
+        slices = []
+        base = _NOW - timedelta(days=8 * 14)
+        for i in range(8):
+            start = base + timedelta(days=i * 14)
+            end = start + timedelta(days=14)
+            ts = TimeSlice(start=start, end=end)
+            n = 1 if i < 4 else 3
+            for j in range(n):
+                c = CommitInfo(
+                    hash=f"c_{i}_{j}",
+                    date=start + timedelta(days=j + 1),
+                    message=f"feat: work {i}/{j}",
+                    files=["services/api.py"],
+                )
+                ts.commits.append(c)
+                ts.files_touched.add("services/api.py")
+            slices.append(ts)
+        commits = _commits_from_slices(slices)
+        files = {"services/api.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_hotspot_acceleration(ctx)
+        assert len(findings) == 1
+        assert "accelerating" in findings[0].message
+
+    def test_steady_rate_no_finding(self):
+        """Constant commit rate -> no finding."""
+        slices = []
+        base = _NOW - timedelta(days=8 * 14)
+        for i in range(8):
+            start = base + timedelta(days=i * 14)
+            end = start + timedelta(days=14)
+            ts = TimeSlice(start=start, end=end)
+            for j in range(2):
+                c = CommitInfo(
+                    hash=f"c_{i}_{j}",
+                    date=start + timedelta(days=j + 1),
+                    message=f"feat: work {i}/{j}",
+                    files=["app.py"],
+                )
+                ts.commits.append(c)
+                ts.files_touched.add("app.py")
+            slices.append(ts)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_hotspot_acceleration(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 5 commits -> no finding."""
+        slices = []
+        base = _NOW - timedelta(days=4 * 14)
+        for i in range(4):
+            start = base + timedelta(days=i * 14)
+            end = start + timedelta(days=14)
+            ts = TimeSlice(start=start, end=end)
+            if i >= 2:
+                c = CommitInfo(
+                    hash=f"c_{i}",
+                    date=start + timedelta(days=1),
+                    message=f"feat: work {i}",
+                    files=["app.py"],
+                )
+                ts.commits.append(c)
+                ts.files_touched.add("app.py")
+            slices.append(ts)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_hotspot_acceleration(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        slices = []
+        base = _NOW - timedelta(days=8 * 14)
+        for i in range(8):
+            start = base + timedelta(days=i * 14)
+            end = start + timedelta(days=14)
+            ts = TimeSlice(start=start, end=end)
+            n = 1 if i < 4 else 4
+            for j in range(n):
+                c = CommitInfo(
+                    hash=f"c_{i}_{j}",
+                    date=start + timedelta(days=j + 1),
+                    message=f"feat: work {i}/{j}",
+                    files=["test_api.py"],
+                )
+                ts.commits.append(c)
+                ts.files_touched.add("test_api.py")
+            slices.append(ts)
+        commits = _commits_from_slices(slices)
+        files = {"test_api.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_hotspot_acceleration(ctx)
+        assert len(findings) == 0
+
+    def test_too_few_slices(self):
+        """Fewer than 4 slices -> no finding."""
+        slices = []
+        base = _NOW - timedelta(days=3 * 14)
+        for i in range(3):
+            start = base + timedelta(days=i * 14)
+            end = start + timedelta(days=14)
+            ts = TimeSlice(start=start, end=end)
+            for j in range(3):
+                c = CommitInfo(
+                    hash=f"c_{i}_{j}",
+                    date=start + timedelta(days=j + 1),
+                    message=f"feat: work {i}/{j}",
+                    files=["app.py"],
+                )
+                ts.commits.append(c)
+                ts.files_touched.add("app.py")
+            slices.append(ts)
+        commits = _commits_from_slices(slices)
+        files = {"app.py": _make_large_file(100)}
+        ctx = _make_ctx(
+            files,
+            commits=commits,
+            message_quality=0.5,
+            time_slices=slices,
+            commits_per_slice=2.0,
+        )
+        findings = check_hotspot_acceleration(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_hotspot_acceleration(ctx) == []

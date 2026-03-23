@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from statistics import median
 
 
 @dataclass
@@ -50,6 +51,10 @@ _DEBT_WORDS = re.compile(
     r"\b(workaround|hack|temporary|todo|fixme|quick\s*fix|stopgap|kludge)\b",
     re.IGNORECASE,
 )
+_EMERGENCY_WORDS = re.compile(
+    r"\b(hotfix|urgent|emergency|revert|rollback|cherry.?pick)\b",
+    re.IGNORECASE,
+)
 
 # Conventional commit prefix → category
 _PREFIX_CATEGORIES = {
@@ -85,6 +90,8 @@ def classify_commit(message: str) -> set[str]:
         categories.add("refactor")
     if _DEBT_WORDS.search(message):
         categories.add("debt")
+    if _EMERGENCY_WORDS.search(message):
+        categories.add("emergency")
 
     return categories
 
@@ -135,7 +142,32 @@ class CommitInfo:
     hash: str
     date: datetime
     message: str
+    author: str = ""
     files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TimeSlice:
+    """A uniform time period within the analysis window."""
+
+    start: datetime
+    end: datetime
+    commits: list[CommitInfo] = field(default_factory=list)
+    files_touched: set[str] = field(default_factory=set)
+    files_by_category: dict[str, set[str]] = field(default_factory=dict)
+
+
+def _window_to_days(window: str) -> int:
+    """Convert compact window format to approximate number of days."""
+    match = _WINDOW_RE.match(window)
+    if not match:
+        return 180  # fallback
+    amount, unit = int(match.group(1)), match.group(2)
+    if unit == "d":
+        return amount
+    if unit == "m":
+        return amount * 30
+    return amount * 365  # years
 
 
 class GitHistory:
@@ -157,6 +189,9 @@ class GitHistory:
         self._message_quality: float | None = None
         self._numstat_parsed: bool = False
         self._file_stats: dict[str, FileStats] = {}
+        self.authors_for_file: dict[str, dict[str, int]] = {}
+        self._time_slices: list[TimeSlice] | None = None
+        self._commits_per_slice: float | None = None
         self._parse()
 
     def _parse(self) -> None:
@@ -175,7 +210,7 @@ class GitHistory:
                 [
                     "git",
                     "log",
-                    "--format=%H%x00%aI%x00%s",
+                    "--format=%H%x00%aI%x00%an%x00%s",
                     "--name-only",
                     "--no-merges",
                     f"--since={since}",
@@ -203,14 +238,16 @@ class GitHistory:
                 continue
             if "\x00" in line:
                 # This is a commit header line
-                parts = line.split("\x00", 2)
-                if len(parts) == 3:
-                    commit_hash, date_str, message = parts
+                parts = line.split("\x00", 3)
+                if len(parts) == 4:
+                    commit_hash, date_str, author, message = parts
                     try:
                         date = datetime.fromisoformat(date_str)
                     except ValueError:
                         continue
-                    current_commit = CommitInfo(hash=commit_hash, date=date, message=message)
+                    current_commit = CommitInfo(
+                        hash=commit_hash, date=date, message=message, author=author
+                    )
                     self._commits.append(current_commit)
             elif current_commit is not None:
                 # This is a filename line
@@ -225,6 +262,10 @@ class GitHistory:
                 existing = self.last_modified.get(filepath)
                 if existing is None or commit.date > existing:
                     self.last_modified[filepath] = commit.date
+                # Track author contributions per file
+                if commit.author:
+                    author_counts = self.authors_for_file.setdefault(filepath, {})
+                    author_counts[commit.author] = author_counts.get(commit.author, 0) + 1
 
         self._parse_reviewed(since)
 
@@ -383,3 +424,80 @@ class GitHistory:
         # Flush last commit
         for filepath in current_commit_files:
             self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+
+    @property
+    def time_slices(self) -> list[TimeSlice]:
+        """Uniform time periods dividing the analysis window."""
+        if self._time_slices is None:
+            self._build_time_slices()
+        return self._time_slices  # type: ignore[return-value]
+
+    @property
+    def commits_per_slice(self) -> float:
+        """Median commits per active time slice."""
+        if self._commits_per_slice is None:
+            # Trigger build if needed
+            _ = self.time_slices
+        return self._commits_per_slice or 0.0
+
+    @property
+    def is_coarse_grained(self) -> bool:
+        """True if commit granularity is too coarse for sequence checks."""
+        return self.commits_per_slice < 2.0
+
+    def _build_time_slices(self) -> None:
+        """Divide the analysis window into uniform time periods."""
+        self._time_slices = []
+        self._commits_per_slice = 0.0
+
+        if not self._commits:
+            return
+
+        # Determine period from window string
+        total_days = _window_to_days(self.window)
+        period_days = max(7, total_days // 26)
+        # Round to whole weeks
+        period_days = max(7, (period_days // 7) * 7)
+        period = timedelta(days=period_days)
+
+        # Use the actual commit date range
+        dates = [c.date for c in self._commits]
+        earliest = min(dates)
+        latest = max(dates)
+
+        # Build slices from earliest to latest
+        slice_start = earliest
+        while slice_start <= latest:
+            slice_end = slice_start + period
+            self._time_slices.append(TimeSlice(start=slice_start, end=slice_end))
+            slice_start = slice_end
+
+        # Assign commits to slices
+        for commit in self._commits:
+            for ts in self._time_slices:
+                if ts.start <= commit.date < ts.end:
+                    ts.commits.append(commit)
+                    for filepath in commit.files:
+                        ts.files_touched.add(filepath)
+                    categories = classify_commit(commit.message)
+                    for cat in categories:
+                        ts.files_by_category.setdefault(cat, set())
+                        for filepath in commit.files:
+                            ts.files_by_category[cat].add(filepath)
+                    break
+            else:
+                # Commit falls on or after the last slice end — add to last slice
+                if self._time_slices:
+                    last = self._time_slices[-1]
+                    last.commits.append(commit)
+                    for filepath in commit.files:
+                        last.files_touched.add(filepath)
+                    categories = classify_commit(commit.message)
+                    for cat in categories:
+                        last.files_by_category.setdefault(cat, set())
+                        for filepath in commit.files:
+                            last.files_by_category[cat].add(filepath)
+
+        # Compute median commits per active slice
+        active_counts = [len(ts.commits) for ts in self._time_slices if ts.commits]
+        self._commits_per_slice = median(active_counts) if active_counts else 0.0

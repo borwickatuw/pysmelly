@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import median
 
 from pysmelly.context import AnalysisContext
-from pysmelly.git_history import GitHistory, classify_commit
+from pysmelly.git_history import GitHistory, TimeSlice, classify_commit
 from pysmelly.registry import Finding, Severity, check
 
 _MIN_MESSAGE_QUALITY = 0.5
@@ -720,3 +720,384 @@ def _extract_scope(message: str) -> str | None:
     if paren_open != -1 and paren_close > paren_open:
         return prefix[paren_open + 1 : paren_close].strip().lower()
     return None
+
+
+# --- Phase 10e-f checks ---
+
+
+@check(
+    "knowledge-silo",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="Files where one author dominates all changes — bus-factor risk",
+)
+def check_knowledge_silo(ctx: AnalysisContext) -> list[Finding]:
+    history = ctx.git_history
+    if history is None:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+
+        authors = history.authors_for_file.get(file_str)
+        if not authors:
+            continue
+
+        total = sum(authors.values())
+        if total < 5:
+            continue
+
+        max_author = max(authors, key=authors.get)  # type: ignore[arg-type]
+        max_count = authors[max_author]
+        dominance = max_count / total
+
+        if dominance < 0.8:
+            continue
+
+        pct = int(dominance * 100)
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="knowledge-silo",
+                message=(
+                    f"{file_str} — {max_author} authored {max_count} of "
+                    f"{total} commits ({pct}%) — bus-factor risk, "
+                    f"consider knowledge sharing"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "emergency-hotspots",
+    severity=Severity.LOW,
+    category="git-history",
+    description="Files that attract disproportionate emergency/hotfix activity",
+)
+def check_emergency_hotspots(ctx: AnalysisContext) -> list[Finding]:
+    history = ctx.git_history
+    if history is None:
+        return []
+
+    # Compute project-wide emergency rate to skip if globally high
+    total_commits = len(history._commits)
+    if total_commits == 0:
+        return []
+    total_emergency = sum(1 for c in history._commits if "emergency" in classify_commit(c.message))
+    project_rate = total_emergency / total_commits
+    if project_rate > 0.3:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        commits = history.commits_for_file.get(file_str, [])
+        if not commits:
+            continue
+
+        emergency_count = sum(1 for c in commits if "emergency" in classify_commit(c.message))
+        if emergency_count < 3:
+            continue
+
+        emergency_ratio = emergency_count / len(commits)
+        if emergency_ratio < 0.3:
+            continue
+
+        pct = int(emergency_ratio * 100)
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="emergency-hotspots",
+                message=(
+                    f"{file_str} — {emergency_count} of {len(commits)} commits "
+                    f"({pct}%) are emergency/hotfix changes — fragile code "
+                    f"that breaks under pressure"
+                ),
+                severity=Severity.LOW,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "no-refactoring",
+    severity=Severity.LOW,
+    category="git-history",
+    description="Files with heavy fix/feature activity but zero refactoring",
+)
+def check_no_refactoring(ctx: AnalysisContext) -> list[Finding]:
+    history = _semantic_guard(ctx.git_history)
+    if history is None:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+
+        current_lines = _get_line_count(file_str, ctx.all_trees)
+        if current_lines < 50:
+            continue
+
+        commits = history.commits_for_file.get(file_str, [])
+        if len(commits) < 8:
+            continue
+
+        fix_count = 0
+        feature_count = 0
+        refactor_count = 0
+        for c in commits:
+            cats = classify_commit(c.message)
+            if "fix" in cats:
+                fix_count += 1
+            if "feature" in cats:
+                feature_count += 1
+            if "refactor" in cats:
+                refactor_count += 1
+
+        if refactor_count > 0:
+            continue
+        if (fix_count + feature_count) < 6:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="no-refactoring",
+                message=(
+                    f"{file_str} — {len(commits)} commits "
+                    f"({fix_count} fixes, {feature_count} features) but "
+                    f"zero refactoring — accumulated complexity likely "
+                    f"needs cleanup"
+                ),
+                severity=Severity.LOW,
+            )
+        )
+
+    return findings
+
+
+# --- Time-slice based checks ---
+
+
+@check(
+    "fix-follows-feature",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="Features that reliably produce fix commits shortly after",
+)
+def check_fix_follows_feature(ctx: AnalysisContext) -> list[Finding]:
+    history = _semantic_guard(ctx.git_history)
+    if history is None:
+        return []
+    if history.is_coarse_grained:
+        return []
+
+    slices = history.time_slices
+    if len(slices) < 4:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+
+        # Find feature-then-fix pairs within 2 periods
+        pairs = 0
+        for i, ts in enumerate(slices):
+            feature_files = ts.files_by_category.get("feature", set())
+            if file_str not in feature_files:
+                continue
+            # Look ahead up to 2 slices for fix activity
+            for j in range(i + 1, min(i + 3, len(slices))):
+                fix_files = slices[j].files_by_category.get("fix", set())
+                if file_str in fix_files:
+                    pairs += 1
+                    break
+
+        if pairs < 3:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="fix-follows-feature",
+                message=(
+                    f"{file_str} — {pairs} feature→fix sequences in last "
+                    f"{history.window} — features are reliably followed "
+                    f"by fixes, consider more thorough testing or design review"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "stabilization-failure",
+    severity=Severity.LOW,
+    category="git-history",
+    description="Files that repeatedly burst with activity, go quiet, then burst again",
+)
+def check_stabilization_failure(ctx: AnalysisContext) -> list[Finding]:
+    history = ctx.git_history
+    if history is None:
+        return []
+
+    slices = history.time_slices
+    if len(slices) < 6:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        commits = history.commits_for_file.get(file_str, [])
+        if len(commits) < 8:
+            continue
+
+        # Mark which slices are active for this file
+        active = [file_str in ts.files_touched for ts in slices]
+
+        # Count bursts: 2+ consecutive active slices separated by 3+ inactive
+        bursts = 0
+        i = 0
+        while i < len(active):
+            # Find start of a burst (2+ active)
+            if active[i]:
+                burst_len = 0
+                while i < len(active) and active[i]:
+                    burst_len += 1
+                    i += 1
+                if burst_len >= 2:
+                    bursts += 1
+                    # Now look for gap (3+ inactive)
+                    gap_len = 0
+                    while i < len(active) and not active[i]:
+                        gap_len += 1
+                        i += 1
+                    if gap_len < 3:
+                        # Not a real gap — merge with next burst
+                        continue
+                else:
+                    i += 1
+            else:
+                i += 1
+
+        if bursts < 3:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="stabilization-failure",
+                message=(
+                    f"{file_str} — {bursts} activity bursts in last "
+                    f"{history.window} — code is repeatedly destabilized "
+                    f"rather than converging"
+                ),
+                severity=Severity.LOW,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "hotspot-acceleration",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="Files whose change frequency is increasing over time",
+)
+def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
+    history = ctx.git_history
+    if history is None:
+        return []
+
+    slices = history.time_slices
+    if len(slices) < 4:
+        return []
+
+    mid = len(slices) // 2
+    first_half = slices[:mid]
+    second_half = slices[mid:]
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+
+        commits = history.commits_for_file.get(file_str, [])
+        if len(commits) < 5:
+            continue
+
+        # Count commits per slice for this file
+        first_counts = []
+        for ts in first_half:
+            count = sum(1 for c in ts.commits if file_str in c.files)
+            first_counts.append(count)
+
+        second_counts = []
+        for ts in second_half:
+            count = sum(1 for c in ts.commits if file_str in c.files)
+            second_counts.append(count)
+
+        first_median = median(first_counts) if first_counts else 0
+        second_median = median(second_counts) if second_counts else 0
+
+        # Need meaningful activity in second half
+        second_total = sum(second_counts)
+        if second_total < 3:
+            continue
+
+        # Second half must be >= 2x first half
+        if first_median == 0:
+            # If first half was silent but second half is active, that's acceleration
+            if second_median < 2:
+                continue
+        elif second_median < first_median * 2:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="hotspot-acceleration",
+                message=(
+                    f"{file_str} — change frequency accelerating: "
+                    f"median {first_median:.0f}→{second_median:.0f} "
+                    f"commits per period in last {history.window} — "
+                    f"emerging hotspot"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
