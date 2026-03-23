@@ -406,6 +406,59 @@ def check_churn_without_growth(ctx: AnalysisContext) -> list[Finding]:
     return findings
 
 
+@check(
+    "yo-yo-code",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="High gross churn — code being written, deleted, rewritten repeatedly",
+)
+def check_yo_yo_code(ctx: AnalysisContext) -> list[Finding]:
+    history = ctx.git_history
+    if history is None:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+
+        current_lines = _get_line_count(file_str, ctx.all_trees)
+        if current_lines < 100:
+            continue
+
+        stats = history.file_stats.get(file_str)
+        if stats is None:
+            continue
+
+        if stats.commit_count < 5:
+            continue
+
+        gross_churn = stats.total_insertions + stats.total_deletions
+        churn_ratio = gross_churn / current_lines
+        if churn_ratio < 3.0:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="yo-yo-code",
+                message=(
+                    f"{file_str} — {gross_churn} lines churned across "
+                    f"{current_lines} lines of code ({churn_ratio:.1f}x "
+                    f"turnover) in last {history.window} — abstractions "
+                    f"are being reworked repeatedly"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
 # --- Semantic checks (Tier 2 — require structured commit messages) ---
 
 

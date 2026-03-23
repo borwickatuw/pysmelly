@@ -17,6 +17,7 @@ from pysmelly.checks.history import (
     check_divergent_change,
     check_fix_propagation,
     check_growth_trajectory,
+    check_yo_yo_code,
 )
 from pysmelly.context import AnalysisContext
 from pysmelly.git_history import CommitInfo, FileStats, GitHistory
@@ -663,6 +664,86 @@ class TestChurnWithoutGrowth:
         """No git_history -> empty."""
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_churn_without_growth(ctx) == []
+
+
+# --- yo-yo-code tests ---
+
+
+class TestYoYoCode:
+    def test_high_gross_churn(self):
+        """File with gross churn >= 3x its size -> finding."""
+        files = {"utils/parser.py": _make_large_file(200)}
+        file_stats = {
+            # 350 ins + 340 del = 690 gross, 690/200 = 3.45x
+            "utils/parser.py": FileStats(total_insertions=350, total_deletions=340, commit_count=12)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_yo_yo_code(ctx)
+        assert len(findings) == 1
+        assert "3.5x turnover" in findings[0].message
+        assert "yo-yo-code" == findings[0].check
+
+    def test_low_gross_churn_no_finding(self):
+        """File with gross churn < 3x -> no finding."""
+        files = {"app.py": _make_large_file(200)}
+        file_stats = {
+            # 200 ins + 100 del = 300 gross, 300/200 = 1.5x
+            "app.py": FileStats(total_insertions=200, total_deletions=100, commit_count=10)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_yo_yo_code(ctx)
+        assert len(findings) == 0
+
+    def test_small_file_skipped(self):
+        """File < 100 lines -> no finding."""
+        files = {"tiny.py": _make_large_file(50)}
+        file_stats = {
+            "tiny.py": FileStats(total_insertions=200, total_deletions=200, commit_count=10)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_yo_yo_code(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 5 commits -> no finding."""
+        files = {"app.py": _make_large_file(200)}
+        file_stats = {
+            "app.py": FileStats(total_insertions=400, total_deletions=400, commit_count=4)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_yo_yo_code(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        files = {"test_parser.py": _make_large_file(200)}
+        file_stats = {
+            "test_parser.py": FileStats(total_insertions=400, total_deletions=400, commit_count=10)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_yo_yo_code(ctx)
+        assert len(findings) == 0
+
+    def test_different_from_churn_without_growth(self):
+        """A file can trigger yo-yo but not churn-without-growth (and vice versa).
+
+        yo-yo: high gross churn (ins + del) relative to size
+        churn-without-growth: many commits, low net change (ins - del)
+        A file growing fast has high net but could also have high gross.
+        """
+        files = {"app.py": _make_large_file(200)}
+        file_stats = {
+            # Net: 400-300 = 100 (50% of 200, above 10% threshold -> no churn-without-growth)
+            # Gross: 400+300 = 700 (3.5x of 200 -> yo-yo triggers)
+            "app.py": FileStats(total_insertions=400, total_deletions=300, commit_count=15)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        assert len(check_yo_yo_code(ctx)) == 1
+        assert len(check_churn_without_growth(ctx)) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_yo_yo_code(ctx) == []
 
 
 # --- Semantic check helpers ---
