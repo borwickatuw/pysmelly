@@ -23,6 +23,7 @@ from pysmelly.checks.history import (
     check_knowledge_silo,
     check_no_refactoring,
     check_stabilization_failure,
+    check_test_erosion,
     check_yo_yo_code,
 )
 from pysmelly.context import AnalysisContext
@@ -1773,3 +1774,101 @@ class TestHotspotAcceleration:
     def test_no_git_history(self):
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_hotspot_acceleration(ctx) == []
+
+
+# --- test-erosion tests ---
+
+
+class TestTestErosion:
+    def test_eroding_tests(self):
+        """Source file with 3x+ more commits than test -> finding."""
+        files = {
+            "pkg/billing.py": _make_large_file(100),
+            "tests/test_billing.py": "def test_it(): pass",
+        }
+        commits = _feat_commits("pkg/billing.py", 9) + _feat_commits("tests/test_billing.py", 2)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 1
+        assert "9 source commits" in findings[0].message
+        assert "eroding" in findings[0].message
+
+    def test_balanced_commits_no_finding(self):
+        """Source and test with similar commit counts -> no finding."""
+        files = {
+            "pkg/billing.py": _make_large_file(100),
+            "tests/test_billing.py": "def test_it(): pass",
+        }
+        commits = _feat_commits("pkg/billing.py", 6) + _feat_commits("tests/test_billing.py", 4)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 0
+
+    def test_no_test_file_no_finding(self):
+        """Source file with no corresponding test -> no finding."""
+        files = {"pkg/billing.py": _make_large_file(100)}
+        commits = _feat_commits("pkg/billing.py", 10)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 0
+
+    def test_few_source_commits_skipped(self):
+        """Source file with < 5 commits -> no finding."""
+        files = {
+            "pkg/billing.py": _make_large_file(100),
+            "tests/test_billing.py": "def test_it(): pass",
+        }
+        commits = _feat_commits("pkg/billing.py", 4)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 0
+
+    def test_small_file_skipped(self):
+        """Source file < 50 lines -> no finding."""
+        files = {
+            "pkg/small.py": _make_large_file(30),
+            "tests/test_small.py": "def test_it(): pass",
+        }
+        commits = _feat_commits("pkg/small.py", 10)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_not_flagged_as_source(self):
+        """Test files are not analyzed as source files."""
+        files = {
+            "test_billing.py": _make_large_file(100),
+            "billing.py": _make_large_file(100),
+        }
+        commits = _feat_commits("test_billing.py", 10)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        # test_billing.py itself should not be flagged
+        assert all(f.file != "test_billing.py" for f in findings)
+
+    def test_same_directory_test_file(self):
+        """Test file in same directory as source is found."""
+        files = {
+            "pkg/billing.py": _make_large_file(100),
+            "pkg/test_billing.py": "def test_it(): pass",
+        }
+        commits = _feat_commits("pkg/billing.py", 9) + _feat_commits("pkg/test_billing.py", 2)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 1
+
+    def test_zero_test_commits(self):
+        """Test file exists but has zero commits -> finding."""
+        files = {
+            "pkg/billing.py": _make_large_file(100),
+            "tests/test_billing.py": "def test_it(): pass",
+        }
+        commits = _feat_commits("pkg/billing.py", 6)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 1
+        assert "6.0x ratio" in findings[0].message
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_test_erosion(ctx) == []

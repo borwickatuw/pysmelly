@@ -1101,3 +1101,91 @@ def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+# --- Test erosion ---
+
+
+def _find_test_file(source_path: str, all_trees: dict) -> str | None:
+    """Find the corresponding test file for a source file.
+
+    Searches for test_{stem}.py and {stem}_test.py in several locations:
+    the same directory, a sibling tests/ directory, and root tests/.
+    """
+    p = Path(source_path)
+    stem = p.stem
+    parent = p.parent
+
+    candidates = [
+        str(parent / f"test_{stem}.py"),
+        str(parent / f"{stem}_test.py"),
+        str(parent / "tests" / f"test_{stem}.py"),
+        str(parent / "tests" / f"{stem}_test.py"),
+        str(Path("tests") / f"test_{stem}.py"),
+        str(Path("tests") / f"{stem}_test.py"),
+    ]
+
+    for candidate in candidates:
+        if Path(candidate) in all_trees:
+            return candidate
+    return None
+
+
+@check(
+    "test-erosion",
+    severity=Severity.LOW,
+    category="git-history",
+    description="Source files changing much more often than their tests",
+)
+def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
+    history = ctx.git_history
+    if history is None:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+        if file_path.name in _SKIP_NAMES or file_path.name.endswith(_SKIP_SUFFIXES):
+            continue
+        if _is_migration_file(file_str):
+            continue
+
+        current_lines = _get_line_count(file_str, ctx.all_trees)
+        if current_lines < 50:
+            continue
+
+        source_commits = history.commits_for_file.get(file_str, [])
+        if len(source_commits) < 5:
+            continue
+
+        test_file = _find_test_file(file_str, ctx.all_trees)
+        if test_file is None:
+            continue
+
+        test_commits = history.commits_for_file.get(test_file, [])
+        test_count = max(len(test_commits), 1)
+        ratio = len(source_commits) / test_count
+
+        if ratio < 3.0:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="test-erosion",
+                message=(
+                    f"{file_str} — {len(source_commits)} source commits but "
+                    f"only {len(test_commits)} test commits in last "
+                    f"{history.window} ({ratio:.1f}x ratio) — test coverage "
+                    f"may be eroding"
+                ),
+                severity=Severity.LOW,
+            )
+        )
+
+    return findings
