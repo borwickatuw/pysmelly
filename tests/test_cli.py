@@ -235,20 +235,17 @@ used()
         output = capsys.readouterr().out
         assert "speculative generality" in output
 
-    def test_git_history_check_without_flag_errors(self, tmp_path, capsys):
-        """--check abandoned-code without --git-history -> error exit."""
+    def test_git_history_check_via_main_not_allowed(self, tmp_path, capsys):
+        """abandoned-code is not a valid --check in main command."""
         (tmp_path / "app.py").write_text("x = 1\n")
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(SystemExit):
             main(["--check", "abandoned-code", str(tmp_path)])
-        assert exc_info.value.code == 1
-        err = capsys.readouterr().err
-        assert "requires --git-history" in err
 
-    def test_git_history_without_git_repo_errors(self, tmp_path, capsys):
-        """--git-history without git repo -> error exit."""
+    def test_git_history_subcommand_without_git_repo_errors(self, tmp_path, capsys):
+        """git-history subcommand without git repo -> error exit."""
         (tmp_path / "app.py").write_text("x = 1\n")
         with pytest.raises(SystemExit) as exc_info:
-            main(["--git-history", str(tmp_path)])
+            main(["git-history", str(tmp_path)])
         assert exc_info.value.code == 1
         err = capsys.readouterr().err
         assert "requires a git repository" in err
@@ -260,8 +257,8 @@ used()
         assert "abandoned-code" in output
         assert "[git]" in output
 
-    def test_git_history_on_real_repo(self, git_repo, capsys):
-        """--git-history on a git repo runs without crash."""
+    def test_git_history_subcommand_on_real_repo(self, git_repo, capsys):
+        """git-history subcommand on a git repo runs without crash."""
         (git_repo / "app.py").write_text("x = 1\n")
         subprocess.run(["git", "add", "app.py"], cwd=git_repo, capture_output=True, check=True)
         subprocess.run(
@@ -273,8 +270,8 @@ used()
         try:
             main(
                 [
+                    "git-history",
                     "--no-context",
-                    "--git-history",
                     "--check",
                     "abandoned-code",
                     str(git_repo),
@@ -284,8 +281,8 @@ used()
             pass
         # Should not crash — output is fine either way
 
-    def test_git_history_checks_excluded_by_default(self, git_repo, capsys):
-        """Without --git-history, git-history checks don't run."""
+    def test_git_history_checks_excluded_from_main(self, git_repo, capsys):
+        """Main command excludes git-history checks."""
         (git_repo / "app.py").write_text("def unused_func():\n    pass\n")
         subprocess.run(["git", "add", "app.py"], cwd=git_repo, capture_output=True, check=True)
         subprocess.run(
@@ -302,7 +299,7 @@ used()
         assert "abandoned-code" not in output
 
     def test_reviewed_creates_commit(self, git_repo):
-        """pysmelly reviewed creates an empty commit with markers."""
+        """pysmelly git-history reviewed creates an empty commit with markers."""
         (git_repo / "old.py").write_text("x = 1\n")
         subprocess.run(["git", "add", "old.py"], cwd=git_repo, capture_output=True, check=True)
         subprocess.run(
@@ -317,7 +314,7 @@ used()
         prev = os.getcwd()
         try:
             os.chdir(git_repo)
-            main(["reviewed", "old.py"])
+            main(["git-history", "reviewed", "old.py"])
         finally:
             os.chdir(prev)
 
@@ -332,7 +329,7 @@ used()
         assert "pysmelly: reviewed old.py" in result.stdout
 
     def test_reviewed_multiple_files(self, git_repo):
-        """pysmelly reviewed accepts multiple files."""
+        """pysmelly git-history reviewed accepts multiple files."""
         (git_repo / "a.py").write_text("x = 1\n")
         (git_repo / "b.py").write_text("y = 2\n")
         subprocess.run(["git", "add", "."], cwd=git_repo, capture_output=True, check=True)
@@ -347,7 +344,7 @@ used()
         prev = os.getcwd()
         try:
             os.chdir(git_repo)
-            main(["reviewed", "a.py", "b.py"])
+            main(["git-history", "reviewed", "a.py", "b.py"])
         finally:
             os.chdir(prev)
 
@@ -362,22 +359,22 @@ used()
         assert "pysmelly: reviewed b.py" in result.stdout
 
     def test_reviewed_no_args_errors(self, capsys):
-        """pysmelly reviewed with no files -> error."""
+        """pysmelly git-history reviewed with no files -> error."""
         with pytest.raises(SystemExit) as exc_info:
-            main(["reviewed"])
+            main(["git-history", "reviewed"])
         assert exc_info.value.code == 1
         err = capsys.readouterr().err
         assert "requires at least one file" in err
 
     def test_reviewed_nonexistent_file_errors(self, git_repo, capsys):
-        """pysmelly reviewed with nonexistent file -> error."""
+        """pysmelly git-history reviewed with nonexistent file -> error."""
         import os
 
         prev = os.getcwd()
         try:
             os.chdir(git_repo)
             with pytest.raises(SystemExit) as exc_info:
-                main(["reviewed", "nonexistent.py"])
+                main(["git-history", "reviewed", "nonexistent.py"])
             assert exc_info.value.code == 1
             err = capsys.readouterr().err
             assert "does not exist" in err

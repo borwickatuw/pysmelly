@@ -22,20 +22,22 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery, repeated-string-parsing)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
-- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code)
-- `src/pysmelly/git_history.py` - Git log parser, CommitInfo dataclass, reviewed marker parsing
+- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth)
+- `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats dataclasses, reviewed marker parsing, lazy numstat
 
 ## Common Commands
 
 ```bash
-uv run pysmelly                        # Analyze current directory
-uv run pysmelly --check dead-code      # Run single check
-uv run pysmelly --no-context src/     # Suppress LLM guidance preamble
-uv run pysmelly --git-history          # Enable git history checks
-uv run pysmelly reviewed path/file.py  # Acknowledge a git history finding
-uv run pytest                          # Run tests
-make format                            # Format with black + isort
-make self-check                        # Run pysmelly on itself
+uv run pysmelly                                  # Analyze current directory
+uv run pysmelly --check dead-code                # Run single check
+uv run pysmelly --no-context src/               # Suppress LLM guidance preamble
+uv run pysmelly git-history                      # Run git history checks
+uv run pysmelly git-history --check blast-radius # Run single git check
+uv run pysmelly git-history --window 1y          # Look back 1 year
+uv run pysmelly git-history reviewed path/file.py # Acknowledge a finding
+uv run pytest                                    # Run tests
+make format                                      # Format with black + isort
+make self-check                                  # Run pysmelly on itself
 ```
 
 ## Architecture
@@ -43,7 +45,7 @@ make self-check                        # Run pysmelly on itself
 - **Minimal dependencies** — currently stdlib only, but not a hard constraint
 - **Check registration** via `@check("name", severity=Severity.X, category="ast"|"git-history")` decorator
 - **Each check** receives `AnalysisContext` (all parsed files + cached indices) and returns `list[Finding]`
-- **Git history checks** gated behind `--git-history` flag; `category="git-history"` in `@check()`
+- **Git history checks** run via `pysmelly git-history` subcommand; `category="git-history"` in `@check()`
 - **File discovery** uses `git ls-files` when in a repo, falls back to rglob
 - **Severity levels**: HIGH (fix), MEDIUM (fix unless specific reason not to), LOW (review and fix where it makes sense)
 

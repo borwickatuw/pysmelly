@@ -1,20 +1,28 @@
-"""Tests for git history checks (abandoned-code)."""
+"""Tests for git history checks."""
 
 from __future__ import annotations
 
 import ast
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import PropertyMock, patch
+from statistics import median
 
-from pysmelly.checks.history import check_abandoned_code
+from pysmelly.checks.history import (
+    check_abandoned_code,
+    check_blast_radius,
+    check_change_coupling,
+    check_churn_without_growth,
+    check_growth_trajectory,
+)
 from pysmelly.context import AnalysisContext
-from pysmelly.git_history import GitHistory
+from pysmelly.git_history import CommitInfo, FileStats, GitHistory
 
 
 def _make_ctx(
     files: dict[str, str],
-    last_modified: dict[str, datetime],
+    last_modified: dict[str, datetime] | None = None,
+    commits: list[CommitInfo] | None = None,
+    file_stats: dict[str, FileStats] | None = None,
 ) -> AnalysisContext:
     """Build an AnalysisContext with a mocked git_history."""
     all_trees = {Path(name): ast.parse(code) for name, code in files.items()}
@@ -23,9 +31,19 @@ def _make_ctx(
     # Build a minimal GitHistory mock via patching
     history = object.__new__(GitHistory)
     history.commits_for_file = {}
-    history.last_modified = last_modified
+    history.last_modified = last_modified or {}
     history._message_quality = 0.5
     history.commit_messages = "auto"
+    history.window = "6m"
+    history._commits = commits or []
+    history._numstat_parsed = True
+    history._file_stats = file_stats or {}
+
+    # Build commits_for_file from commits
+    if commits:
+        for commit in commits:
+            for filepath in commit.files:
+                history.commits_for_file.setdefault(filepath, []).append(commit)
 
     ctx._git_history = history
     ctx._git_history_computed = True
@@ -35,6 +53,9 @@ def _make_ctx(
 _NOW = datetime.now(timezone.utc)
 _RECENT = _NOW - timedelta(days=30)  # 1 month ago
 _STALE = _NOW - timedelta(days=400)  # ~13 months ago
+
+
+# --- abandoned-code tests ---
 
 
 class TestAbandonedCode:
@@ -254,3 +275,347 @@ class TestAbandonedCode:
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert len(findings) == 0
+
+
+# --- blast-radius tests ---
+
+
+def _make_commits_for_blast_radius(
+    target_file: str, co_change_counts: list[int]
+) -> list[CommitInfo]:
+    """Create commits where target_file changes with N other files each time."""
+    commits = []
+    for i, n in enumerate(co_change_counts):
+        files = [target_file] + [f"other_{i}_{j}.py" for j in range(n)]
+        commits.append(
+            CommitInfo(
+                hash=f"abc{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"commit {i}",
+                files=files,
+            )
+        )
+    return commits
+
+
+class TestBlastRadius:
+    def test_high_blast_radius(self):
+        """File with median >= 5 co-changes flagged."""
+        files = {"services/payment.py": "x = 1"}
+        # 7 commits, each touching 6 other files
+        commits = _make_commits_for_blast_radius("services/payment.py", [6, 7, 5, 8, 6, 7, 5])
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 1
+        assert "payment.py" in findings[0].message
+        assert "blast-radius" == findings[0].check
+
+    def test_low_blast_radius_no_finding(self):
+        """File with median < 5 co-changes not flagged."""
+        files = {"services/payment.py": "x = 1"}
+        commits = _make_commits_for_blast_radius("services/payment.py", [2, 3, 1, 2, 3, 2, 1])
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
+    def test_fewer_than_5_commits(self):
+        """File with < 5 qualifying commits skipped."""
+        files = {"services/payment.py": "x = 1"}
+        commits = _make_commits_for_blast_radius("services/payment.py", [6, 7, 8, 6])
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
+    def test_init_py_skipped(self):
+        """__init__.py is skipped."""
+        files = {"pkg/__init__.py": ""}
+        commits = _make_commits_for_blast_radius("pkg/__init__.py", [6, 7, 5, 8, 6, 7, 5])
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
+    def test_bulk_commits_excluded(self):
+        """Commits touching >= 20 files are excluded."""
+        files = {"services/payment.py": "x = 1"}
+        # All commits are bulk (>= 20 other files)
+        commits = _make_commits_for_blast_radius(
+            "services/payment.py", [20, 25, 30, 22, 21, 20, 25]
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        """No git_history -> empty."""
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_blast_radius(ctx) == []
+
+
+# --- change-coupling tests ---
+
+
+def _make_coupling_commits(
+    file_a: str, file_b: str, together: int, a_alone: int = 0, b_alone: int = 0
+) -> list[CommitInfo]:
+    """Create commits for coupling analysis."""
+    commits = []
+    for i in range(together):
+        commits.append(
+            CommitInfo(
+                hash=f"together{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"both {i}",
+                files=[file_a, file_b],
+            )
+        )
+    for i in range(a_alone):
+        commits.append(
+            CommitInfo(
+                hash=f"alone_a{i:04d}",
+                date=_RECENT - timedelta(days=together + i),
+                message=f"just a {i}",
+                files=[file_a],
+            )
+        )
+    for i in range(b_alone):
+        commits.append(
+            CommitInfo(
+                hash=f"alone_b{i:04d}",
+                date=_RECENT - timedelta(days=together + a_alone + i),
+                message=f"just b {i}",
+                files=[file_b],
+            )
+        )
+    return commits
+
+
+class TestChangeCoupling:
+    def test_high_coupling_no_import(self):
+        """Highly coupled files with no import -> finding."""
+        files = {
+            "api/views.py": "x = 1",
+            "billing/invoice.py": "y = 2",
+        }
+        commits = _make_coupling_commits(
+            "api/views.py", "billing/invoice.py", together=8, a_alone=2
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 1
+        assert "api/views.py" in findings[0].message
+        assert "billing/invoice.py" in findings[0].message
+        assert "hidden coupling" in findings[0].message
+
+    def test_coupled_files_with_import_no_finding(self):
+        """Highly coupled files WITH import relationship -> no finding."""
+        files = {
+            "api/views.py": "from billing.invoice import create_invoice\nx = 1",
+            "billing/invoice.py": "def create_invoice(): pass",
+        }
+        commits = _make_coupling_commits(
+            "api/views.py", "billing/invoice.py", together=8, a_alone=2
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_low_coupling_ratio(self):
+        """Low coupling ratio (< 0.7) -> no finding."""
+        files = {
+            "api/views.py": "x = 1",
+            "billing/invoice.py": "y = 2",
+        }
+        # 5 together, a has 10 alone, b has 5 alone
+        # min(15, 10) = 10, ratio = 5/10 = 0.5 < 0.7
+        commits = _make_coupling_commits(
+            "api/views.py", "billing/invoice.py", together=5, a_alone=10, b_alone=5
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_fewer_than_5_co_changes(self):
+        """Fewer than 5 co-changes -> no finding."""
+        files = {
+            "api/views.py": "x = 1",
+            "billing/invoice.py": "y = 2",
+        }
+        commits = _make_coupling_commits("api/views.py", "billing/invoice.py", together=4)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_test_source_pair_skipped(self):
+        """Test file + source file pair is skipped."""
+        files = {
+            "app.py": "x = 1",
+            "test_app.py": "y = 2",
+        }
+        commits = _make_coupling_commits("app.py", "test_app.py", together=8, a_alone=2)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_init_py_skipped(self):
+        """__init__.py files are excluded from coupling analysis."""
+        files = {
+            "pkg/__init__.py": "",
+            "other/module.py": "x = 1",
+        }
+        commits = _make_coupling_commits(
+            "pkg/__init__.py", "other/module.py", together=8, a_alone=2
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_migration_files_skipped(self):
+        """Migration files are excluded."""
+        files = {
+            "app/migrations/0001.py": "x = 1",
+            "app/models.py": "y = 2",
+        }
+        commits = _make_coupling_commits(
+            "app/migrations/0001.py", "app/models.py", together=8, a_alone=2
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        """No git_history -> empty."""
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_change_coupling(ctx) == []
+
+
+# --- growth-trajectory tests ---
+
+
+def _make_large_file(line_count: int) -> str:
+    """Create a Python file with approximately N lines."""
+    lines = [f"x_{i} = {i}" for i in range(line_count)]
+    return "\n".join(lines) + "\n"
+
+
+class TestGrowthTrajectory:
+    def test_rapid_growth(self):
+        """File that grew >= 200 lines AND >= 2x -> finding."""
+        files = {"models/user.py": _make_large_file(380)}
+        file_stats = {
+            "models/user.py": FileStats(total_insertions=300, total_deletions=40, commit_count=15)
+        }
+        # start_lines = 380 - (300 - 40) = 120, growth = 260, ratio = 3.17x
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_growth_trajectory(ctx)
+        assert len(findings) == 1
+        assert "grew from" in findings[0].message
+        assert "models/user.py" in findings[0].file
+
+    def test_small_file_skipped(self):
+        """File < 100 lines -> no finding."""
+        files = {"small.py": _make_large_file(50)}
+        file_stats = {
+            "small.py": FileStats(total_insertions=40, total_deletions=5, commit_count=10)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_growth_trajectory(ctx)
+        assert len(findings) == 0
+
+    def test_moderate_growth_no_finding(self):
+        """File that grew but < 200 lines -> no finding."""
+        files = {"app.py": _make_large_file(200)}
+        file_stats = {
+            "app.py": FileStats(total_insertions=120, total_deletions=20, commit_count=10)
+        }
+        # start_lines = 200 - (120-20) = 100, growth = 100 < 200 threshold
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_growth_trajectory(ctx)
+        assert len(findings) == 0
+
+    def test_new_file_skipped(self):
+        """File that didn't exist at start of window -> no finding."""
+        files = {"new.py": _make_large_file(300)}
+        file_stats = {"new.py": FileStats(total_insertions=310, total_deletions=10, commit_count=5)}
+        # start_lines = 300 - (310 - 10) = 0 -> skip
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_growth_trajectory(ctx)
+        assert len(findings) == 0
+
+    def test_grew_less_than_2x(self):
+        """File grew >= 200 lines but < 2x -> no finding."""
+        files = {"big.py": _make_large_file(500)}
+        file_stats = {
+            "big.py": FileStats(total_insertions=250, total_deletions=50, commit_count=15)
+        }
+        # start_lines = 500 - (250-50) = 300, growth = 200, ratio = 1.67x < 2.0
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_growth_trajectory(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        """No git_history -> empty."""
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_growth_trajectory(ctx) == []
+
+
+# --- churn-without-growth tests ---
+
+
+class TestChurnWithoutGrowth:
+    def test_high_churn_low_growth(self):
+        """Many commits but little net growth -> finding."""
+        files = {"utils/parser.py": _make_large_file(280)}
+        file_stats = {
+            "utils/parser.py": FileStats(total_insertions=200, total_deletions=188, commit_count=18)
+        }
+        # net_growth = 200 - 188 = 12, 10% of 280 = 28, 12 <= 28 -> flag
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_churn_without_growth(ctx)
+        assert len(findings) == 1
+        assert "rewritten" in findings[0].message
+
+    def test_growing_file_no_finding(self):
+        """File with substantial net growth -> no finding."""
+        files = {"app.py": _make_large_file(300)}
+        file_stats = {
+            "app.py": FileStats(total_insertions=200, total_deletions=50, commit_count=15)
+        }
+        # net_growth = 150, 10% of 300 = 30, 150 > 30 -> no flag
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_churn_without_growth(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 10 commits -> no finding."""
+        files = {"utils/parser.py": _make_large_file(200)}
+        file_stats = {
+            "utils/parser.py": FileStats(total_insertions=100, total_deletions=95, commit_count=8)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_churn_without_growth(ctx)
+        assert len(findings) == 0
+
+    def test_small_file_skipped(self):
+        """File < 50 lines -> no finding."""
+        files = {"tiny.py": _make_large_file(30)}
+        file_stats = {
+            "tiny.py": FileStats(total_insertions=50, total_deletions=48, commit_count=12)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_churn_without_growth(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        files = {"test_parser.py": _make_large_file(200)}
+        file_stats = {
+            "test_parser.py": FileStats(total_insertions=200, total_deletions=195, commit_count=15)
+        }
+        ctx = _make_ctx(files, file_stats=file_stats)
+        findings = check_churn_without_growth(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        """No git_history -> empty."""
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_churn_without_growth(ctx) == []

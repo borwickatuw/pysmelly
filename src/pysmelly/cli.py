@@ -40,9 +40,10 @@ Configuration:
   skip = ["single-call-site"]
   min-severity = "medium"
 
-Acknowledging git history findings:
-  pysmelly reviewed path/to/file.py  Create a commit acknowledging a file
-  pysmelly reviewed a.py b.py        Acknowledge multiple files at once
+Git history analysis:
+  pysmelly git-history             Analyze git history for structural smells
+  pysmelly git-history --window 1y Look back 1 year instead of 6 months
+  pysmelly git-history reviewed    Acknowledge git history findings
 
 Incremental analysis:
   pysmelly --diff              Findings in uncommitted changes only
@@ -76,6 +77,8 @@ pysmelly does NOT check formatting, types, or security — use the tools
 above for those. pysmelly focuses on design smells and refactoring signals
 that require cross-file analysis.
 """
+
+_GIT_HISTORY_CHECKS = {name for name, cat in CHECK_CATEGORIES.items() if cat == "git-history"}
 
 
 def _get_version() -> str:
@@ -253,9 +256,80 @@ def _print_check_list() -> None:
     for name in CHECKS:
         severity = CHECK_SEVERITY[name].value
         category = CHECK_CATEGORIES.get(name, "ast")
-        tag = " [git]" if category == "git-history" else ""
+        if category == "git-history":
+            tag = " [git] (use: pysmelly git-history)"
+        else:
+            tag = ""
         description = CHECK_DESCRIPTIONS.get(name, "")
         print(f"  {name:<{name_width}}  [{severity:<6}]{tag}  {description}")
+
+
+def _discover_and_parse(roots: list[Path], excludes: list[str]) -> tuple[Path, dict[Path, object]]:
+    """Discover Python files, parse them, and return (base, all_trees).
+
+    Validates that all roots are directories (exits on error).
+    """
+    for root in roots:
+        if not root.is_dir():
+            print(f"Error: {root} is not a directory", file=sys.stderr)
+            sys.exit(1)
+
+    if len(roots) == 1:
+        base = roots[0]
+    else:
+        base = Path(os.path.commonpath(roots))
+
+    all_trees = {}
+    for root in roots:
+        for f in get_python_files(root):
+            rel = f.relative_to(base)
+            if _is_excluded(rel, excludes):
+                continue
+            tree = parse_file(f)
+            if tree:
+                all_trees[rel] = tree
+
+    return base, all_trees
+
+
+def _apply_filters(
+    findings: list[Finding],
+    min_severity: str,
+    diff_ref: str | None,
+    base: Path,
+) -> list[Finding]:
+    """Apply severity and diff filters to findings."""
+    severity_order = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2}
+    min_level = severity_order[Severity(min_severity)]
+    findings = [f for f in findings if severity_order[f.severity] >= min_level]
+
+    if diff_ref is not None:
+        git_root = get_git_root(base)
+        if git_root:
+            changed = get_changed_lines(diff_ref, git_root)
+            try:
+                offset = base.relative_to(git_root)
+            except ValueError:
+                offset = Path()
+            findings = [
+                f
+                for f in findings
+                if str(offset / f.file) in changed and f.line in changed[str(offset / f.file)]
+            ]
+
+    return findings
+
+
+def _apply_suppression(findings: list[Finding], base: Path) -> list[Finding]:
+    """Remove findings suppressed by inline comments."""
+    source_lines: dict[str, list[str]] = {}
+    files_with_findings = {f.file for f in findings}
+    for file_rel in files_with_findings:
+        try:
+            source_lines[file_rel] = (base / file_rel).read_text().splitlines()
+        except OSError:
+            pass
+    return [f for f in findings if not _is_suppressed(f, source_lines)]
 
 
 GUIDANCE_CONTENT = """\
@@ -287,32 +361,18 @@ uvx pysmelly --min-severity medium     # filter noise
 uvx pysmelly --exclude tests/ test_*   # exclude test files
 uvx pysmelly --diff                    # findings in uncommitted changes only
 uvx pysmelly --diff main              # findings in changes since main
-uvx pysmelly --git-history             # enable git history checks
 uvx pysmelly --list-checks             # see all available checks
 ```
 
-## Suppressing findings
-
-```python
-x = 1  # pysmelly: ignore              — suppress all checks on this line
-x = 1  # pysmelly: ignore[dead-code]   — suppress specific check(s)
-```
-
-**Do not add suppression comments as a way to dismiss findings.** Suppression
-is for confirmed false positives (framework calls this via reflection, public
-API contract requires this signature). If a finding reveals unfinished code
-(TODO), finish it. If a finding reveals dead code, delete it. Adding
-`# pysmelly: ignore` to avoid fixing the code is not suppression — it's
-avoidance.
-
-## Git history checks
+## Git history analysis
 
 pysmelly can analyze git history to detect evolutionary signals invisible to
-static analysis. These checks require `--git-history`:
+static analysis. These are run via the `git-history` subcommand:
 
 ```bash
-uvx pysmelly --git-history                  # run all checks including git history
-uvx pysmelly --git-history --git-window 1y  # look back 1 year instead of 6 months
+uvx pysmelly git-history                    # run all git history checks
+uvx pysmelly git-history --window 1y        # look back 1 year instead of 6 months
+uvx pysmelly git-history --check blast-radius  # run a single git check
 ```
 
 Git history findings (like `abandoned-code`) are persistent — the file is still
@@ -320,8 +380,8 @@ abandoned next time you run pysmelly. To acknowledge a finding after reviewing
 the file, use the `reviewed` subcommand:
 
 ```bash
-uvx pysmelly reviewed path/to/file.py        # acknowledge one file
-uvx pysmelly reviewed a.py b.py               # acknowledge multiple files
+uvx pysmelly git-history reviewed path/to/file.py   # acknowledge one file
+uvx pysmelly git-history reviewed a.py b.py          # acknowledge multiple files
 ```
 
 This creates an empty git commit with `pysmelly: reviewed path/to/file.py`
@@ -338,6 +398,20 @@ Refactor auth module
 pysmelly: reviewed utils/legacy_parser.py
 pysmelly: reviewed utils/old_helpers.py
 ```
+
+## Suppressing findings
+
+```python
+x = 1  # pysmelly: ignore              — suppress all checks on this line
+x = 1  # pysmelly: ignore[dead-code]   — suppress specific check(s)
+```
+
+**Do not add suppression comments as a way to dismiss findings.** Suppression
+is for confirmed false positives (framework calls this via reflection, public
+API contract requires this signature). If a finding reveals unfinished code
+(TODO), finish it. If a finding reveals dead code, delete it. Adding
+`# pysmelly: ignore` to avoid fixing the code is not suppression — it's
+avoidance.
 
 ## Configuration
 
@@ -427,15 +501,18 @@ def _handle_init(args: list[str]) -> None:
 
 
 def _handle_reviewed(args: list[str]) -> None:
-    """Handle `pysmelly reviewed <file> [<file> ...]` — create a commit acknowledging files."""
+    """Handle `pysmelly git-history reviewed <file> [...]` — create acknowledgment commit."""
     if not args:
-        print("Error: pysmelly reviewed requires at least one file path", file=sys.stderr)
+        print(
+            "Error: pysmelly git-history reviewed requires at least one file path",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Verify we're in a git repo
     git_root = get_git_root(Path.cwd())
     if git_root is None:
-        print("Error: pysmelly reviewed requires a git repository", file=sys.stderr)
+        print("Error: pysmelly git-history reviewed requires a git repository", file=sys.stderr)
         sys.exit(1)
 
     # Verify files exist
@@ -463,13 +540,165 @@ def _handle_reviewed(args: list[str]) -> None:
         sys.exit(1)
 
 
+def _handle_git_history(argv: list[str]) -> None:
+    """Handle `pysmelly git-history [reviewed|TARGETS...]` subcommand."""
+    if argv and argv[0] == "reviewed":
+        _handle_reviewed(argv[1:])
+        return
+
+    git_history_checks = {
+        name: fn for name, fn in CHECKS.items() if CHECK_CATEGORIES.get(name) == "git-history"
+    }
+
+    parser = argparse.ArgumentParser(
+        prog="pysmelly git-history",
+        description="Analyze git history for structural and evolutionary code smells",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "targets",
+        nargs="*",
+        default=["."],
+        help="Directories to analyze (default: current directory)",
+    )
+    parser.add_argument(
+        "--check",
+        choices=list(git_history_checks.keys()),
+        metavar="CHECK",
+        help="Run only this check",
+    )
+    parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        help="Skip this check (can be repeated)",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Exclude files matching pattern (repeatable)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show additional detail",
+    )
+    parser.add_argument(
+        "--min-severity",
+        choices=["low", "medium", "high"],
+        default="low",
+        help="Minimum severity to report (default: low)",
+    )
+    parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Suppress the guidance preamble",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Show finding counts per check without individual findings",
+    )
+    parser.add_argument(
+        "--more-please",
+        action="store_true",
+        help="Show all findings (default: top 10 highest-confidence)",
+    )
+    parser.add_argument(
+        "--window",
+        default="6m",
+        metavar="PERIOD",
+        help="Time window for git history analysis (default: 6m; e.g., 3m, 1y, 90d)",
+    )
+    parser.add_argument(
+        "--commit-messages",
+        choices=["auto", "structured", "unstructured"],
+        default="auto",
+        help="Commit message quality (default: auto-detect)",
+    )
+    args = parser.parse_args(argv)
+
+    # Load config and merge
+    roots = [Path(t).resolve() for t in args.targets]
+    config_dir = roots[0] if len(roots) == 1 else Path.cwd()
+    config = load_config(config_dir, set(CHECKS.keys()))
+
+    if "exclude" in config:
+        args.exclude = config["exclude"] + args.exclude
+    if "skip" in config:
+        args.skip = config["skip"] + args.skip
+    if "min-severity" in config and args.min_severity == "low":
+        args.min_severity = config["min-severity"]
+    if "git-window" in config and args.window == "6m":
+        args.window = config["git-window"]
+    if "commit-messages" in config and args.commit_messages == "auto":
+        args.commit_messages = config["commit-messages"]
+
+    # Must be in a git repo
+    base, all_trees = _discover_and_parse(roots, args.exclude)
+    git_root = get_git_root(base)
+    if git_root is None:
+        print("Error: pysmelly git-history requires a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    # Determine which checks to run
+    if args.check:
+        checks_to_run = {args.check: git_history_checks[args.check]}
+    else:
+        checks_to_run = {
+            name: fn for name, fn in git_history_checks.items() if name not in args.skip
+        }
+
+    # Run checks
+    ctx = AnalysisContext(
+        all_trees,
+        args.verbose,
+        git_root=git_root,
+        git_window=args.window,
+        commit_messages=args.commit_messages,
+    )
+    all_findings: list[Finding] = []
+    for name, check_fn in checks_to_run.items():
+        all_findings.extend(check_fn(ctx))
+
+    # Filter and suppress
+    all_findings = _apply_filters(all_findings, args.min_severity, None, base)
+    all_findings = _apply_suppression(all_findings, base)
+
+    # Guidance
+    context: list[str] | None = None
+    if not args.no_context:
+        context = [
+            "pysmelly git-history analyzes version control history to find "
+            "structural and evolutionary signals invisible to static analysis. "
+            "These findings reveal files with poor encapsulation, hidden coupling, "
+            "or rapid growth that suggest design problems."
+        ]
+
+    # Output
+    max_findings = 0 if args.more_please else 10
+    print(
+        format_text(
+            all_findings,
+            len(all_trees),
+            context=context,
+            summary=args.summary,
+            max_findings=max_findings,
+        )
+    )
+
+    sys.exit(1 if all_findings else 0)
+
+
 def main(argv: list[str] | None = None) -> None:
     raw_args = argv if argv is not None else sys.argv[1:]
     if raw_args and raw_args[0] == "init":
         _handle_init(raw_args[1:])
         return
-    if raw_args and raw_args[0] == "reviewed":
-        _handle_reviewed(raw_args[1:])
+    if raw_args and raw_args[0] == "git-history":
+        _handle_git_history(raw_args[1:])
         return
 
     parser = argparse.ArgumentParser(
@@ -487,7 +716,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--check",
-        choices=list(CHECKS.keys()),
+        choices=[n for n in CHECKS if n not in _GIT_HISTORY_CHECKS],
         metavar="CHECK",
         help="Run only this check (see --list-checks)",
     )
@@ -543,23 +772,6 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Show all findings (default: top 10 highest-confidence)",
     )
-    parser.add_argument(
-        "--git-history",
-        action="store_true",
-        help="Enable git history checks (requires git repo with commit history)",
-    )
-    parser.add_argument(
-        "--git-window",
-        default="6m",
-        metavar="PERIOD",
-        help="Time window for git history analysis (default: 6m; e.g., 3m, 1y, 90d)",
-    )
-    parser.add_argument(
-        "--commit-messages",
-        choices=["auto", "structured", "unstructured"],
-        default="auto",
-        help="Commit message quality (default: auto-detect)",
-    )
     args = parser.parse_args(argv)
 
     if args.list_checks:
@@ -581,103 +793,37 @@ def main(argv: list[str] | None = None) -> None:
     if "min-severity" in config and args.min_severity == "low":
         args.min_severity = config["min-severity"]
     if "check" in config and args.check is None:
-        args.check = config["check"]
-    if "git-history" in config and not args.git_history:
-        args.git_history = config["git-history"]
-    if "git-window" in config and args.git_window == "6m":
-        args.git_window = config["git-window"]
-    if "commit-messages" in config and args.commit_messages == "auto":
-        args.commit_messages = config["commit-messages"]
-
-    for root in roots:
-        if not root.is_dir():
-            print(f"Error: {root} is not a directory", file=sys.stderr)
-            sys.exit(1)
-
-    # Common ancestor for relative paths
-    if len(roots) == 1:
-        base = roots[0]
-    else:
-        base = Path(os.path.commonpath(roots))
-
-    all_trees = {}
-    for root in roots:
-        for f in get_python_files(root):
-            rel = f.relative_to(base)
-            if _is_excluded(rel, args.exclude):
-                continue
-            tree = parse_file(f)
-            if tree:
-                all_trees[rel] = tree
-
-    # Determine which checks to run
-    if args.check:
-        if CHECK_CATEGORIES.get(args.check) == "git-history" and not args.git_history:
+        check_name = config["check"]
+        if CHECK_CATEGORIES.get(check_name) == "git-history":
             print(
-                f"Error: --check {args.check} requires --git-history",
+                f"Error: {check_name} is a git-history check. "
+                f"Use: pysmelly git-history --check {check_name}",
                 file=sys.stderr,
             )
             sys.exit(1)
+        args.check = check_name
+
+    base, all_trees = _discover_and_parse(roots, args.exclude)
+
+    # Determine which checks to run (exclude git-history checks)
+    if args.check:
         checks_to_run = {args.check: CHECKS[args.check]}
     else:
         checks_to_run = {
             name: fn
             for name, fn in CHECKS.items()
-            if name not in args.skip
-            and (CHECK_CATEGORIES.get(name, "ast") != "git-history" or args.git_history)
+            if name not in args.skip and CHECK_CATEGORIES.get(name, "ast") != "git-history"
         }
 
-    # Resolve git root for history checks
-    git_root = None
-    if args.git_history:
-        git_root = get_git_root(base)
-        if git_root is None:
-            print("Error: --git-history requires a git repository", file=sys.stderr)
-            sys.exit(1)
-
     # Run checks
-    ctx = AnalysisContext(
-        all_trees,
-        args.verbose,
-        git_root=git_root,
-        git_window=args.git_window,
-        commit_messages=args.commit_messages,
-    )
+    ctx = AnalysisContext(all_trees, args.verbose)
     all_findings: list[Finding] = []
     for name, check_fn in checks_to_run.items():
         all_findings.extend(check_fn(ctx))
 
-    # Filter by minimum severity
-    severity_order = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2}
-    min_level = severity_order[Severity(args.min_severity)]
-    all_findings = [f for f in all_findings if severity_order[f.severity] >= min_level]
-
-    # Filter by diff (only findings in changed lines)
-    if args.diff is not None:
-        git_root = get_git_root(base)
-        if git_root:
-            changed = get_changed_lines(args.diff, git_root)
-            try:
-                offset = base.relative_to(git_root)
-            except ValueError:
-                offset = Path()
-            all_findings = [
-                f
-                for f in all_findings
-                if str(offset / f.file) in changed and f.line in changed[str(offset / f.file)]
-            ]
-
-    # Load source lines for suppression checks
-    source_lines: dict[str, list[str]] = {}
-    files_with_findings = {f.file for f in all_findings}
-    for file_rel in files_with_findings:
-        try:
-            source_lines[file_rel] = (base / file_rel).read_text().splitlines()
-        except OSError:
-            pass
-
-    # Filter suppressed findings (# pysmelly: ignore / # pysmelly: ignore[check-name])
-    all_findings = [f for f in all_findings if not _is_suppressed(f, source_lines)]
+    # Filter
+    all_findings = _apply_filters(all_findings, args.min_severity, args.diff, base)
+    all_findings = _apply_suppression(all_findings, base)
 
     # Build guidance preamble for LLM consumers (on by default)
     context: list[str] | None = None

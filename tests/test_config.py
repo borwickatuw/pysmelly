@@ -104,12 +104,10 @@ class TestValidation:
         with pytest.raises(ConfigError, match="'check' must be a string"):
             _validate_config({"check": ["dead-code"]}, "test", VALID_CHECKS)
 
-    def test_git_history_bool_validates(self):
-        _validate_config({"git-history": True}, "test", VALID_CHECKS)
-
-    def test_git_history_must_be_bool(self):
-        with pytest.raises(ConfigError, match="'git-history' must be a boolean"):
-            _validate_config({"git-history": "yes"}, "test", VALID_CHECKS)
+    def test_git_history_is_unknown_key(self):
+        """git-history bool config was removed (now a subcommand)."""
+        with pytest.raises(ConfigError, match="unknown key"):
+            _validate_config({"git-history": True}, "test", VALID_CHECKS)
 
     def test_git_window_validates(self):
         _validate_config({"git-window": "1y"}, "test", VALID_CHECKS)

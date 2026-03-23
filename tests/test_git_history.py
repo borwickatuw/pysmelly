@@ -210,6 +210,54 @@ class TestReviewedMarkers:
         assert history.reviewed_at == {}
 
 
+class TestFileStats:
+    def test_numstat_basic(self, git_repo):
+        """file_stats reports insertions and deletions."""
+        (git_repo / "app.py").write_text("line1\nline2\nline3\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: initial")
+
+        (git_repo / "app.py").write_text("line1\nline2\nline3\nline4\nline5\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "feat: add lines")
+
+        history = GitHistory(git_repo, window="6m")
+        stats = history.file_stats
+        assert "app.py" in stats
+        assert stats["app.py"].total_insertions > 0
+        assert stats["app.py"].commit_count == 2
+
+    def test_numstat_lazy(self, git_repo):
+        """file_stats is not parsed until accessed."""
+        (git_repo / "app.py").write_text("x = 1\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "initial")
+
+        history = GitHistory(git_repo, window="6m")
+        assert history._numstat_parsed is False
+        _ = history.file_stats
+        assert history._numstat_parsed is True
+
+    def test_numstat_empty_repo(self, git_repo):
+        """Empty repo produces empty file_stats."""
+        history = GitHistory(git_repo, window="6m")
+        assert history.file_stats == {}
+
+    def test_numstat_deletions(self, git_repo):
+        """file_stats tracks deletions."""
+        (git_repo / "app.py").write_text("a\nb\nc\nd\ne\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "initial")
+
+        (git_repo / "app.py").write_text("a\nb\n")
+        _git(git_repo, "add", "app.py")
+        _git(git_repo, "commit", "-m", "remove lines")
+
+        history = GitHistory(git_repo, window="6m")
+        stats = history.file_stats["app.py"]
+        assert stats.total_deletions > 0
+
+
 def _git(cwd, *args):
     """Run a git command in the given directory."""
     import subprocess

@@ -8,6 +8,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+
+@dataclass
+class FileStats:
+    """Aggregate line-change stats for a single file."""
+
+    total_insertions: int = 0
+    total_deletions: int = 0
+    commit_count: int = 0
+
+
 # Conventional commit prefixes (case-insensitive match before colon)
 _CONVENTIONAL_PREFIXES = frozenset(
     {
@@ -95,6 +105,8 @@ class GitHistory:
         self.last_modified: dict[str, datetime] = {}
         self.reviewed_at: dict[str, datetime] = {}
         self._message_quality: float | None = None
+        self._numstat_parsed: bool = False
+        self._file_stats: dict[str, FileStats] = {}
         self._parse()
 
     def _parse(self) -> None:
@@ -115,6 +127,7 @@ class GitHistory:
                     "log",
                     "--format=%H%x00%aI%x00%s",
                     "--name-only",
+                    "--no-merges",
                     f"--since={since}",
                     "--",
                     "*.py",
@@ -243,3 +256,80 @@ class GitHistory:
                 self._message_quality = quality_count / len(sample)
 
         return self._message_quality
+
+    @property
+    def file_stats(self) -> dict[str, FileStats]:
+        """Lazy-parsed per-file insertion/deletion/commit stats from numstat."""
+        if not self._numstat_parsed:
+            self._parse_numstat()
+        return self._file_stats
+
+    def _parse_numstat(self) -> None:
+        """Run git log --numstat and build per-file stats."""
+        self._numstat_parsed = True
+
+        try:
+            since = _parse_window(self.window)
+        except ValueError:
+            return
+
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "log",
+                    "--format=%H",
+                    "--numstat",
+                    "--no-merges",
+                    f"--since={since}",
+                    "--",
+                    "*.py",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=self.git_root,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return
+
+        if not result.stdout.strip():
+            return
+
+        # Track which files appeared in each commit for commit_count
+        current_commit_files: set[str] = set()
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                # Blank line — flush current commit's files
+                for filepath in current_commit_files:
+                    self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+                current_commit_files = set()
+                continue
+            # Hash line (40-char hex)
+            if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
+                # Flush previous commit
+                for filepath in current_commit_files:
+                    self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+                current_commit_files = set()
+                continue
+            # Numstat line: insertions\tdeletions\tfilepath
+            parts = line.split("\t", 2)
+            if len(parts) == 3:
+                ins_str, del_str, filepath = parts
+                # Skip binary files (shown as - - path)
+                if ins_str == "-" or del_str == "-":
+                    continue
+                try:
+                    insertions = int(ins_str)
+                    deletions = int(del_str)
+                except ValueError:
+                    continue
+                stats = self._file_stats.setdefault(filepath, FileStats())
+                stats.total_insertions += insertions
+                stats.total_deletions += deletions
+                current_commit_files.add(filepath)
+
+        # Flush last commit
+        for filepath in current_commit_files:
+            self._file_stats.setdefault(filepath, FileStats()).commit_count += 1

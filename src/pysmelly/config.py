@@ -13,7 +13,7 @@ LIST_KEYS = frozenset({"exclude", "skip"})
 STRING_KEYS = frozenset({"min-severity", "check", "git-window", "commit-messages"})
 
 # Keys that accept boolean values
-BOOL_KEYS = frozenset({"git-history"})
+BOOL_KEYS: frozenset[str] = frozenset()
 
 VALID_KEYS = LIST_KEYS | STRING_KEYS | BOOL_KEYS
 
