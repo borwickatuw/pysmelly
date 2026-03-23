@@ -76,6 +76,21 @@ constant returns in non-subclasses. The pure forwarding case is the most
 useful — the others are usually intentional naming abstractions. Consider
 dropping dict/attribute/constant patterns and keeping only pure forwarding.
 
+## Diff-level git history checks (Phase 10d)
+
+Deferred from Phase 10. These require per-commit diff parsing, which is
+significantly more expensive and complex than the file-level analysis
+currently used by git-history checks.
+
+- **`same-change-multiple-files`** — When a commit's diff contains
+  structurally similar hunks across 3+ files (same parameter added,
+  same error handling pattern), flag the DRY violation. Requires diff
+  extraction, normalization, and similarity comparison.
+- **`growing-signatures`** — Function parameter lists growing over time.
+  Requires `git show <hash>:<path>` and AST-parsing historical versions
+  to compare parameter counts. Could be lazy (only for functions with
+  4+ current params).
+
 ## Project-level git health metrics
 
 Aggregate metrics about the whole codebase rather than per-file findings:

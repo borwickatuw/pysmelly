@@ -145,3 +145,67 @@ False-positive reductions based on real-world Django codebase feedback:
 ## Output pacing (`--more-please`)
 
 - [x] Default output capped at top 10 highest-confidence findings. Ranking: severity desc, then check hit-count asc (fewer hits = higher signal). `--more-please` shows all findings. Footer: "Showing top 10. Run with --more-please for all N." Summary mode always shows full counts.
+
+## Phase 10: Git history analysis
+
+Mine `git log` for evolutionary signals that static analysis alone cannot
+detect. Inspired by Adam Tornhill's "Your Code as a Crime Scene."
+
+### Phase 10a: Infrastructure
+
+- [x] `CommitInfo` dataclass and git log parser (`git_history.py`)
+- [x] `GitHistory` cache class with lazy population on `AnalysisContext`
+- [x] Message quality auto-detection (sample 50 commits, check for conventional prefixes)
+- [x] `pysmelly git-history` subcommand with `--window`, `--commit-messages`, `--check`
+- [x] `abandoned-code` (LOW) — files on disk with no commits while peers evolve
+
+### Phase 10b: Structural checks (Tier 1 — any repo)
+
+- [x] `blast-radius` (MEDIUM) — files whose changes drag many other files along
+- [x] `change-coupling` (MEDIUM) — files that always change together with no import relationship
+- [x] `growth-trajectory` (LOW) — files growing rapidly within the window
+- [x] `churn-without-growth` (LOW) — many commits but stable/shrinking line count
+- [x] `expected-coupling` config — suppress known coupling pairs via pyproject.toml
+
+### Phase 10c: Semantic checks (Tier 2 — structured messages)
+
+- [x] Commit classifier (`classify_commit()` — fix/feature/refactor/debt/emergency)
+- [x] `bug-magnet` (MEDIUM) — files where majority of commits are fixes
+- [x] `fix-propagation` (MEDIUM) — files that co-change in fix commits
+- [x] `conscious-debt` (LOW) — commits with workaround/hack/temporary markers
+- [x] `divergent-change` (MEDIUM) — one file in commits with 4+ different scopes
+
+### Phase 10e: Churn pattern checks
+
+- [x] `yo-yo-code` (MEDIUM) — high gross churn (write/delete/rewrite)
+- [x] `fix-follows-feature` (MEDIUM) — feature→fix temporal sequences (time-slice aware)
+- [x] `stabilization-failure` (LOW) — repeated activity bursts separated by gaps
+
+### Phase 10f: Organizational checks
+
+- [x] Author data infrastructure (`%an` in git log, `authors_for_file` index)
+- [x] `knowledge-silo` (MEDIUM) — one author dominates 80%+ of commits
+
+### Phase 10g: AST + history hybrid checks
+
+- [x] `emergency-hotspots` (LOW) — files with disproportionate emergency/hotfix activity
+- [x] `test-erosion` (LOW) — source files changing much more often than their tests
+- [x] `hotspot-acceleration` (MEDIUM) — commit frequency increasing over time
+- [x] `no-refactoring` (LOW) — heavy fix/feature activity but zero refactoring
+
+### Phase 10 infrastructure
+
+- [x] `TimeSlice` dataclass with auto-calibrated periods (~26 slices per window)
+- [x] Commit granularity detection (`commits_per_slice`, `is_coarse_grained`)
+- [x] `FileStats` with lazy numstat parsing
+- [x] `pysmelly git-history reviewed` subcommand for acknowledging findings
+
+### Phase 10 — dropped checks (with reasons)
+
+- `growing-import-fan-out` — needs historical AST snapshots we don't have
+- `conflict-prone` — `--no-merges` excludes merge commits; proxy unreliable
+- `repeated-similar-changes` — overlaps bug-magnet + no-refactoring
+- `shotgun-surgery-temporal` — weekly time slices too coarse for causal inference
+- `responsibility-drift` — noisier version of divergent-change
+- `same-change-multiple-files` (10d stretch) — requires per-commit diff parsing → SOMEDAY-MAYBE
+- `growing-signatures` (10d stretch) — requires historical function signature parsing → SOMEDAY-MAYBE
