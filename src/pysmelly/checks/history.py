@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 from pathlib import Path
 from statistics import median
 
@@ -12,8 +13,19 @@ from pysmelly.registry import Finding, Severity, check
 
 _MIN_MESSAGE_QUALITY = 0.5
 
+
+def _is_expected_coupling(file_a: str, file_b: str, patterns: list[list[str]]) -> bool:
+    """Check if a file pair matches any expected-coupling pattern pair."""
+    for pat_a, pat_b in patterns:
+        if (fnmatch.fnmatch(file_a, pat_a) and fnmatch.fnmatch(file_b, pat_b)) or (
+            fnmatch.fnmatch(file_a, pat_b) and fnmatch.fnmatch(file_b, pat_a)
+        ):
+            return True
+    return False
+
+
 # Files that are naturally stable and shouldn't be flagged
-_SKIP_NAMES = frozenset({"__init__.py", "conftest.py"})
+_SKIP_NAMES = frozenset({"__init__.py", "conftest.py", "apps.py"})
 
 # Files that match these patterns are config-like and naturally stable
 _SKIP_SUFFIXES = ("_config.py", "_settings.py", "settings.py", "config.py")
@@ -110,6 +122,8 @@ def check_blast_radius(ctx: AnalysisContext) -> list[Finding]:
     for file_path in ctx.all_trees:
         file_str = str(file_path)
         if file_path.name == "__init__.py":
+            continue
+        if _is_test_file(file_str):
             continue
 
         commits = history.commits_for_file.get(file_str, [])
@@ -212,6 +226,10 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
 
         # Check import relationship
         if _files_have_import(file_a, file_b, ctx):
+            continue
+
+        # Check expected-coupling config
+        if _is_expected_coupling(file_a, file_b, ctx.expected_coupling):
             continue
 
         pair = (file_a, file_b)
@@ -505,6 +523,9 @@ def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
 
         ratio = co_fixes / min_count
         if ratio < 0.6:
+            continue
+
+        if _is_expected_coupling(file_a, file_b, ctx.expected_coupling):
             continue
 
         findings.append(

@@ -652,12 +652,14 @@ def _handle_git_history(argv: list[str]) -> None:
         }
 
     # Run checks
+    expected_coupling = config.get("expected-coupling", [])
     ctx = AnalysisContext(
         all_trees,
         args.verbose,
         git_root=git_root,
         git_window=args.window,
         commit_messages=args.commit_messages,
+        expected_coupling=expected_coupling,
     )
     all_findings: list[Finding] = []
     for name, check_fn in checks_to_run.items():

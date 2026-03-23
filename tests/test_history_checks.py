@@ -364,6 +364,14 @@ class TestBlastRadius:
         findings = check_blast_radius(ctx)
         assert len(findings) == 0
 
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        files = {"tests/test_billing.py": "x = 1"}
+        commits = _make_commits_for_blast_radius("tests/test_billing.py", [6, 7, 5, 8, 6, 7, 5])
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
     def test_no_git_history(self):
         """No git_history -> empty."""
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
@@ -498,6 +506,23 @@ class TestChangeCoupling:
             "app/migrations/0001.py", "app/models.py", together=8, a_alone=2
         )
         ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_expected_coupling_suppressed(self):
+        """Pairs matching expected-coupling config are suppressed."""
+        files = {
+            "app/settings.py": "x = 1",
+            "app/urls.py": "y = 2",
+        }
+        commits = _make_coupling_commits("app/settings.py", "app/urls.py", together=8, a_alone=2)
+        ctx = _make_ctx(files, commits=commits)
+        # Without config, would find coupling
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 1
+
+        # With expected-coupling, suppressed
+        ctx.expected_coupling = [["*/settings.py", "*/urls.py"]]
         findings = check_change_coupling(ctx)
         assert len(findings) == 0
 

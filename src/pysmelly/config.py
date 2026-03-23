@@ -15,7 +15,10 @@ STRING_KEYS = frozenset({"min-severity", "check", "git-window", "commit-messages
 # Keys that accept boolean values
 BOOL_KEYS: frozenset[str] = frozenset()
 
-VALID_KEYS = LIST_KEYS | STRING_KEYS | BOOL_KEYS
+# Keys that accept list-of-pairs values (each item is a 2-element list of strings)
+PAIR_LIST_KEYS = frozenset({"expected-coupling"})
+
+VALID_KEYS = LIST_KEYS | STRING_KEYS | BOOL_KEYS | PAIR_LIST_KEYS
 
 VALID_SEVERITIES = frozenset({"low", "medium", "high"})
 
@@ -79,6 +82,24 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
             raise ConfigError(
                 f"{source}: '{key}' must be a boolean, got {type(config[key]).__name__}"
             )
+
+    for key in PAIR_LIST_KEYS:
+        if key in config:
+            if not isinstance(config[key], list):
+                raise ConfigError(
+                    f"{source}: '{key}' must be a list of pairs, got {type(config[key]).__name__}"
+                )
+            for i, item in enumerate(config[key]):
+                if not isinstance(item, list) or len(item) != 2:
+                    raise ConfigError(
+                        f"{source}: '{key}' items must be 2-element lists, "
+                        f"got {item!r} at index {i}"
+                    )
+                if not all(isinstance(s, str) for s in item):
+                    raise ConfigError(
+                        f"{source}: '{key}' items must contain strings, "
+                        f"got {item!r} at index {i}"
+                    )
 
     if "min-severity" in config and config["min-severity"] not in VALID_SEVERITIES:
         raise ConfigError(

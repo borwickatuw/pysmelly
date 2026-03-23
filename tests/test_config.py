@@ -123,6 +123,25 @@ class TestValidation:
         with pytest.raises(ConfigError, match="invalid commit-messages 'maybe'"):
             _validate_config({"commit-messages": "maybe"}, "test", VALID_CHECKS)
 
+    def test_expected_coupling_validates(self):
+        _validate_config(
+            {"expected-coupling": [["*/settings.py", "*/urls.py"]]},
+            "test",
+            VALID_CHECKS,
+        )
+
+    def test_expected_coupling_must_be_list(self):
+        with pytest.raises(ConfigError, match="must be a list of pairs"):
+            _validate_config({"expected-coupling": "bad"}, "test", VALID_CHECKS)
+
+    def test_expected_coupling_items_must_be_pairs(self):
+        with pytest.raises(ConfigError, match="must be 2-element lists"):
+            _validate_config({"expected-coupling": [["only_one"]]}, "test", VALID_CHECKS)
+
+    def test_expected_coupling_items_must_be_strings(self):
+        with pytest.raises(ConfigError, match="must contain strings"):
+            _validate_config({"expected-coupling": [[1, 2]]}, "test", VALID_CHECKS)
+
 
 class TestCLIConfigIntegration:
     def test_config_exclude_applied(self, tmp_path, capsys):

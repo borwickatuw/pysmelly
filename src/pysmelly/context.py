@@ -20,12 +20,14 @@ class AnalysisContext:
         git_root: Path | None = None,
         git_window: str = "6m",
         commit_messages: str = "auto",
+        expected_coupling: list[list[str]] | None = None,
     ) -> None:
         self.all_trees = all_trees
         self.verbose = verbose
         self.git_root = git_root
         self.git_window = git_window
         self.commit_messages = commit_messages
+        self.expected_coupling = expected_coupling or []
         self._function_index: dict[str, list[dict]] | None = None
         self._call_index: dict[str, list[dict]] | None = None
         self._import_index: dict[str, set[str]] | None = None
