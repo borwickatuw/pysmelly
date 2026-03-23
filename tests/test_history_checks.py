@@ -59,37 +59,49 @@ _STALE = _NOW - timedelta(days=400)  # ~13 months ago
 
 
 class TestAbandonedCode:
-    def test_stale_file_among_active_peers(self):
-        """One stale file in an active directory -> finding."""
+    def test_untouched_file_among_active_peers(self):
+        """File on disk with no commits in window, while peers are active -> finding."""
         files = {
             "pkg/a.py": "x = 1",
             "pkg/b.py": "y = 2",
             "pkg/c.py": "z = 3",
             "pkg/old.py": "w = 4",
         }
+        # old.py has no commits in the window (not in last_modified)
         last_modified = {
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
-            "pkg/old.py": _STALE,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert len(findings) == 1
         assert findings[0].file == "pkg/old.py"
-        assert "months ago" in findings[0].message
+        assert "no commits" in findings[0].message
 
-    def test_all_files_stale_no_finding(self):
-        """All files stale -> no active peers -> no finding."""
+    def test_all_files_untouched_no_finding(self):
+        """No files have commits in window -> no active peers -> no finding."""
+        files = {
+            "pkg/a.py": "x = 1",
+            "pkg/b.py": "y = 2",
+            "pkg/c.py": "z = 3",
+        }
+        # None have commits in the window
+        ctx = _make_ctx(files, last_modified={})
+        findings = check_abandoned_code(ctx)
+        assert len(findings) == 0
+
+    def test_all_files_active_no_finding(self):
+        """All files have commits in window -> no untouched files -> no finding."""
         files = {
             "pkg/a.py": "x = 1",
             "pkg/b.py": "y = 2",
             "pkg/c.py": "z = 3",
         }
         last_modified = {
-            "pkg/a.py": _STALE,
-            "pkg/b.py": _STALE,
-            "pkg/c.py": _STALE,
+            "pkg/a.py": _RECENT,
+            "pkg/b.py": _RECENT,
+            "pkg/c.py": _RECENT,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
@@ -101,10 +113,7 @@ class TestAbandonedCode:
             "pkg/a.py": "x = 1",
             "pkg/old.py": "y = 2",
         }
-        last_modified = {
-            "pkg/a.py": _RECENT,
-            "pkg/old.py": _STALE,
-        }
+        last_modified = {"pkg/a.py": _RECENT}
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert len(findings) == 0
@@ -117,8 +126,8 @@ class TestAbandonedCode:
             "pkg/b.py": "y = 2",
             "pkg/c.py": "z = 3",
         }
+        # __init__.py has no commits; peers are active
         last_modified = {
-            "pkg/__init__.py": _STALE,
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
@@ -136,7 +145,6 @@ class TestAbandonedCode:
             "tests/c.py": "z = 3",
         }
         last_modified = {
-            "tests/conftest.py": _STALE,
             "tests/a.py": _RECENT,
             "tests/b.py": _RECENT,
             "tests/c.py": _RECENT,
@@ -154,7 +162,6 @@ class TestAbandonedCode:
             "pkg/c.py": "z = 3",
         }
         last_modified = {
-            "pkg/settings.py": _STALE,
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
@@ -163,20 +170,16 @@ class TestAbandonedCode:
         findings = check_abandoned_code(ctx)
         assert len(findings) == 0
 
-    def test_file_not_in_git_skipped(self):
-        """File not in git history (new/untracked) -> no finding."""
+    def test_minority_active_no_finding(self):
+        """Less than half of peers active -> not meaningful -> no finding."""
         files = {
             "pkg/a.py": "x = 1",
             "pkg/b.py": "y = 2",
             "pkg/c.py": "z = 3",
-            "pkg/new.py": "w = 4",
+            "pkg/d.py": "w = 4",
         }
-        last_modified = {
-            "pkg/a.py": _RECENT,
-            "pkg/b.py": _RECENT,
-            "pkg/c.py": _RECENT,
-            # pkg/new.py not in last_modified
-        }
+        # Only 1 of 4 files is active (< 50%)
+        last_modified = {"pkg/a.py": _RECENT}
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert len(findings) == 0
@@ -200,14 +203,13 @@ class TestAbandonedCode:
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
-            "pkg/old.py": _STALE,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert findings[0].line == 1
 
-    def test_multiple_stale_files(self):
-        """Multiple stale files in an active directory."""
+    def test_multiple_untouched_files(self):
+        """Multiple untouched files in an active directory."""
         files = {
             "pkg/a.py": "x = 1",
             "pkg/b.py": "y = 2",
@@ -219,8 +221,6 @@ class TestAbandonedCode:
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
-            "pkg/old1.py": _STALE,
-            "pkg/old2.py": _STALE,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
@@ -238,26 +238,23 @@ class TestAbandonedCode:
             "stale/b.py": "y = 2",
             "stale/c.py": "z = 3",
         }
+        # active/ has 3 of 4 active; stale/ has 0 of 3 active
         last_modified = {
             "active/a.py": _RECENT,
             "active/b.py": _RECENT,
             "active/c.py": _RECENT,
-            "active/old.py": _STALE,
-            "stale/a.py": _STALE,
-            "stale/b.py": _STALE,
-            "stale/c.py": _STALE,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
-        # Only the active directory should produce a finding
+        # Only active/ should produce a finding (stale/ has no active peers)
         assert len(findings) == 1
         assert findings[0].file == "active/old.py"
 
     def test_reviewed_file_not_flagged(self):
-        """A stale file with a recent 'pysmelly: reviewed' marker is not flagged.
+        """A reviewed file appears in last_modified, so it's not flagged.
 
         The reviewed marker updates last_modified in GitHistory, so by the
-        time the check runs, the file appears recently touched.
+        time the check runs, the file appears as having activity in the window.
         """
         files = {
             "pkg/a.py": "x = 1",
@@ -265,16 +262,33 @@ class TestAbandonedCode:
             "pkg/c.py": "z = 3",
             "pkg/old.py": "w = 4",
         }
-        # old.py was reviewed recently — last_modified reflects the review commit
+        # old.py was reviewed — it now appears in last_modified
         last_modified = {
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
-            "pkg/old.py": _RECENT,  # updated by reviewed marker
+            "pkg/old.py": _RECENT,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert len(findings) == 0
+
+    def test_message_includes_window(self):
+        """Finding message references the window period."""
+        files = {
+            "pkg/a.py": "x = 1",
+            "pkg/b.py": "y = 2",
+            "pkg/c.py": "z = 3",
+            "pkg/old.py": "w = 4",
+        }
+        last_modified = {
+            "pkg/a.py": _RECENT,
+            "pkg/b.py": _RECENT,
+            "pkg/c.py": _RECENT,
+        }
+        ctx = _make_ctx(files, last_modified)
+        findings = check_abandoned_code(ctx)
+        assert "6m" in findings[0].message
 
 
 # --- blast-radius tests ---
