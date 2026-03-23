@@ -75,3 +75,19 @@ Remaining cases: dict lookups, attribute access, pure forwarding calls,
 constant returns in non-subclasses. The pure forwarding case is the most
 useful — the others are usually intentional naming abstractions. Consider
 dropping dict/attribute/constant patterns and keeping only pure forwarding.
+
+## Project-level git health metrics
+
+Aggregate metrics about the whole codebase rather than per-file findings:
+
+- **Codebase sprawl** — more files being created than deleted over time
+- **Growing commit scope** — average files-per-commit increasing (harder
+  to make isolated changes)
+- **Increasing fix ratio** — project-wide fix commit percentage trending
+  upward (accumulating instability)
+- **Decreasing commit frequency** — development slowing down
+
+These are real signals but don't fit pysmelly's per-file finding model.
+They'd need a different output format — maybe a "project health" summary
+section in the git-history output, separate from per-file findings.
+Would need to decide on thresholds and presentation before implementing.

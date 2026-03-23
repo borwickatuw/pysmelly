@@ -717,6 +717,117 @@ revert) — production instability hotspot`
 
 ---
 
+### Phase 10g-extra: Additional pattern checks
+
+These fill gaps identified after reviewing the full check catalog.
+
+#### Check: `hotspot-acceleration` (MEDIUM)
+
+A file's commit *frequency* is increasing even if its size is stable.
+We have `growth-trajectory` for lines, but this measures *attention*.
+A file that went from 1 commit/month to 5 commits/month is becoming a
+problem — it's attracting more and more developer time regardless of
+whether it's growing.
+
+**Algorithm (time-slice based):**
+1. For each file, count commits per time slice
+2. Compare commit frequency in the first half vs second half of window
+3. Flag if second-half frequency >= 2x first-half AND >= 3 commits in
+   the second half
+4. Skip files with < 5 total commits (not enough data)
+5. Skip test files
+
+**Commit style sensitivity:** Medium — commit frequency is inherently
+commit-style-dependent, but the *ratio* (acceleration) is more robust
+than absolute counts. A developer who commits once a day doubling to
+twice a day is the same signal as one who commits 10x/day going to
+20x/day.
+
+**Message format:**
+`services/billing.py — commit frequency increased from ~1/week to
+~4/week in the second half of the window — becoming a hotspot`
+
+---
+
+#### Check: `no-refactoring` (LOW)
+
+A file with many feature and fix commits but zero refactoring commits.
+It's accumulating change after change without anyone ever stepping back
+to restructure. Uses the commit classifier we already have.
+
+**Algorithm:**
+1. For each file, classify commits into fix/feature/refactor
+2. Flag if total commits >= 8 AND refactor count == 0 AND
+   (fix + feature) >= 6
+3. Skip test files
+4. Skip files < 50 lines
+
+**Commit style sensitivity:** Medium — requires commits to be typed
+(conventional prefixes or keyword-detectable). Gated behind message
+quality like other semantic checks.
+
+**Message format:**
+`models/user.py — 12 commits (7 feature, 5 fix, 0 refactor) in last
+6m — accumulating changes without restructuring`
+
+---
+
+#### Check: `conflict-prone` (MEDIUM)
+
+Files that frequently appear in merge conflicts. We currently use
+`--no-merges` and skip merge data entirely, but merge conflicts are
+strong signal: a file where multiple concerns collide.
+
+**Infrastructure:** Separate `git log --merges --name-only` call to
+identify files appearing in merge commits. A file in a merge commit
+isn't necessarily conflicted, but files that appear in *many* merge
+commits disproportionate to their change frequency likely are.
+
+**Algorithm:**
+1. Run `git log --merges --name-only` for the window
+2. For each file, count merge-commit appearances
+3. Compare to non-merge commit count from existing data
+4. Flag if merge appearances >= 5 AND merge ratio
+   (merges / total commits) >= 0.3
+5. Skip files with < 3 merge appearances
+
+**Commit style sensitivity:** Only meaningful in repos that use merge
+commits (not rebase-only workflows). Auto-skip if zero merge commits
+found in the window.
+
+**Message format:**
+`api/views.py — appears in 8 merge commits (40% of its commits are
+merges) — frequent integration conflicts suggest competing concerns`
+
+---
+
+#### Check: `repeated-similar-changes` (LOW)
+
+The same *type* of modification is being applied to a file repeatedly.
+Commit messages are structurally similar: "Add column to X", "Add field
+to X", "Add handler for X". This suggests a missing abstraction or
+configuration mechanism — the code should be data-driven rather than
+requiring manual additions.
+
+**Algorithm:**
+1. For each file, collect commit messages
+2. Tokenize and normalize messages (lowercase, strip numbers, remove
+   common prefixes like "fix:", "feat:")
+3. Compute pairwise similarity between messages (Jaccard on word sets)
+4. Flag if 4+ commit messages have >= 0.5 Jaccard similarity to each
+   other
+5. Skip if the file has < 6 commits
+
+**Commit style sensitivity:** High — requires descriptive commit
+messages. Gated behind message quality.
+
+**Message format:**
+`models/report.py — 5 commits with similar messages ("add X field",
+"add Y field", "add Z field") — consider a data-driven approach
+instead of manual additions`
+
+---
+
 ### Phase 10h: Temporal cascade checks
 
 These are the most sophisticated checks — they analyze *sequences* of
@@ -802,8 +913,10 @@ billing (months 4-6) — responsibility is migrating into this file`
 6. **10e**: `fix-follows-feature`, `stabilization-failure`
 7. **10f**: Author data infrastructure, `knowledge-silo`
 8. **10g**: `growing-import-fan-out`, `test-erosion`, `emergency-hotspots`
-9. **10h**: `shotgun-surgery-temporal`, `responsibility-drift`
-   (only if earlier checks prove valuable)
+9. **10g-extra**: `hotspot-acceleration`, `no-refactoring`,
+   `conflict-prone`, `repeated-similar-changes`
+10. **10h**: `shotgun-surgery-temporal`, `responsibility-drift`
+    (only if earlier checks prove valuable)
 
 Phases 10d (`same-change-multiple-files`, `growing-signatures`) remain
 stretch goals requiring diff-level parsing.
