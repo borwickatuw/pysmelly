@@ -22,8 +22,8 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery, repeated-string-parsing)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
-- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth)
-- `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats dataclasses, reviewed marker parsing, lazy numstat
+- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth, bug-magnet, fix-propagation, conscious-debt, divergent-change)
+- `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats dataclasses, reviewed marker parsing, lazy numstat, commit classifier
 
 ## Common Commands
 

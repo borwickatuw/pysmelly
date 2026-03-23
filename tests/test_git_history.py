@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pysmelly.git_history import GitHistory, _is_quality_message, _parse_window
+from pysmelly.git_history import GitHistory, _is_quality_message, _parse_window, classify_commit
 
 
 class TestParseWindow:
@@ -256,6 +256,49 @@ class TestFileStats:
         history = GitHistory(git_repo, window="6m")
         stats = history.file_stats["app.py"]
         assert stats.total_deletions > 0
+
+
+class TestClassifyCommit:
+    def test_fix_prefix(self):
+        assert "fix" in classify_commit("fix: resolve null pointer in auth")
+
+    def test_fix_scoped(self):
+        assert "fix" in classify_commit("fix(auth): resolve null pointer")
+
+    def test_feat_prefix(self):
+        assert "feature" in classify_commit("feat: add OAuth2 support")
+
+    def test_refactor_prefix(self):
+        assert "refactor" in classify_commit("refactor: simplify auth module")
+
+    def test_fix_keyword(self):
+        assert "fix" in classify_commit("Resolve bug in payment processing")
+
+    def test_feature_keyword(self):
+        assert "feature" in classify_commit("Add retry logic to HTTP client")
+
+    def test_refactor_keyword(self):
+        assert "refactor" in classify_commit("Simplify the validation pipeline")
+
+    def test_debt_keyword_workaround(self):
+        assert "debt" in classify_commit("Add temporary workaround for rate limiting")
+
+    def test_debt_keyword_hack(self):
+        assert "debt" in classify_commit("Quick hack to unblock deploy")
+
+    def test_debt_keyword_todo(self):
+        assert "debt" in classify_commit("TODO: clean up after migration")
+
+    def test_unclassified(self):
+        assert classify_commit("Update README") == set()
+
+    def test_multiple_categories(self):
+        cats = classify_commit("fix: add workaround for auth bug")
+        assert "fix" in cats
+        assert "debt" in cats
+
+    def test_empty_message(self):
+        assert classify_commit("") == set()
 
 
 def _git(cwd, *args):

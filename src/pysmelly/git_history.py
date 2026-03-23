@@ -39,6 +39,56 @@ _CONVENTIONAL_PREFIXES = frozenset(
 _WINDOW_RE = re.compile(r"^(\d+)([dmy])$")
 _REVIEWED_RE = re.compile(r"^pysmelly:\s*reviewed\s+(.+)$", re.MULTILINE)
 
+# Commit classification keywords (word-boundary matched)
+_FIX_WORDS = re.compile(r"\b(fix|bug|bugfix|patch|correct|repair|resolve|hotfix)\b", re.IGNORECASE)
+_FEATURE_WORDS = re.compile(r"\b(add|implement|introduce|support|create|new)\b", re.IGNORECASE)
+_REFACTOR_WORDS = re.compile(
+    r"\b(refactor|restructure|reorganize|simplify|clean\s*up|extract|inline|rename|move)\b",
+    re.IGNORECASE,
+)
+_DEBT_WORDS = re.compile(
+    r"\b(workaround|hack|temporary|todo|fixme|quick\s*fix|stopgap|kludge)\b",
+    re.IGNORECASE,
+)
+
+# Conventional commit prefix → category
+_PREFIX_CATEGORIES = {
+    "fix": "fix",
+    "feat": "feature",
+    "refactor": "refactor",
+}
+
+
+def classify_commit(message: str) -> set[str]:
+    """Classify a commit message into categories: fix, feature, refactor, debt.
+
+    A commit can match multiple categories. Returns empty set for unclassified.
+    """
+    categories: set[str] = set()
+
+    # Check conventional commit prefix first (strongest signal)
+    colon_pos = message.find(":")
+    if colon_pos != -1:
+        prefix = message[:colon_pos].strip().lower()
+        paren_pos = prefix.find("(")
+        if paren_pos != -1:
+            prefix = prefix[:paren_pos]
+        if prefix in _PREFIX_CATEGORIES:
+            categories.add(_PREFIX_CATEGORIES[prefix])
+
+    # Keyword matching on the full message
+    if _FIX_WORDS.search(message):
+        categories.add("fix")
+    if _FEATURE_WORDS.search(message):
+        categories.add("feature")
+    if _REFACTOR_WORDS.search(message):
+        categories.add("refactor")
+    if _DEBT_WORDS.search(message):
+        categories.add("debt")
+
+    return categories
+
+
 _WINDOW_UNITS = {
     "d": "days",
     "m": "months",

@@ -10,8 +10,12 @@ from statistics import median
 from pysmelly.checks.history import (
     check_abandoned_code,
     check_blast_radius,
+    check_bug_magnet,
     check_change_coupling,
     check_churn_without_growth,
+    check_conscious_debt,
+    check_divergent_change,
+    check_fix_propagation,
     check_growth_trajectory,
 )
 from pysmelly.context import AnalysisContext
@@ -23,6 +27,7 @@ def _make_ctx(
     last_modified: dict[str, datetime] | None = None,
     commits: list[CommitInfo] | None = None,
     file_stats: dict[str, FileStats] | None = None,
+    message_quality: float = 0.5,
 ) -> AnalysisContext:
     """Build an AnalysisContext with a mocked git_history."""
     all_trees = {Path(name): ast.parse(code) for name, code in files.items()}
@@ -32,7 +37,7 @@ def _make_ctx(
     history = object.__new__(GitHistory)
     history.commits_for_file = {}
     history.last_modified = last_modified or {}
-    history._message_quality = 0.5
+    history._message_quality = message_quality
     history.commit_messages = "auto"
     history.window = "6m"
     history._commits = commits or []
@@ -633,3 +638,334 @@ class TestChurnWithoutGrowth:
         """No git_history -> empty."""
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_churn_without_growth(ctx) == []
+
+
+# --- Semantic check helpers ---
+
+
+def _fix_commits(filepath: str, count: int) -> list[CommitInfo]:
+    """Create fix commits touching a file."""
+    return [
+        CommitInfo(
+            hash=f"fix{i:04d}",
+            date=_RECENT - timedelta(days=i),
+            message=f"fix: resolve issue #{i}",
+            files=[filepath],
+        )
+        for i in range(count)
+    ]
+
+
+def _feat_commits(filepath: str, count: int) -> list[CommitInfo]:
+    """Create feature commits touching a file."""
+    return [
+        CommitInfo(
+            hash=f"feat{i:04d}",
+            date=_RECENT - timedelta(days=i),
+            message=f"feat: add feature #{i}",
+            files=[filepath],
+        )
+        for i in range(count)
+    ]
+
+
+# --- bug-magnet tests ---
+
+
+class TestBugMagnet:
+    def test_majority_fixes(self):
+        """File with >= 50% fix commits -> finding."""
+        files = {"services/billing.py": "x = 1"}
+        commits = _fix_commits("services/billing.py", 8) + _feat_commits("services/billing.py", 4)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 1
+        assert "8 of 12" in findings[0].message
+        assert "bug-magnet" == findings[0].check
+
+    def test_minority_fixes_no_finding(self):
+        """File with < 50% fix commits -> no finding."""
+        files = {"app.py": "x = 1"}
+        commits = _fix_commits("app.py", 2) + _feat_commits("app.py", 8)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 0
+
+    def test_few_commits_skipped(self):
+        """File with < 5 commits -> no finding."""
+        files = {"app.py": "x = 1"}
+        commits = _fix_commits("app.py", 4)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped."""
+        files = {"test_billing.py": "x = 1"}
+        commits = _fix_commits("test_billing.py", 8)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 0
+
+    def test_low_message_quality_skipped(self):
+        """Low message quality -> semantic checks skip."""
+        files = {"app.py": "x = 1"}
+        commits = _fix_commits("app.py", 8)
+        ctx = _make_ctx(files, commits=commits, message_quality=0.3)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_bug_magnet(ctx) == []
+
+
+# --- fix-propagation tests ---
+
+
+class TestFixPropagation:
+    def test_co_changing_in_fixes(self):
+        """Files that co-change in fix commits -> finding."""
+        files = {"api/views.py": "x = 1", "middleware/auth.py": "y = 2"}
+        commits = [
+            CommitInfo(
+                hash=f"fix{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"fix: resolve issue #{i}",
+                files=["api/views.py", "middleware/auth.py"],
+            )
+            for i in range(5)
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_fix_propagation(ctx)
+        assert len(findings) == 1
+        assert "fix commits touch both" in findings[0].message
+
+    def test_low_co_fix_count(self):
+        """Fewer than 3 co-fix commits -> no finding."""
+        files = {"a.py": "x = 1", "b.py": "y = 2"}
+        commits = [
+            CommitInfo(
+                hash=f"fix{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"fix: issue #{i}",
+                files=["a.py", "b.py"],
+            )
+            for i in range(2)
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_fix_propagation(ctx)
+        assert len(findings) == 0
+
+    def test_non_fix_commits_ignored(self):
+        """Feature commits don't count toward fix propagation."""
+        files = {"a.py": "x = 1", "b.py": "y = 2"}
+        commits = [
+            CommitInfo(
+                hash=f"feat{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"feat: add feature #{i}",
+                files=["a.py", "b.py"],
+            )
+            for i in range(10)
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_fix_propagation(ctx)
+        assert len(findings) == 0
+
+    def test_test_source_pair_skipped(self):
+        """Test↔source pairs are skipped."""
+        files = {"app.py": "x = 1", "test_app.py": "y = 2"}
+        commits = [
+            CommitInfo(
+                hash=f"fix{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"fix: issue #{i}",
+                files=["app.py", "test_app.py"],
+            )
+            for i in range(5)
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_fix_propagation(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_fix_propagation(ctx) == []
+
+
+# --- conscious-debt tests ---
+
+
+class TestConsciousDebt:
+    def test_debt_marker_in_commit(self):
+        """Commit with debt keyword -> finding."""
+        files = {"models/cache.py": "x = 1"}
+        commits = [
+            CommitInfo(
+                hash="a1b2c3d4e5f6",
+                date=_RECENT,
+                message="Add temporary workaround for rate limiting",
+                files=["models/cache.py"],
+            )
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_conscious_debt(ctx)
+        assert len(findings) == 1
+        assert "workaround" in findings[0].message
+        assert "still needed" in findings[0].message
+
+    def test_multiple_debt_commits_grouped(self):
+        """Multiple debt commits to same file are grouped."""
+        files = {"app.py": "x = 1"}
+        commits = [
+            CommitInfo(
+                hash="aaaa1111",
+                date=_RECENT,
+                message="Add temporary hack for deploy",
+                files=["app.py"],
+            ),
+            CommitInfo(
+                hash="bbbb2222",
+                date=_RECENT - timedelta(days=10),
+                message="Quick fix workaround for auth",
+                files=["app.py"],
+            ),
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_conscious_debt(ctx)
+        assert len(findings) == 1
+        assert "2 debt commits" in findings[0].message
+
+    def test_no_debt_keywords(self):
+        """Normal commits -> no finding."""
+        files = {"app.py": "x = 1"}
+        commits = _feat_commits("app.py", 5)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_conscious_debt(ctx)
+        assert len(findings) == 0
+
+    def test_file_not_in_analysis(self):
+        """Debt commit touching file not in all_trees -> no finding."""
+        files = {"app.py": "x = 1"}
+        commits = [
+            CommitInfo(
+                hash="aaaa1111",
+                date=_RECENT,
+                message="Add temporary hack",
+                files=["other.py"],
+            )
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_conscious_debt(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_conscious_debt(ctx) == []
+
+
+# --- divergent-change tests ---
+
+
+class TestDivergentChange:
+    def test_many_scopes(self):
+        """File with 4+ scopes -> finding."""
+        files = {"models/user.py": _make_large_file(100)}
+        commits = []
+        for scope in ["auth", "billing", "notifications", "reporting"]:
+            for i in range(2):
+                commits.append(
+                    CommitInfo(
+                        hash=f"{scope}{i:04d}",
+                        date=_RECENT - timedelta(days=i),
+                        message=f"feat({scope}): update user model",
+                        files=["models/user.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 1
+        assert "4 different concerns" in findings[0].message
+
+    def test_few_scopes_no_finding(self):
+        """File with < 4 scopes -> no finding."""
+        files = {"app.py": _make_large_file(100)}
+        commits = []
+        for scope in ["auth", "billing"]:
+            for i in range(3):
+                commits.append(
+                    CommitInfo(
+                        hash=f"{scope}{i:04d}",
+                        date=_RECENT - timedelta(days=i),
+                        message=f"feat({scope}): update",
+                        files=["app.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_small_file_skipped(self):
+        """File < 50 lines -> no finding."""
+        files = {"small.py": _make_large_file(30)}
+        commits = []
+        for scope in ["a", "b", "c", "d"]:
+            for i in range(2):
+                commits.append(
+                    CommitInfo(
+                        hash=f"{scope}{i:04d}",
+                        date=_RECENT - timedelta(days=i),
+                        message=f"feat({scope}): update",
+                        files=["small.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_scopes_need_minimum_commits(self):
+        """Scopes with only 1 commit don't count."""
+        files = {"app.py": _make_large_file(100)}
+        commits = [
+            CommitInfo(
+                hash=f"{scope}0001",
+                date=_RECENT,
+                message=f"feat({scope}): one-off",
+                files=["app.py"],
+            )
+            for scope in ["a", "b", "c", "d", "e"]
+        ]
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_no_conventional_commits(self):
+        """No scoped commits -> no finding."""
+        files = {"app.py": _make_large_file(100)}
+        commits = _feat_commits("app.py", 10)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_init_py_skipped(self):
+        """__init__.py is skipped."""
+        files = {"pkg/__init__.py": _make_large_file(100)}
+        commits = []
+        for scope in ["a", "b", "c", "d"]:
+            for i in range(2):
+                commits.append(
+                    CommitInfo(
+                        hash=f"{scope}{i:04d}",
+                        date=_RECENT - timedelta(days=i),
+                        message=f"feat({scope}): update",
+                        files=["pkg/__init__.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_no_git_history(self):
+        ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
+        assert check_divergent_change(ctx) == []

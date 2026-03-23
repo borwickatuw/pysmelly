@@ -7,7 +7,10 @@ from pathlib import Path
 from statistics import median
 
 from pysmelly.context import AnalysisContext
+from pysmelly.git_history import GitHistory, classify_commit
 from pysmelly.registry import Finding, Severity, check
+
+_MIN_MESSAGE_QUALITY = 0.5
 
 # Files that are naturally stable and shouldn't be flagged
 _SKIP_NAMES = frozenset({"__init__.py", "conftest.py"})
@@ -383,3 +386,263 @@ def check_churn_without_growth(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+# --- Semantic checks (Tier 2 — require structured commit messages) ---
+
+
+def _semantic_guard(history: GitHistory | None) -> GitHistory | None:
+    """Return the history object if semantic checks should run, else None."""
+    if history is None:
+        return None
+    if history.message_quality < _MIN_MESSAGE_QUALITY:
+        return None
+    return history
+
+
+@check(
+    "bug-magnet",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="Files where a majority of commits are fixes — recurring problems",
+)
+def check_bug_magnet(ctx: AnalysisContext) -> list[Finding]:
+    history = _semantic_guard(ctx.git_history)
+    if history is None:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if _is_test_file(file_str):
+            continue
+
+        commits = history.commits_for_file.get(file_str, [])
+        if len(commits) < 5:
+            continue
+
+        fix_count = sum(1 for c in commits if "fix" in classify_commit(c.message))
+        fix_ratio = fix_count / len(commits)
+        if fix_ratio < 0.5:
+            continue
+
+        pct = int(fix_ratio * 100)
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="bug-magnet",
+                message=(
+                    f"{file_str} — {fix_count} of {len(commits)} commits "
+                    f"({pct}%) are fixes — recurring problems suggest a "
+                    f"structural issue worth redesigning"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "fix-propagation",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="Files that co-change in fix commits — fixing one tends to break the other",
+)
+def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
+    history = _semantic_guard(ctx.git_history)
+    if history is None:
+        return []
+
+    analyzed_files = {str(p) for p in ctx.all_trees}
+
+    # Count co-changes in fix commits only
+    pair_counts: dict[tuple[str, str], int] = {}
+    file_fix_counts: dict[str, int] = {}
+
+    for commit in history._commits:
+        if "fix" not in classify_commit(commit.message):
+            continue
+
+        py_files = sorted(
+            f
+            for f in commit.files
+            if f.endswith(".py")
+            and f in analyzed_files
+            and Path(f).name != "__init__.py"
+            and not _is_migration_file(f)
+        )
+
+        if len(py_files) >= 20:
+            continue
+
+        for f in py_files:
+            file_fix_counts[f] = file_fix_counts.get(f, 0) + 1
+
+        for i in range(len(py_files)):
+            for j in range(i + 1, len(py_files)):
+                pair = (py_files[i], py_files[j])
+                pair_counts[pair] = pair_counts.get(pair, 0) + 1
+
+    findings: list[Finding] = []
+
+    for (file_a, file_b), co_fixes in pair_counts.items():
+        if co_fixes < 3:
+            continue
+
+        # Skip test↔source pairs
+        if _is_test_file(file_a) != _is_test_file(file_b):
+            continue
+
+        count_a = file_fix_counts.get(file_a, 0)
+        count_b = file_fix_counts.get(file_b, 0)
+        min_count = min(count_a, count_b)
+        if min_count == 0:
+            continue
+
+        ratio = co_fixes / min_count
+        if ratio < 0.6:
+            continue
+
+        findings.append(
+            Finding(
+                file=file_a,
+                line=1,
+                check="fix-propagation",
+                message=(
+                    f"{file_a} and {file_b} — {co_fixes} of {min_count} fix "
+                    f"commits touch both files — fixing one tends to break "
+                    f"the other"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "conscious-debt",
+    severity=Severity.LOW,
+    category="git-history",
+    description="Commits that explicitly acknowledge technical debt",
+)
+def check_conscious_debt(ctx: AnalysisContext) -> list[Finding]:
+    history = _semantic_guard(ctx.git_history)
+    if history is None:
+        return []
+
+    analyzed_files = {str(p) for p in ctx.all_trees}
+
+    # Group debt commits by file, keeping the most recent
+    file_debt: dict[str, list[tuple[str, str, str]]] = {}
+
+    for commit in history._commits:
+        if "debt" not in classify_commit(commit.message):
+            continue
+
+        for filepath in commit.files:
+            if filepath not in analyzed_files:
+                continue
+            file_debt.setdefault(filepath, []).append(
+                (commit.hash[:7], commit.date.strftime("%Y-%m-%d"), commit.message)
+            )
+
+    findings: list[Finding] = []
+
+    for filepath, debt_commits in file_debt.items():
+        # Use the most recent debt commit for the message
+        commit_hash, date_str, message = debt_commits[0]
+        count = len(debt_commits)
+
+        if count == 1:
+            detail = f'commit {commit_hash} "{message}" ({date_str})'
+        else:
+            detail = (
+                f"{count} debt commits, most recent: {commit_hash} " f'"{message}" ({date_str})'
+            )
+
+        findings.append(
+            Finding(
+                file=filepath,
+                line=1,
+                check="conscious-debt",
+                message=(f"{filepath} — {detail} — acknowledged debt, is it " f"still needed?"),
+                severity=Severity.LOW,
+            )
+        )
+
+    return findings
+
+
+@check(
+    "divergent-change",
+    severity=Severity.MEDIUM,
+    category="git-history",
+    description="One file appearing in commits with very different purposes",
+)
+def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
+    history = _semantic_guard(ctx.git_history)
+    if history is None:
+        return []
+
+    findings: list[Finding] = []
+
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+
+        if file_path.name in _SKIP_NAMES or file_path.name.endswith(_SKIP_SUFFIXES):
+            continue
+
+        current_lines = _get_line_count(file_str, ctx.all_trees)
+        if current_lines < 50:
+            continue
+
+        commits = history.commits_for_file.get(file_str, [])
+        if not commits:
+            continue
+
+        # Collect scopes from conventional commit messages
+        scopes: dict[str, int] = {}
+        for commit in commits:
+            scope = _extract_scope(commit.message)
+            if scope:
+                scopes[scope] = scopes.get(scope, 0) + 1
+
+        # Need 4+ distinct scopes with 2+ commits each
+        significant_scopes = {s: n for s, n in scopes.items() if n >= 2}
+        if len(significant_scopes) < 4:
+            continue
+
+        scope_list = ", ".join(sorted(significant_scopes.keys()))
+        findings.append(
+            Finding(
+                file=file_str,
+                line=1,
+                check="divergent-change",
+                message=(
+                    f"{file_str} appears in commits for "
+                    f"{len(significant_scopes)} different concerns "
+                    f"({scope_list}) — consider splitting responsibilities"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+
+    return findings
+
+
+def _extract_scope(message: str) -> str | None:
+    """Extract scope from conventional commit: 'fix(auth): ...' -> 'auth'."""
+    colon_pos = message.find(":")
+    if colon_pos == -1:
+        return None
+    prefix = message[:colon_pos]
+    paren_open = prefix.find("(")
+    paren_close = prefix.find(")")
+    if paren_open != -1 and paren_close > paren_open:
+        return prefix[paren_open + 1 : paren_close].strip().lower()
+    return None
