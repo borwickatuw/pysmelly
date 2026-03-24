@@ -114,6 +114,8 @@ def check_abandoned_code(ctx: AnalysisContext) -> list[Finding]:
             name = Path(f).name
             if name in _SKIP_NAMES or name.endswith(_SKIP_SUFFIXES):
                 continue
+            if _is_test_file(f):
+                continue
 
             line_count = _get_line_count(f, ctx.all_trees)
             if line_count < 20:
