@@ -425,7 +425,7 @@ min-severity = "medium"
 
 CLI arguments extend list values and override scalar values.
 
-## How to act on findings
+## How to act on AST findings
 
 **Your default should be to fix each finding, not to explain why it's OK.**
 Most fixes are small: delete dead code, remove an unused parameter, replace
@@ -462,6 +462,57 @@ radius of the fix.
 severity issues, commit, then re-run pysmelly. Don't try to address everything
 at once — focused changes are easier to review and less likely to introduce
 regressions.
+
+## How to act on git-history findings
+
+Git history findings are different from AST findings. AST findings point to
+specific code patterns you can fix in a single commit. Git history findings
+reveal **evolutionary patterns** — how your codebase is changing over time —
+and often require design-level thinking rather than quick fixes.
+
+**Start with convergence hotspots.** When pysmelly reports a file flagged by
+3+ different checks, that's your highest-confidence signal. A file that is
+simultaneously a bug-magnet, growing fast, and producing fix-after-feature
+sequences has a structural problem — not a series of unrelated issues. Read
+the file, understand why multiple checks converge on it, and consider whether
+it needs to be decomposed or redesigned.
+
+**Cluster blast-radius and change-coupling findings.** If 20 files all show
+high blast-radius, they are not 20 independent problems — they are one
+tightly-coupled subsystem. Group the findings by directory or package and ask:
+what shared abstraction (base class, data model, configuration) is forcing all
+these files to change together? Stabilizing that shared interface will resolve
+the entire cluster at once.
+
+**yo-yo-code and fix-follows-feature point to unstable abstractions.** When
+code is being rewritten repeatedly (yo-yo) or features reliably produce bugs
+(fix-follows-feature), the fix is usually a redesign, not a quick patch. Read
+the git log for that file to understand *what* keeps changing and *why*, then
+address the root cause. These findings often go away once the right abstraction
+is found.
+
+**bug-magnet files need structural attention.** A file where the majority of
+commits are fixes will keep attracting fixes until the underlying design
+changes. Look at the pattern of bugs — are they all in one area of the file?
+Is the file doing too many things? Would splitting it help isolate the
+fragile part?
+
+**growth-trajectory is a leading indicator.** A file that doubled in size in
+6 months will probably keep growing. Act before it becomes unmanageable —
+extract responsibilities while the file is still comprehensible.
+
+**knowledge-silo and abandoned-code are team-health signals.** These don't
+require code changes — they require human attention. Knowledge-silo means one
+person owns all the context for a file; pair programming or code review can
+spread that knowledge. Abandoned-code means a file may be dead weight; decide
+whether to delete it, update it, or acknowledge it with `pysmelly git-history
+reviewed`.
+
+**Not every finding demands a code change.** Some git-history findings are
+informational. If blast-radius is high because your project genuinely has
+tightly-integrated components, that may be acceptable — but you should be
+aware of it. The findings that most reliably demand action are convergence
+hotspots, bug-magnets, and fix-follows-feature patterns.
 """
 
 CLAUDE_MD_REFERENCE = """\
