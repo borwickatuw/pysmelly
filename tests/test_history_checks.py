@@ -39,6 +39,8 @@ def _make_ctx(
     authors_for_file: dict[str, dict[str, int]] | None = None,
     time_slices: list[TimeSlice] | None = None,
     commits_per_slice: float | None = None,
+    distinct_authors: int = 5,
+    median_commit_size: float = 1.0,
 ) -> AnalysisContext:
     """Build an AnalysisContext with a mocked git_history."""
     all_trees = {Path(name): ast.parse(code) for name, code in files.items()}
@@ -57,6 +59,8 @@ def _make_ctx(
     history.authors_for_file = authors_for_file or {}
     history._time_slices = time_slices
     history._commits_per_slice = commits_per_slice
+    history._distinct_authors = distinct_authors
+    history._median_commit_size = median_commit_size
 
     # Build commits_for_file from commits
     if commits:
@@ -83,6 +87,12 @@ _RECENT = _NOW - timedelta(days=30)  # 1 month ago
 _STALE = _NOW - timedelta(days=400)  # ~13 months ago
 
 
+def _make_large_file(line_count: int) -> str:
+    """Create a Python file with approximately N lines."""
+    lines = [f"x_{i} = {i}" for i in range(line_count)]
+    return "\n".join(lines) + "\n"
+
+
 # --- abandoned-code tests ---
 
 
@@ -90,10 +100,10 @@ class TestAbandonedCode:
     def test_untouched_file_among_active_peers(self):
         """File on disk with no commits in window, while peers are active -> finding."""
         files = {
-            "pkg/a.py": "x = 1",
-            "pkg/b.py": "y = 2",
-            "pkg/c.py": "z = 3",
-            "pkg/old.py": "w = 4",
+            "pkg/a.py": _make_large_file(30),
+            "pkg/b.py": _make_large_file(30),
+            "pkg/c.py": _make_large_file(30),
+            "pkg/old.py": _make_large_file(30),
         }
         # old.py has no commits in the window (not in last_modified)
         last_modified = {
@@ -222,10 +232,10 @@ class TestAbandonedCode:
     def test_finding_uses_line_1(self):
         """File-level findings use line 1."""
         files = {
-            "pkg/a.py": "x = 1",
-            "pkg/b.py": "y = 2",
-            "pkg/c.py": "z = 3",
-            "pkg/old.py": "w = 4",
+            "pkg/a.py": _make_large_file(30),
+            "pkg/b.py": _make_large_file(30),
+            "pkg/c.py": _make_large_file(30),
+            "pkg/old.py": _make_large_file(30),
         }
         last_modified = {
             "pkg/a.py": _RECENT,
@@ -239,11 +249,11 @@ class TestAbandonedCode:
     def test_multiple_untouched_files(self):
         """Multiple untouched files in an active directory."""
         files = {
-            "pkg/a.py": "x = 1",
-            "pkg/b.py": "y = 2",
-            "pkg/c.py": "z = 3",
-            "pkg/old1.py": "w = 4",
-            "pkg/old2.py": "v = 5",
+            "pkg/a.py": _make_large_file(30),
+            "pkg/b.py": _make_large_file(30),
+            "pkg/c.py": _make_large_file(30),
+            "pkg/old1.py": _make_large_file(30),
+            "pkg/old2.py": _make_large_file(30),
         }
         last_modified = {
             "pkg/a.py": _RECENT,
@@ -258,13 +268,13 @@ class TestAbandonedCode:
     def test_separate_directories_independent(self):
         """Each directory is evaluated independently."""
         files = {
-            "active/a.py": "x = 1",
-            "active/b.py": "y = 2",
-            "active/c.py": "z = 3",
-            "active/old.py": "w = 4",
-            "stale/a.py": "x = 1",
-            "stale/b.py": "y = 2",
-            "stale/c.py": "z = 3",
+            "active/a.py": _make_large_file(30),
+            "active/b.py": _make_large_file(30),
+            "active/c.py": _make_large_file(30),
+            "active/old.py": _make_large_file(30),
+            "stale/a.py": _make_large_file(30),
+            "stale/b.py": _make_large_file(30),
+            "stale/c.py": _make_large_file(30),
         }
         # active/ has 3 of 4 active; stale/ has 0 of 3 active
         last_modified = {
@@ -304,10 +314,10 @@ class TestAbandonedCode:
     def test_message_includes_window(self):
         """Finding message references the window period."""
         files = {
-            "pkg/a.py": "x = 1",
-            "pkg/b.py": "y = 2",
-            "pkg/c.py": "z = 3",
-            "pkg/old.py": "w = 4",
+            "pkg/a.py": _make_large_file(30),
+            "pkg/b.py": _make_large_file(30),
+            "pkg/c.py": _make_large_file(30),
+            "pkg/old.py": _make_large_file(30),
         }
         last_modified = {
             "pkg/a.py": _RECENT,
@@ -317,6 +327,41 @@ class TestAbandonedCode:
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
         assert "6m" in findings[0].message
+
+    def test_small_file_skipped(self):
+        """File under 20 lines -> no finding."""
+        files = {
+            "pkg/a.py": _make_large_file(30),
+            "pkg/b.py": _make_large_file(30),
+            "pkg/c.py": _make_large_file(30),
+            "pkg/tiny.py": "x = 1",
+        }
+        last_modified = {
+            "pkg/a.py": _RECENT,
+            "pkg/b.py": _RECENT,
+            "pkg/c.py": _RECENT,
+        }
+        ctx = _make_ctx(files, last_modified)
+        findings = check_abandoned_code(ctx)
+        assert len(findings) == 0
+
+    def test_large_file_flagged(self):
+        """File over 20 lines -> finding produced."""
+        files = {
+            "pkg/a.py": _make_large_file(30),
+            "pkg/b.py": _make_large_file(30),
+            "pkg/c.py": _make_large_file(30),
+            "pkg/old.py": _make_large_file(25),
+        }
+        last_modified = {
+            "pkg/a.py": _RECENT,
+            "pkg/b.py": _RECENT,
+            "pkg/c.py": _RECENT,
+        }
+        ctx = _make_ctx(files, last_modified)
+        findings = check_abandoned_code(ctx)
+        assert len(findings) == 1
+        assert findings[0].file == "pkg/old.py"
 
 
 # --- blast-radius tests ---
@@ -342,10 +387,10 @@ def _make_commits_for_blast_radius(
 
 class TestBlastRadius:
     def test_high_blast_radius(self):
-        """File with median >= 5 co-changes flagged."""
+        """File with median >= 8 co-changes flagged."""
         files = {"services/payment.py": "x = 1"}
-        # 7 commits, each touching 6 other files
-        commits = _make_commits_for_blast_radius("services/payment.py", [6, 7, 5, 8, 6, 7, 5])
+        # 7 commits, each touching 9+ other files — median exceeds threshold of 8
+        commits = _make_commits_for_blast_radius("services/payment.py", [9, 10, 8, 11, 9, 10, 8])
         ctx = _make_ctx(files, commits=commits)
         findings = check_blast_radius(ctx)
         assert len(findings) == 1
@@ -353,9 +398,9 @@ class TestBlastRadius:
         assert "blast-radius" == findings[0].check
 
     def test_low_blast_radius_no_finding(self):
-        """File with median < 5 co-changes not flagged."""
+        """File with median < 8 co-changes not flagged."""
         files = {"services/payment.py": "x = 1"}
-        commits = _make_commits_for_blast_radius("services/payment.py", [2, 3, 1, 2, 3, 2, 1])
+        commits = _make_commits_for_blast_radius("services/payment.py", [5, 6, 4, 5, 6, 5, 4])
         ctx = _make_ctx(files, commits=commits)
         findings = check_blast_radius(ctx)
         assert len(findings) == 0
@@ -399,6 +444,26 @@ class TestBlastRadius:
         """No git_history -> empty."""
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_blast_radius(ctx) == []
+
+    def test_threshold_scales_with_project(self):
+        """median_commit_size=5 means threshold=12, so median of 10 doesn't fire but 13 does."""
+        files = {"services/payment.py": "x = 1"}
+
+        # median of 10 < threshold of 12 -> no finding
+        commits = _make_commits_for_blast_radius(
+            "services/payment.py", [10, 10, 10, 10, 10, 10, 10]
+        )
+        ctx = _make_ctx(files, commits=commits, median_commit_size=5.0)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
+        # median of 13 >= threshold of 12 -> finding
+        commits = _make_commits_for_blast_radius(
+            "services/payment.py", [13, 14, 12, 15, 13, 14, 12]
+        )
+        ctx = _make_ctx(files, commits=commits, median_commit_size=5.0)
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 1
 
 
 # --- change-coupling tests ---
@@ -556,12 +621,6 @@ class TestChangeCoupling:
 
 
 # --- growth-trajectory tests ---
-
-
-def _make_large_file(line_count: int) -> str:
-    """Create a Python file with approximately N lines."""
-    lines = [f"x_{i} = {i}" for i in range(line_count)]
-    return "\n".join(lines) + "\n"
 
 
 class TestGrowthTrajectory:
@@ -1098,6 +1157,44 @@ class TestDivergentChange:
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_divergent_change(ctx) == []
 
+    def test_directory_fallback_scope(self):
+        """Without conventional scopes, infer scope from co-changed directories."""
+        files = {"models/user.py": _make_large_file(100)}
+        commits = []
+        # Commits touching user.py alongside files in 4 different top-level dirs
+        for i, dir_name in enumerate(["auth", "billing", "notifications", "reporting"]):
+            for j in range(2):
+                commits.append(
+                    CommitInfo(
+                        hash=f"dir_{dir_name}_{j:04d}",
+                        date=_RECENT - timedelta(days=i * 2 + j),
+                        message=f"Update {dir_name} integration",
+                        files=["models/user.py", f"{dir_name}/handler.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 1
+        assert "4 different concerns" in findings[0].message
+
+    def test_directory_fallback_too_few_dirs(self):
+        """Directory fallback with < 4 dirs -> no finding."""
+        files = {"models/user.py": _make_large_file(100)}
+        commits = []
+        for i, dir_name in enumerate(["auth", "billing"]):
+            for j in range(3):
+                commits.append(
+                    CommitInfo(
+                        hash=f"dir_{dir_name}_{j:04d}",
+                        date=_RECENT - timedelta(days=i * 3 + j),
+                        message=f"Update {dir_name} integration",
+                        files=["models/user.py", f"{dir_name}/handler.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
 
 # --- knowledge-silo tests ---
 
@@ -1157,6 +1254,30 @@ class TestKnowledgeSilo:
         ctx = _make_ctx(files, authors_for_file=authors)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
+
+    def test_skipped_for_solo_project(self):
+        """1 author -> no findings (bus-factor is meaningless)."""
+        files = {"services/billing.py": "x = 1"}
+        authors = {"services/billing.py": {"Alice": 10}}
+        ctx = _make_ctx(files, authors_for_file=authors, distinct_authors=1)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 0
+
+    def test_skipped_for_two_authors(self):
+        """2 authors -> no findings."""
+        files = {"services/billing.py": "x = 1"}
+        authors = {"services/billing.py": {"Alice": 8, "Bob": 2}}
+        ctx = _make_ctx(files, authors_for_file=authors, distinct_authors=2)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 0
+
+    def test_fires_with_three_plus_authors(self):
+        """3 authors project-wide -> knowledge-silo can fire."""
+        files = {"services/billing.py": "x = 1"}
+        authors = {"services/billing.py": {"Alice": 8, "Bob": 2}}
+        ctx = _make_ctx(files, authors_for_file=authors, distinct_authors=3)
+        findings = check_knowledge_silo(ctx)
+        assert len(findings) == 1
 
 
 # --- emergency-hotspots tests ---
@@ -1872,3 +1993,48 @@ class TestTestErosion:
     def test_no_git_history(self):
         ctx = AnalysisContext({Path("a.py"): ast.parse("x=1")}, verbose=False)
         assert check_test_erosion(ctx) == []
+
+
+# --- bulk commit filter tests ---
+
+
+def _bulk_commit(filepath: str, idx: int) -> CommitInfo:
+    """Create a commit touching 30+ .py files (bulk)."""
+    files = [filepath] + [f"bulk_{idx}_{j}.py" for j in range(30)]
+    return CommitInfo(
+        hash=f"bulk{idx:04d}",
+        date=_RECENT - timedelta(days=idx),
+        message=f"fix: bulk refactor #{idx}",
+        files=files,
+    )
+
+
+class TestBulkCommitFilter:
+    def test_bug_magnet_skips_bulk_commits(self):
+        """Bulk commits (30+ .py files) excluded from bug-magnet calculation."""
+        files = {"services/billing.py": "x = 1"}
+        # 3 normal fix commits + 5 bulk fix commits = 8 total
+        # Without filter: 8/8 = 100% fix ratio -> finding
+        # With filter: only 3 normal commits < 5 min -> no finding
+        normal_fixes = _fix_commits("services/billing.py", 3)
+        bulk_fixes = [_bulk_commit("services/billing.py", i) for i in range(5)]
+        ctx = _make_ctx(files, commits=normal_fixes + bulk_fixes, message_quality=1.0)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 0
+
+    def test_test_erosion_skips_bulk_commits(self):
+        """Bulk commits excluded from test-erosion calculation."""
+        files = {
+            "pkg/billing.py": _make_large_file(100),
+            "tests/test_billing.py": "def test_it(): pass",
+        }
+        # 6 normal source + 5 bulk source = 11 total source
+        # 3 normal test commits
+        # Without filter: 11/3 = 3.67x -> finding
+        # With filter: 6/3 = 2.0x < 3.0 -> no finding
+        normal_source = _feat_commits("pkg/billing.py", 6)
+        bulk_source = [_bulk_commit("pkg/billing.py", i) for i in range(5)]
+        test_commits = _feat_commits("tests/test_billing.py", 3)
+        ctx = _make_ctx(files, commits=normal_source + bulk_source + test_commits)
+        findings = check_test_erosion(ctx)
+        assert len(findings) == 0

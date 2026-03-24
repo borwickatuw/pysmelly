@@ -322,6 +322,27 @@ class TestClassifyCommit:
     def test_emergency_urgent(self):
         assert "emergency" in classify_commit("urgent: fix production outage")
 
+    def test_classify_emoji_bug(self):
+        assert "fix" in classify_commit("\U0001f41b Fix something")
+
+    def test_classify_emoji_feature(self):
+        assert "feature" in classify_commit("\u2728 Add something")
+
+    def test_classify_emoji_refactor(self):
+        assert "refactor" in classify_commit("\u267b\ufe0f Simplify logic")
+
+    def test_classify_emoji_emergency(self):
+        assert "emergency" in classify_commit("\U0001f525 Remove broken code")
+
+    def test_classify_emoji_combined(self):
+        """Emoji + keyword both detected."""
+        cats = classify_commit("\U0001f41b Fix a bug")
+        assert "fix" in cats
+
+    def test_quality_message_emoji(self):
+        """Emoji-prefixed message counts as quality."""
+        assert _is_quality_message("\u2728 Add OAuth2 support")
+
 
 class TestWindowToDays:
     def test_days(self):

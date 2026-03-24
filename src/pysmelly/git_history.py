@@ -63,6 +63,22 @@ _PREFIX_CATEGORIES = {
     "refactor": "refactor",
 }
 
+# Emoji conventional commit prefixes (e.g., FastAPI / gitmoji style)
+_EMOJI_CATEGORIES = {
+    "\U0001f41b": "fix",  # 🐛
+    "\U0001f6a8": "fix",  # 🚨
+    "\u2705": "fix",  # ✅
+    "\U0001f527": "fix",  # 🔧
+    "\u2728": "feature",  # ✨
+    "\U0001f680": "feature",  # 🚀
+    "\U0001f389": "feature",  # 🎉
+    "\u267b\ufe0f": "refactor",  # ♻️
+    "\U0001f3a8": "refactor",  # 🎨
+    "\U0001f4a1": "refactor",  # 💡
+    "\U0001f525": "emergency",  # 🔥
+    "\u23ea": "emergency",  # ⏪ (revert)
+}
+
 
 def classify_commit(message: str) -> set[str]:
     """Classify a commit message into categories: fix, feature, refactor, debt.
@@ -70,6 +86,12 @@ def classify_commit(message: str) -> set[str]:
     A commit can match multiple categories. Returns empty set for unclassified.
     """
     categories: set[str] = set()
+
+    # Check emoji prefix (e.g., FastAPI / gitmoji style)
+    for emoji, cat in _EMOJI_CATEGORIES.items():
+        if message.startswith(emoji):
+            categories.add(cat)
+            break
 
     # Check conventional commit prefix first (strongest signal)
     colon_pos = message.find(":")
@@ -119,6 +141,9 @@ def _is_quality_message(message: str) -> bool:
     """Check if a commit message meets basic quality criteria."""
     if len(message) <= 10:
         return False
+    # Check for emoji-prefixed commits
+    if any(message.startswith(e) for e in _EMOJI_CATEGORIES):
+        return True
     # Check for conventional commit prefix
     colon_pos = message.find(":")
     if colon_pos != -1:
@@ -192,6 +217,8 @@ class GitHistory:
         self.authors_for_file: dict[str, dict[str, int]] = {}
         self._time_slices: list[TimeSlice] | None = None
         self._commits_per_slice: float | None = None
+        self._distinct_authors: int | None = None
+        self._median_commit_size: float | None = None
         self._parse()
 
     def _parse(self) -> None:
@@ -347,6 +374,22 @@ class GitHistory:
                 self._message_quality = quality_count / len(sample)
 
         return self._message_quality
+
+    @property
+    def distinct_authors(self) -> int:
+        """Number of distinct commit authors in the window."""
+        if self._distinct_authors is None:
+            authors = {c.author for c in self._commits if c.author}
+            self._distinct_authors = len(authors)
+        return self._distinct_authors
+
+    @property
+    def median_commit_size(self) -> float:
+        """Median number of .py files per commit."""
+        if self._median_commit_size is None:
+            sizes = [len([f for f in c.files if f.endswith(".py")]) for c in self._commits]
+            self._median_commit_size = median(sizes) if sizes else 1.0
+        return self._median_commit_size
 
     @property
     def file_stats(self) -> dict[str, FileStats]:

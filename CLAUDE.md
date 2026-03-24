@@ -11,7 +11,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/cli.py` - CLI entry point, argparse setup
 - `src/pysmelly/registry.py` - `@check` decorator, `Finding` dataclass, `Severity` enum
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
-- `src/pysmelly/output.py` - Text formatter
+- `src/pysmelly/output.py` - Text formatter, convergence hotspots section
 - `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling, dict-as-dataclass)
 - `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts, fossilized-toggles, dead-constants, unreachable-after-return, isinstance-chain, boolean-param-explosion, exception-flow-control, arrow-code, hungarian-notation, inconsistent-returns, plaintext-passwords, getattr-strings, late-binding-closures, law-of-demeter)
 - `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps, middle-man)
@@ -22,8 +22,8 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery, repeated-string-parsing)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
-- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth, bug-magnet, fix-propagation, conscious-debt, divergent-change, knowledge-silo, emergency-hotspots, no-refactoring, fix-follows-feature, stabilization-failure, hotspot-acceleration, test-erosion)
-- `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats/TimeSlice dataclasses, reviewed marker parsing, lazy numstat, commit classifier, author tracking, time-slice infrastructure
+- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth, bug-magnet, fix-propagation, conscious-debt, divergent-change, knowledge-silo, emergency-hotspots, no-refactoring, fix-follows-feature, stabilization-failure, hotspot-acceleration, test-erosion); noise gates: team-size for knowledge-silo, relative threshold for blast-radius, min-lines for abandoned-code, bulk-commit filter
+- `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats/TimeSlice dataclasses, reviewed marker parsing, lazy numstat, commit classifier (conventional + emoji), author tracking, time-slice infrastructure, distinct_authors/median_commit_size properties
 
 ## Common Commands
 

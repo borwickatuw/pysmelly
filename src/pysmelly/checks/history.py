@@ -8,10 +8,16 @@ from pathlib import Path
 from statistics import median
 
 from pysmelly.context import AnalysisContext
-from pysmelly.git_history import GitHistory, TimeSlice, classify_commit
+from pysmelly.git_history import CommitInfo, GitHistory, TimeSlice, classify_commit
 from pysmelly.registry import Finding, Severity, check
 
 _MIN_MESSAGE_QUALITY = 0.5
+_BULK_COMMIT_THRESHOLD = 30
+
+
+def _is_bulk_commit(commit: CommitInfo) -> bool:
+    """Commits touching 30+ .py files are likely mechanical."""
+    return sum(1 for f in commit.files if f.endswith(".py")) >= _BULK_COMMIT_THRESHOLD
 
 
 def _is_expected_coupling(file_a: str, file_b: str, patterns: list[list[str]]) -> bool:
@@ -89,6 +95,10 @@ def check_abandoned_code(ctx: AnalysisContext) -> list[Finding]:
             if name in _SKIP_NAMES or name.endswith(_SKIP_SUFFIXES):
                 continue
 
+            line_count = _get_line_count(f, ctx.all_trees)
+            if line_count < 20:
+                continue
+
             findings.append(
                 Finding(
                     file=f,
@@ -144,7 +154,8 @@ def check_blast_radius(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         median_co_changes = median(co_change_counts)
-        if median_co_changes >= 5:
+        threshold = max(8, int(history.median_commit_size * 2.5))
+        if median_co_changes >= threshold:
             findings.append(
                 Finding(
                     file=file_str,
@@ -490,7 +501,7 @@ def check_bug_magnet(ctx: AnalysisContext) -> list[Finding]:
         if _is_test_file(file_str):
             continue
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = [c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)]
         if len(commits) < 5:
             continue
 
@@ -689,7 +700,22 @@ def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
         # Need 4+ distinct scopes with 2+ commits each
         significant_scopes = {s: n for s, n in scopes.items() if n >= 2}
         if len(significant_scopes) < 4:
-            continue
+            # Fallback: infer scope from co-changed file directories
+            dir_scopes: dict[str, int] = {}
+            for commit in commits:
+                dirs = set()
+                for f in commit.files:
+                    if f.endswith(".py") and f != file_str:
+                        parts = Path(f).parts
+                        if len(parts) >= 2:
+                            dirs.add(parts[0])
+                for d in dirs:
+                    dir_scopes[d] = dir_scopes.get(d, 0) + 1
+            significant_dir_scopes = {s: n for s, n in dir_scopes.items() if n >= 2}
+            if len(significant_dir_scopes) >= 4:
+                significant_scopes = significant_dir_scopes
+            else:
+                continue
 
         scope_list = ", ".join(sorted(significant_scopes.keys()))
         findings.append(
@@ -734,6 +760,10 @@ def _extract_scope(message: str) -> str | None:
 def check_knowledge_silo(ctx: AnalysisContext) -> list[Finding]:
     history = ctx.git_history
     if history is None:
+        return []
+
+    # Bus-factor is meaningless for solo or duo projects
+    if history.distinct_authors < 3:
         return []
 
     findings: list[Finding] = []
@@ -789,10 +819,11 @@ def check_emergency_hotspots(ctx: AnalysisContext) -> list[Finding]:
         return []
 
     # Compute project-wide emergency rate to skip if globally high
-    total_commits = len(history._commits)
+    non_bulk = [c for c in history._commits if not _is_bulk_commit(c)]
+    total_commits = len(non_bulk)
     if total_commits == 0:
         return []
-    total_emergency = sum(1 for c in history._commits if "emergency" in classify_commit(c.message))
+    total_emergency = sum(1 for c in non_bulk if "emergency" in classify_commit(c.message))
     project_rate = total_emergency / total_commits
     if project_rate > 0.3:
         return []
@@ -802,7 +833,7 @@ def check_emergency_hotspots(ctx: AnalysisContext) -> list[Finding]:
     for file_path in ctx.all_trees:
         file_str = str(file_path)
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = [c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)]
         if not commits:
             continue
 
@@ -855,7 +886,7 @@ def check_no_refactoring(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 50:
             continue
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = [c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)]
         if len(commits) < 8:
             continue
 
@@ -1058,15 +1089,15 @@ def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
         if len(commits) < 5:
             continue
 
-        # Count commits per slice for this file
+        # Count commits per slice for this file (skip bulk commits)
         first_counts = []
         for ts in first_half:
-            count = sum(1 for c in ts.commits if file_str in c.files)
+            count = sum(1 for c in ts.commits if file_str in c.files and not _is_bulk_commit(c))
             first_counts.append(count)
 
         second_counts = []
         for ts in second_half:
-            count = sum(1 for c in ts.commits if file_str in c.files)
+            count = sum(1 for c in ts.commits if file_str in c.files and not _is_bulk_commit(c))
             second_counts.append(count)
 
         first_median = median(first_counts) if first_counts else 0
@@ -1158,7 +1189,9 @@ def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 50:
             continue
 
-        source_commits = history.commits_for_file.get(file_str, [])
+        source_commits = [
+            c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)
+        ]
         if len(source_commits) < 5:
             continue
 
@@ -1166,7 +1199,9 @@ def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
         if test_file is None:
             continue
 
-        test_commits = history.commits_for_file.get(test_file, [])
+        test_commits = [
+            c for c in history.commits_for_file.get(test_file, []) if not _is_bulk_commit(c)
+        ]
         test_count = max(len(test_commits), 1)
         ratio = len(source_commits) / test_count
 

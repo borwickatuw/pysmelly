@@ -134,6 +134,18 @@ def format_text(
                 lines.append(f"  {f.file}:{f.line}: {f.message}")
             lines.append("")
 
+    # Detect convergence hotspots
+    file_checks: dict[str, set[str]] = {}
+    for f in display_findings:
+        file_checks.setdefault(f.file, set()).add(f.check)
+    hotspots = {f: checks for f, checks in file_checks.items() if len(checks) >= 3}
+    if hotspots:
+        lines.append("=== convergence hotspots ===")
+        for filepath, checks in sorted(hotspots.items(), key=lambda x: -len(x[1])):
+            check_list = ", ".join(sorted(checks))
+            lines.append(f"  {filepath}: flagged by {len(checks)} checks ({check_list})")
+        lines.append("")
+
     if findings:
         lines.append(f"Total: {total_count} finding(s)")
         if suppressed_count > 0:
