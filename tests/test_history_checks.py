@@ -252,6 +252,7 @@ class TestAbandonedCode:
             "pkg/a.py": _make_large_file(30),
             "pkg/b.py": _make_large_file(30),
             "pkg/c.py": _make_large_file(30),
+            "pkg/d.py": _make_large_file(30),
             "pkg/old1.py": _make_large_file(30),
             "pkg/old2.py": _make_large_file(30),
         }
@@ -259,6 +260,7 @@ class TestAbandonedCode:
             "pkg/a.py": _RECENT,
             "pkg/b.py": _RECENT,
             "pkg/c.py": _RECENT,
+            "pkg/d.py": _RECENT,
         }
         ctx = _make_ctx(files, last_modified)
         findings = check_abandoned_code(ctx)
@@ -1189,6 +1191,62 @@ class TestDivergentChange:
                         date=_RECENT - timedelta(days=i * 3 + j),
                         message=f"Update {dir_name} integration",
                         files=["models/user.py", f"{dir_name}/handler.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_structural_dirs_excluded(self):
+        """Structural dirs (tests, docs, scripts, etc.) don't count as concerns."""
+        files = {"models/user.py": _make_large_file(100)}
+        commits = []
+        for i, dir_name in enumerate(["tests", "docs", "scripts", "examples", "benchmarks"]):
+            for j in range(3):
+                commits.append(
+                    CommitInfo(
+                        hash=f"struct_{dir_name}_{j:04d}",
+                        date=_RECENT - timedelta(days=i * 3 + j),
+                        message=f"Update {dir_name}",
+                        files=["models/user.py", f"{dir_name}/helper.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        assert len(findings) == 0
+
+    def test_own_dir_excluded(self):
+        """The target file's own top-level dir is excluded from scope count."""
+        files = {"fastapi/routing.py": _make_large_file(100)}
+        commits = []
+        # Co-changes with fastapi + 3 other dirs = 4 total, but fastapi is excluded
+        for i, dir_name in enumerate(["fastapi", "auth", "billing", "api"]):
+            for j in range(2):
+                commits.append(
+                    CommitInfo(
+                        hash=f"own_{dir_name}_{j:04d}",
+                        date=_RECENT - timedelta(days=i * 2 + j),
+                        message=f"Update {dir_name}",
+                        files=["fastapi/routing.py", f"{dir_name}/handler.py"],
+                    )
+                )
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_divergent_change(ctx)
+        # Only 3 external dirs (auth, billing, api) after excluding own dir -> no finding
+        assert len(findings) == 0
+
+    def test_test_file_skipped(self):
+        """Test files are skipped by divergent-change."""
+        files = {"test_user.py": _make_large_file(100)}
+        commits = []
+        for i, dir_name in enumerate(["auth", "billing", "notifications", "reporting"]):
+            for j in range(2):
+                commits.append(
+                    CommitInfo(
+                        hash=f"test_skip_{dir_name}_{j:04d}",
+                        date=_RECENT - timedelta(days=i * 2 + j),
+                        message=f"Update {dir_name}",
+                        files=["test_user.py", f"{dir_name}/handler.py"],
                     )
                 )
         ctx = _make_ctx(files, commits=commits, message_quality=1.0)

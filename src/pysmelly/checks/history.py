@@ -36,6 +36,26 @@ _SKIP_NAMES = frozenset({"__init__.py", "conftest.py", "apps.py"})
 # Files that match these patterns are config-like and naturally stable
 _SKIP_SUFFIXES = ("_config.py", "_settings.py", "settings.py", "config.py")
 
+# Directories that represent project structure, not business concerns
+# (used to filter the divergent-change directory fallback)
+_STRUCTURAL_DIRS = frozenset(
+    {
+        "tests",
+        "test",
+        "testing",
+        "docs",
+        "docs_src",
+        "documentation",
+        "scripts",
+        "bin",
+        "tools",
+        "examples",
+        "samples",
+        "benchmarks",
+        "dev",
+    }
+)
+
 
 def _get_line_count(file_path: str, all_trees: dict) -> int:
     """Current line count from last AST statement's end_lineno."""
@@ -86,8 +106,8 @@ def check_abandoned_code(ctx: AnalysisContext) -> list[Finding]:
         if not untouched_files or not active_files:
             continue
 
-        # Need a majority of peers to be active for this to be meaningful
-        if len(active_files) < len(files) / 2:
+        # Need a strong majority of peers to be active for this to be meaningful
+        if len(active_files) < len(files) * 2 / 3:
             continue
 
         for f in untouched_files:
@@ -681,6 +701,8 @@ def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
 
         if file_path.name in _SKIP_NAMES or file_path.name.endswith(_SKIP_SUFFIXES):
             continue
+        if _is_test_file(file_str):
+            continue
 
         current_lines = _get_line_count(file_str, ctx.all_trees)
         if current_lines < 50:
@@ -701,6 +723,7 @@ def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
         significant_scopes = {s: n for s, n in scopes.items() if n >= 2}
         if len(significant_scopes) < 4:
             # Fallback: infer scope from co-changed file directories
+            own_top_dir = file_path.parts[0] if len(file_path.parts) >= 2 else ""
             dir_scopes: dict[str, int] = {}
             for commit in commits:
                 dirs = set()
@@ -708,7 +731,9 @@ def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
                     if f.endswith(".py") and f != file_str:
                         parts = Path(f).parts
                         if len(parts) >= 2:
-                            dirs.add(parts[0])
+                            d = parts[0]
+                            if d != own_top_dir and d not in _STRUCTURAL_DIRS:
+                                dirs.add(d)
                 for d in dirs:
                     dir_scopes[d] = dir_scopes.get(d, 0) + 1
             significant_dir_scopes = {s: n for s, n in dir_scopes.items() if n >= 2}
