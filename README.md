@@ -46,6 +46,22 @@ pysmelly -v
 
 # Set up AI review guidance for a project
 pysmelly init
+
+# Git history analysis (separate subcommand)
+pysmelly git-history
+
+# Git history with options
+pysmelly git-history --window 1y              # look back 1 year (default: 6m)
+pysmelly git-history --check bug-magnet       # run a single check
+pysmelly git-history --all                    # show all findings
+pysmelly git-history --summary                # counts per check
+
+# Acknowledge a finding after reviewing/fixing
+pysmelly git-history reviewed path/to/file.py
+pysmelly git-history reviewed src/models/     # review all .py files in directory
+
+# Re-analyze ignoring prior acknowledgments
+pysmelly git-history --ignore-reviewed
 ```
 
 ## Checks
@@ -118,6 +134,34 @@ pysmelly init
 | `arrow-code` | Functions with nesting depth 5+ (if/for/while/try/with pyramid) — consider extracting inner blocks. |
 | `hungarian-notation` | Variables like `strName`, `intCount`, `lstItems` — use snake_case instead. |
 | `law-of-demeter` | Attribute chains 4+ deep (`a.b.c.d`) — reaching through object internals. |
+
+### Git history checks
+
+Run via `pysmelly git-history`. These analyze commit patterns to detect evolutionary signals invisible to static analysis.
+
+| Check | What it finds |
+|---|---|
+| `bug-magnet` | Files where a majority of commits are fixes — recurring problems suggesting structural issues. |
+| `blast-radius` | Files whose changes drag many other files along — poor encapsulation. Collapses same-directory clusters into package-level findings. |
+| `change-coupling` | Files that always change together but have no import relationship — hidden coupling. |
+| `fix-follows-feature` | Features that reliably produce fix commits shortly after — insufficient testing or fragile design. |
+| `yo-yo-code` | High gross churn — code being written, deleted, rewritten repeatedly. Abstractions haven't stabilized. |
+| `hotspot-acceleration` | Files whose change frequency is increasing over time — emerging hotspots. |
+| `divergent-change` | One file appearing in commits with very different purposes — too many responsibilities. |
+| `fix-propagation` | Files that co-change in fix commits — fixing one tends to break the other. |
+| `knowledge-silo` | Files where one author dominates all changes — bus-factor risk. Skipped for projects with < 3 contributors. |
+| `emergency-hotspots` | Files that attract disproportionate emergency/hotfix activity. |
+| `no-refactoring` | Files with heavy fix/feature activity but zero refactoring commits. |
+| `growth-trajectory` | Files growing rapidly within the time window. |
+| `churn-without-growth` | Many commits but stable/shrinking line count — wrong abstractions being reworked. |
+| `stabilization-failure` | Files that repeatedly burst with activity, go quiet, then burst again. |
+| `test-erosion` | Source files changing much more often than their tests. |
+| `abandoned-code` | Files on disk with no commits in the window while directory peers keep evolving. |
+| `conscious-debt` | Commits that explicitly acknowledge technical debt (workaround, hack, TODO). |
+
+When a file is flagged by 3+ different checks, pysmelly surfaces it as a **convergence hotspot** at the top of the output — the highest-confidence signal.
+
+The `reviewed` command acknowledges findings and resets the analysis window for that file. All checks then only analyze post-review commits, so improvements are reflected immediately. When the review commit ages out of the time window, the full history is analyzed again.
 
 ## Output
 
