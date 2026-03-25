@@ -209,3 +209,42 @@ detect. Inspired by Adam Tornhill's "Your Code as a Crime Scene."
 - `responsibility-drift` — noisier version of divergent-change
 - `same-change-multiple-files` (10d stretch) — requires per-commit diff parsing → SOMEDAY-MAYBE
 - `growing-signatures` (10d stretch) — requires historical function signature parsing → SOMEDAY-MAYBE
+
+## Phase 11: Git-History Signal-to-Noise
+
+Validated against 10 projects (Flask, requests, FastAPI, Celery, Poetry,
+sentry-python, havoc, outscience, Pydantic, Scrapy, Airflow).
+
+### 11a: Noise reduction
+- [x] knowledge-silo team gate (skip < 3 distinct authors)
+- [x] blast-radius relative threshold (max(8, median_commit_size * 2.5))
+- [x] abandoned-code min-lines filter (skip < 20 lines), test-file skip
+- [x] abandoned-code active-majority threshold raised to 67%
+- [x] Emoji conventional commit support (12 emoji→category mappings)
+- [x] Bulk commit filter (30+ .py files excluded from per-file checks)
+
+### 11b: Underperforming check improvements
+- [x] divergent-change directory fallback (infer scope from co-changed dirs)
+- [x] divergent-change structural dir filter + own-dir exclusion + test skip
+- conscious-debt and fix-propagation: kept as-is (sound but niche)
+
+### 11c: Multi-signal convergence
+- [x] Convergence hotspots section in output (3+ checks on same file)
+- [x] Hotspots shown first (before per-check details)
+
+## Phase 12: Validation + Real-World Feedback
+
+### 12a: Re-validation
+- [x] Re-ran all 10 original projects after Phase 11 fixes
+- [x] Confirmed true positives retained (sentry anthropic.py 5-check convergence)
+- [x] Added Airflow (6887 files), Pydantic, Scrapy as new validation targets
+- [x] conscious-debt fired for first time (10 findings on Airflow)
+
+### 12b: Bug fixes from real-world usage (havoc Claude Code instance)
+- [x] Fixed relative import detection in change-coupling
+- [x] Package-level collapsing for blast-radius/change-coupling (havoc: 60→20)
+- [x] `reviewed` resets analysis window for ALL git-history checks
+- [x] `--all` alias for `--more-please`
+- [x] Directory support for `reviewed` command
+- [x] Updated PYSMELLY.md guidance for git-history findings
+- [x] Clarified `reviewed` scope in docs
