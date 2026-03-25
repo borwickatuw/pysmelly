@@ -20,6 +20,38 @@ def _is_bulk_commit(commit: CommitInfo) -> bool:
     return sum(1 for f in commit.files if f.endswith(".py")) >= _BULK_COMMIT_THRESHOLD
 
 
+def _collapse_by_directory(findings: list[Finding], min_cluster: int = 3) -> list[Finding]:
+    """Collapse findings in the same directory into a single package-level finding.
+
+    If 3+ files in the same directory are flagged, replace individual findings
+    with one summary finding for the directory. Standalone findings are kept.
+    """
+    dir_findings: dict[str, list[Finding]] = {}
+    for f in findings:
+        parent = str(Path(f.file).parent)
+        dir_findings.setdefault(parent, []).append(f)
+
+    result: list[Finding] = []
+    for dir_name, group in dir_findings.items():
+        if len(group) >= min_cluster:
+            files_list = ", ".join(Path(f.file).name for f in group)
+            result.append(
+                Finding(
+                    file=dir_name,
+                    line=1,
+                    check=group[0].check,
+                    message=(
+                        f"{dir_name}/ — {len(group)} files in this package "
+                        f"flagged ({files_list}) — tightly-coupled subsystem"
+                    ),
+                    severity=group[0].severity,
+                )
+            )
+        else:
+            result.extend(group)
+    return result
+
+
 def _slices_since_review(
     slices: list[TimeSlice], history: GitHistory, filepath: str
 ) -> list[TimeSlice]:
@@ -203,7 +235,7 @@ def check_blast_radius(ctx: AnalysisContext) -> list[Finding]:
                 )
             )
 
-    return findings
+    return _collapse_by_directory(findings)
 
 
 @check(
@@ -294,7 +326,56 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
             )
         )
 
-    return findings
+    return _collapse_coupling_by_directory(findings)
+
+
+def _collapse_coupling_by_directory(findings: list[Finding], min_cluster: int = 3) -> list[Finding]:
+    """Collapse change-coupling findings where both files share a directory."""
+    intra_dir: dict[str, list[Finding]] = {}
+    cross_dir: list[Finding] = []
+    for f in findings:
+        # Extract the two files from the message (file_a is f.file)
+        file_a = f.file
+        # file_b is the second file — extract from the pair in the message
+        parts = f.message.split(" and ", 1)
+        if len(parts) < 2:
+            cross_dir.append(f)
+            continue
+        file_b = parts[1].split(" changed")[0]
+        dir_a = str(Path(file_a).parent)
+        dir_b = str(Path(file_b).parent)
+        if dir_a == dir_b:
+            intra_dir.setdefault(dir_a, []).append(f)
+        else:
+            cross_dir.append(f)
+
+    result = list(cross_dir)
+    for dir_name, group in intra_dir.items():
+        if len(group) >= min_cluster:
+            # Collect all unique files in this directory's coupling cluster
+            all_files: set[str] = set()
+            for f in group:
+                all_files.add(f.file)
+                parts = f.message.split(" and ", 1)
+                if len(parts) >= 2:
+                    all_files.add(parts[1].split(" changed")[0])
+            files_list = ", ".join(Path(f).name for f in sorted(all_files))
+            result.append(
+                Finding(
+                    file=dir_name,
+                    line=1,
+                    check="change-coupling",
+                    message=(
+                        f"{dir_name}/ — {len(all_files)} files with "
+                        f"{len(group)} coupling pairs ({files_list}) "
+                        f"— tightly-coupled subsystem"
+                    ),
+                    severity=group[0].severity,
+                )
+            )
+        else:
+            result.extend(group)
+    return result
 
 
 def _files_have_import(file_a: str, file_b: str, ctx: AnalysisContext) -> bool:

@@ -556,10 +556,10 @@ def _handle_init(args: list[str]) -> None:
 
 
 def _handle_reviewed(args: list[str]) -> None:
-    """Handle `pysmelly git-history reviewed <file> [...]` — create acknowledgment commit."""
+    """Handle `pysmelly git-history reviewed <file|dir> [...]` — create acknowledgment commit."""
     if not args:
         print(
-            "Error: pysmelly git-history reviewed requires at least one file path",
+            "Error: pysmelly git-history reviewed requires at least one file or directory path",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -570,18 +570,33 @@ def _handle_reviewed(args: list[str]) -> None:
         print("Error: pysmelly git-history reviewed requires a git repository", file=sys.stderr)
         sys.exit(1)
 
-    # Verify files exist
-    for filepath in args:
-        if not Path(filepath).exists():
-            print(f"Error: {filepath} does not exist", file=sys.stderr)
+    # Expand directories to .py files, verify paths exist
+    filepaths: list[str] = []
+    for arg in args:
+        p = Path(arg)
+        if not p.exists():
+            print(f"Error: {arg} does not exist", file=sys.stderr)
             sys.exit(1)
+        if p.is_dir():
+            py_files = sorted(str(f) for f in p.rglob("*.py"))
+            if not py_files:
+                print(f"Warning: no .py files found in {arg}", file=sys.stderr)
+            filepaths.extend(py_files)
+        else:
+            filepaths.append(arg)
+
+    if not filepaths:
+        print("Error: no files to review", file=sys.stderr)
+        sys.exit(1)
 
     # Build commit message
-    markers = "\n".join(f"pysmelly: reviewed {f}" for f in args)
-    if len(args) == 1:
-        subject = f"Acknowledge pysmelly finding for {args[0]}"
+    markers = "\n".join(f"pysmelly: reviewed {f}" for f in filepaths)
+    if len(filepaths) == 1:
+        subject = f"Acknowledge pysmelly finding for {filepaths[0]}"
+    elif len(args) == 1 and Path(args[0]).is_dir():
+        subject = f"Acknowledge pysmelly findings for {args[0]}/ ({len(filepaths)} files)"
     else:
-        subject = f"Acknowledge pysmelly findings for {len(args)} files"
+        subject = f"Acknowledge pysmelly findings for {len(filepaths)} files"
     message = f"{subject}\n\n{markers}"
 
     try:
@@ -658,6 +673,7 @@ def _handle_git_history(argv: list[str]) -> None:
     )
     parser.add_argument(
         "--more-please",
+        "--all",
         action="store_true",
         help="Show all findings (default: top 10 highest-confidence)",
     )
@@ -826,6 +842,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--more-please",
+        "--all",
         action="store_true",
         help="Show all findings (default: top 10 highest-confidence)",
     )
