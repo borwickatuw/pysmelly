@@ -689,6 +689,11 @@ def _handle_git_history(argv: list[str]) -> None:
         default="auto",
         help="Commit message quality (default: auto-detect)",
     )
+    parser.add_argument(
+        "--ignore-reviewed",
+        action="store_true",
+        help="Analyze full history, ignoring any 'pysmelly: reviewed' markers",
+    )
     args = parser.parse_args(argv)
 
     # Load config and merge
@@ -732,6 +737,8 @@ def _handle_git_history(argv: list[str]) -> None:
         commit_messages=args.commit_messages,
         expected_coupling=expected_coupling,
     )
+    if args.ignore_reviewed and ctx.git_history is not None:
+        ctx.git_history.reviewed_at = {}
     all_findings: list[Finding] = []
     for name, check_fn in checks_to_run.items():
         all_findings.extend(check_fn(ctx))
