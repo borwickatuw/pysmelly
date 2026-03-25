@@ -375,9 +375,9 @@ uvx pysmelly git-history --window 1y        # look back 1 year instead of 6 mont
 uvx pysmelly git-history --check blast-radius  # run a single git check
 ```
 
-Git history findings (like `abandoned-code`) are persistent — the file is still
-abandoned next time you run pysmelly. To acknowledge a finding after reviewing
-the file, use the `reviewed` subcommand:
+Some git history findings (notably `abandoned-code`) are persistent — the file
+is still abandoned next time you run pysmelly. To acknowledge a finding after
+reviewing the file, use the `reviewed` subcommand:
 
 ```bash
 uvx pysmelly git-history reviewed path/to/file.py   # acknowledge one file
@@ -385,10 +385,7 @@ uvx pysmelly git-history reviewed a.py b.py          # acknowledge multiple file
 ```
 
 This creates an empty git commit with `pysmelly: reviewed path/to/file.py`
-markers. The finding disappears because the review commit resets the
-last-modified clock. When the review commit ages out of the time window, the
-finding returns — which is correct, because stale files should be re-evaluated
-periodically.
+markers, which resets the last-modified clock for that file.
 
 You can also add the marker manually to any commit message:
 
@@ -398,6 +395,12 @@ Refactor auth module
 pysmelly: reviewed utils/legacy_parser.py
 pysmelly: reviewed utils/old_helpers.py
 ```
+
+**Note:** The `reviewed` command only affects checks that use recency (currently
+`abandoned-code`). Checks that analyze the full commit history within the window
+— like `bug-magnet`, `blast-radius`, `yo-yo-code`, and `fix-follows-feature` —
+will continue to report findings until the underlying pattern changes (the code
+is refactored, the commit history ages out of the window, etc.).
 
 ## Suppressing findings
 

@@ -291,13 +291,15 @@ def _files_have_import(file_a: str, file_b: str, ctx: AnalysisContext) -> bool:
     """Check if either file imports the other."""
     mod_a = _filepath_to_module(file_a)
     mod_b = _filepath_to_module(file_b)
+    pkg_a = _filepath_to_package(file_a)
+    pkg_b = _filepath_to_package(file_b)
 
     tree_a = ctx.all_trees.get(Path(file_a))
     tree_b = ctx.all_trees.get(Path(file_b))
 
-    if tree_a is not None and _tree_imports_module(tree_a, mod_b):
+    if tree_a is not None and _tree_imports_module(tree_a, mod_b, pkg_a):
         return True
-    if tree_b is not None and _tree_imports_module(tree_b, mod_a):
+    if tree_b is not None and _tree_imports_module(tree_b, mod_a, pkg_b):
         return True
     return False
 
@@ -313,14 +315,45 @@ def _filepath_to_module(filepath: str) -> str:
     return ".".join(parts)
 
 
-def _tree_imports_module(tree: ast.Module, module: str) -> bool:
+def _filepath_to_package(filepath: str) -> str:
+    """Convert billing/invoice.py -> billing (the containing package)."""
+    p = Path(filepath)
+    parts = list(p.parent.parts)
+    return ".".join(parts) if parts else ""
+
+
+def _resolve_relative_import(node_module: str | None, level: int, package: str) -> str:
+    """Resolve a relative import to an absolute module path.
+
+    E.g., `from .utils import x` in package `havoc.works.models`
+    -> `havoc.works.models.utils`
+    """
+    if level == 0 or not package:
+        return node_module or ""
+    # Go up `level - 1` packages (level=1 means current package)
+    parts = package.split(".")
+    if level > 1:
+        parts = parts[: -(level - 1)] if level - 1 < len(parts) else []
+    base = ".".join(parts)
+    if node_module:
+        return f"{base}.{node_module}" if base else node_module
+    return base
+
+
+def _tree_imports_module(tree: ast.Module, module: str, package: str = "") -> bool:
     """Check if an AST tree imports from the given module (or a parent)."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            if node.module == module or node.module.startswith(module + "."):
+        if isinstance(node, ast.ImportFrom):
+            # Resolve relative imports (from .utils import ...)
+            if node.level and node.level > 0:
+                resolved = _resolve_relative_import(node.module, node.level, package)
+            elif node.module:
+                resolved = node.module
+            else:
+                continue
+            if resolved == module or resolved.startswith(module + "."):
                 return True
-            # Also check if module starts with the import (e.g., importing parent)
-            if module.startswith(node.module + "."):
+            if module.startswith(resolved + "."):
                 return True
         elif isinstance(node, ast.Import):
             for alias in node.names:

@@ -26,7 +26,18 @@ class TestConvergenceHotspots:
         output = format_text(findings, total_files=2, context=None)
         assert "=== convergence hotspots ===" in output
         assert "app.py: flagged by 3 checks" in output
-        assert "other.py" not in output.split("convergence hotspots")[1].split("Total")[0]
+
+    def test_convergence_appears_before_checks(self):
+        """Convergence hotspots appear before individual check sections."""
+        findings = [
+            _finding("app.py", "bug-magnet"),
+            _finding("app.py", "blast-radius"),
+            _finding("app.py", "no-refactoring"),
+        ]
+        output = format_text(findings, total_files=1, context=None)
+        hotspot_pos = output.index("convergence hotspots")
+        check_pos = output.index("=== bug-magnet")
+        assert hotspot_pos < check_pos
 
     def test_no_convergence_below_threshold(self):
         """2 checks on same file -> no convergence section."""

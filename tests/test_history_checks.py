@@ -536,6 +536,33 @@ class TestChangeCoupling:
         findings = check_change_coupling(ctx)
         assert len(findings) == 0
 
+    def test_relative_import_detected(self):
+        """Relative import (from .utils import ...) counts as import relationship."""
+        files = {
+            "havoc/works/models/file.py": "from .utils import generate_permalink\nx = 1",
+            "havoc/works/models/utils.py": "def generate_permalink(): pass",
+        }
+        commits = _make_coupling_commits(
+            "havoc/works/models/file.py",
+            "havoc/works/models/utils.py",
+            together=8,
+            a_alone=2,
+        )
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
+    def test_relative_parent_import_detected(self):
+        """Relative parent import (from .. import X) counts as import relationship."""
+        files = {
+            "pkg/sub/views.py": "from ..models import User\nx = 1",
+            "pkg/models.py": "class User: pass",
+        }
+        commits = _make_coupling_commits("pkg/sub/views.py", "pkg/models.py", together=8, a_alone=2)
+        ctx = _make_ctx(files, commits=commits)
+        findings = check_change_coupling(ctx)
+        assert len(findings) == 0
+
     def test_low_coupling_ratio(self):
         """Low coupling ratio (< 0.7) -> no finding."""
         files = {
