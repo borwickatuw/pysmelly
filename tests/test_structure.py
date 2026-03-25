@@ -837,6 +837,62 @@ class CombinedTask(RecurringTask, ConditionalTask):
         assert len(findings) == 1
         assert "CombinedTask" in findings[0].message
 
+    def test_no_finding_when_winner_calls_super(self, trees):
+        """If the MRO winner calls super(), the losers still participate."""
+        t = trees.code("""\
+class Task:
+    def execute(self):
+        pass
+
+class RecurringTask(Task):
+    def execute(self):
+        super().execute()
+        return "recurring"
+
+class ConditionalTask(Task):
+    def execute(self):
+        return "conditional"
+
+class ConditionalRecurringTask(RecurringTask, ConditionalTask):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 0
+
+    def test_no_finding_super_with_args(self, trees):
+        """super(ClassName, self).method() also counts."""
+        t = trees.code("""\
+class A:
+    def process(self):
+        super(A, self).process()
+
+class B:
+    def process(self):
+        pass
+
+class C(A, B):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 0
+
+    def test_finding_when_no_super(self, trees):
+        """If the winner does NOT call super(), still report finding."""
+        t = trees.code("""\
+class A:
+    def process(self):
+        return "a only"
+
+class B:
+    def process(self):
+        return "b only"
+
+class C(A, B):
+    pass
+""")
+        findings = check_shadowed_methods(t)
+        assert len(findings) == 1
+
     def test_mro_winner_is_leftmost_base(self, trees):
         """Verify the message correctly identifies which base MRO picks."""
         t = trees.code("""\

@@ -684,7 +684,7 @@ def _build_class_index(
 ) -> dict[str, list[dict]]:
     """Build index of class definitions with their methods and base names.
 
-    Returns {class_name: [{file, line, methods, bases}, ...]}.
+    Returns {class_name: [{file, line, methods, method_nodes, bases}, ...]}.
     Multiple entries per name handle classes defined in different files.
     """
     index: dict[str, list[dict]] = defaultdict(list)
@@ -695,9 +695,11 @@ def _build_class_index(
             if not isinstance(node, ast.ClassDef):
                 continue
             methods: set[str] = set()
+            method_nodes: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     methods.add(item.name)
+                    method_nodes[item.name] = item
             bases: list[str] = []
             for base in node.bases:
                 if isinstance(base, ast.Name):
@@ -709,6 +711,7 @@ def _build_class_index(
                     "file": str(filepath),
                     "line": node.lineno,
                     "methods": methods,
+                    "method_nodes": method_nodes,
                     "bases": bases,
                 }
             )
@@ -721,6 +724,31 @@ def _get_base_methods(base_name: str, class_index: dict[str, list[dict]]) -> set
     for class_def in class_index.get(base_name, []):
         methods |= class_def["methods"]
     return methods
+
+
+def _method_calls_super(
+    base_name: str, method_name: str, class_index: dict[str, list[dict]]
+) -> bool:
+    """Check if a base class's method calls super().method_name().
+
+    If it does, this is cooperative multiple inheritance and the
+    'shadowed' parent's version still participates via the MRO chain.
+    """
+    for class_def in class_index.get(base_name, []):
+        node = class_def.get("method_nodes", {}).get(method_name)
+        if node is None:
+            continue
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            # super().method_name() or super(Cls, self).method_name()
+            func = child.func
+            if isinstance(func, ast.Attribute) and func.attr == method_name:
+                if isinstance(func.value, ast.Call):
+                    call_func = func.value.func
+                    if isinstance(call_func, ast.Name) and call_func.id == "super":
+                        return True
+    return False
 
 
 @check(
@@ -771,6 +799,11 @@ def check_shadowed_methods(ctx: AnalysisContext) -> list[Finding]:
                 winner = source_bases[0]
                 losers = [b for b in source_bases[1:] if b != winner]
                 if not losers:
+                    continue
+
+                # If the winner calls super(), the "losers" still
+                # participate via cooperative multiple inheritance
+                if _method_calls_super(winner, method_name, class_index):
                     continue
 
                 findings.append(
