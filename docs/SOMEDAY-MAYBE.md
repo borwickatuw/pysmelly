@@ -91,6 +91,41 @@ currently used by git-history checks.
   to compare parameter counts. Could be lazy (only for functions with
   4+ current params).
 
+## Expected-coupling annotations
+
+blast-radius and change-coupling dominate on projects with intentional
+subsystem cohesion (category files change together, handler files change
+together). The `expected-coupling` config exists but isn't discoverable.
+Options:
+- A `--group` or module-level annotation so related files can be declared
+  as a subsystem
+- Auto-detecting directory-level cohesion and suppressing intra-directory
+  coupling (files in the same directory changing together is often normal)
+
+## Delta / trend tracking
+
+After refactoring, pysmelly output is identical — same findings, no signal
+that things improved. Options:
+- `--compare` flag that diffs against a baseline
+- Trend indicators: "file.py: flagged by 3 checks (down from 4 last run)"
+- A `.pysmelly-baseline.json` that records finding counts per file
+
+## blast-radius: show top co-changing files
+
+blast-radius says "touches N other files per commit" but doesn't say which
+files. Including the top 3-5 co-changing files in the message would let
+the user see the coupling structure directly instead of cross-referencing
+with change-coupling findings.
+
+## fix-follows-feature classification refinement
+
+The keyword classifier conflates cleanup with defect repair. A commit like
+"Fix parameter ordering" is really a refactoring, not a bug fix. Options:
+- Require the word "fix" to co-occur with bug-like words (crash, error,
+  broken, regression) to count as a true fix
+- Weight conventional commit prefix (`fix:`) higher than keyword matches
+- Allow `refactor:` prefix to override `fix` keyword in the message body
+
 ## Project-level git health metrics
 
 Aggregate metrics about the whole codebase rather than per-file findings:
