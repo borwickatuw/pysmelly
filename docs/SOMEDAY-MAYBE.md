@@ -102,6 +102,28 @@ Options:
 - Auto-detecting directory-level cohesion and suppressing intra-directory
   coupling (files in the same directory changing together is often normal)
 
+## Shared-parent import detection for change-coupling
+
+change-coupling currently only checks direct imports between two files.
+Sibling files that both inherit from a shared base class (e.g.,
+`transcoder/handlers/audio.py` and `image.py` both importing `base.py`)
+aren't recognized as having an import relationship. Could check if both
+files import from a common module within the same package.
+
+## "Reviewed on \<date\>" annotation for persisting findings
+
+When `reviewed` doesn't immediately clear a finding (e.g., bug-magnet
+on a file with 37 commits — one new commit doesn't shift the median),
+annotate the finding with the review date so the user knows their
+acknowledgment was registered: "reviewed 2026-03-20, pattern persists."
+
+## Django/framework allowlists for git-history checks
+
+`no-refactoring` on `urls.py` is always noise — URL files are append-only
+by convention. `fix-follows-feature` on `settings.py` is similarly noisy.
+Consider a built-in allowlist for framework-conventional files, or
+auto-detecting Django projects and adjusting thresholds.
+
 ## Delta / trend tracking
 
 After refactoring, pysmelly output is identical — same findings, no signal
