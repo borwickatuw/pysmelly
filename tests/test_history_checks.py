@@ -61,6 +61,8 @@ def _make_ctx(
     history._commits_per_slice = commits_per_slice
     history._distinct_authors = distinct_authors
     history._median_commit_size = median_commit_size
+    history.reviewed_at = {}
+    history._post_review_file_stats = {}
 
     # Build commits_for_file from commits
     if commits:
@@ -1288,8 +1290,8 @@ class TestKnowledgeSilo:
     def test_dominant_author(self):
         """One author with >= 80% of commits -> finding."""
         files = {"services/billing.py": "x = 1"}
-        authors = {"services/billing.py": {"Alice": 8, "Bob": 2}}
-        ctx = _make_ctx(files, authors_for_file=authors)
+        commits = _author_commits("services/billing.py", {"Alice": 8, "Bob": 2})
+        ctx = _make_ctx(files, commits=commits)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 1
         assert "Alice" in findings[0].message
@@ -1298,24 +1300,24 @@ class TestKnowledgeSilo:
     def test_shared_ownership_no_finding(self):
         """Multiple authors with no dominant one -> no finding."""
         files = {"app.py": "x = 1"}
-        authors = {"app.py": {"Alice": 4, "Bob": 3, "Charlie": 3}}
-        ctx = _make_ctx(files, authors_for_file=authors)
+        commits = _author_commits("app.py", {"Alice": 4, "Bob": 3, "Charlie": 3})
+        ctx = _make_ctx(files, commits=commits)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
 
     def test_few_commits_skipped(self):
         """File with < 5 commits -> no finding."""
         files = {"app.py": "x = 1"}
-        authors = {"app.py": {"Alice": 4}}
-        ctx = _make_ctx(files, authors_for_file=authors)
+        commits = _author_commits("app.py", {"Alice": 4})
+        ctx = _make_ctx(files, commits=commits)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
 
     def test_test_file_skipped(self):
         """Test files are skipped."""
         files = {"test_billing.py": "x = 1"}
-        authors = {"test_billing.py": {"Alice": 10}}
-        ctx = _make_ctx(files, authors_for_file=authors)
+        commits = _author_commits("test_billing.py", {"Alice": 10})
+        ctx = _make_ctx(files, commits=commits)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
 
@@ -1326,8 +1328,8 @@ class TestKnowledgeSilo:
     def test_dominance_exactly_80_percent(self):
         """Dominance at exactly 80% threshold -> finding."""
         files = {"app.py": "x = 1"}
-        authors = {"app.py": {"Alice": 8, "Bob": 2}}
-        ctx = _make_ctx(files, authors_for_file=authors)
+        commits = _author_commits("app.py", {"Alice": 8, "Bob": 2})
+        ctx = _make_ctx(files, commits=commits)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 1
 
@@ -1335,34 +1337,53 @@ class TestKnowledgeSilo:
         """Dominance at 79% -> no finding."""
         files = {"app.py": "x = 1"}
         # 79/100 = 0.79, below 0.8
-        authors = {"app.py": {"Alice": 79, "Bob": 21}}
-        ctx = _make_ctx(files, authors_for_file=authors)
+        commits = _author_commits("app.py", {"Alice": 79, "Bob": 21})
+        ctx = _make_ctx(files, commits=commits)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
 
     def test_skipped_for_solo_project(self):
         """1 author -> no findings (bus-factor is meaningless)."""
         files = {"services/billing.py": "x = 1"}
-        authors = {"services/billing.py": {"Alice": 10}}
-        ctx = _make_ctx(files, authors_for_file=authors, distinct_authors=1)
+        commits = _author_commits("services/billing.py", {"Alice": 10})
+        ctx = _make_ctx(files, commits=commits, distinct_authors=1)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
 
     def test_skipped_for_two_authors(self):
         """2 authors -> no findings."""
         files = {"services/billing.py": "x = 1"}
-        authors = {"services/billing.py": {"Alice": 8, "Bob": 2}}
-        ctx = _make_ctx(files, authors_for_file=authors, distinct_authors=2)
+        commits = _author_commits("services/billing.py", {"Alice": 8, "Bob": 2})
+        ctx = _make_ctx(files, commits=commits, distinct_authors=2)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 0
 
     def test_fires_with_three_plus_authors(self):
         """3 authors project-wide -> knowledge-silo can fire."""
         files = {"services/billing.py": "x = 1"}
-        authors = {"services/billing.py": {"Alice": 8, "Bob": 2}}
-        ctx = _make_ctx(files, authors_for_file=authors, distinct_authors=3)
+        commits = _author_commits("services/billing.py", {"Alice": 8, "Bob": 2})
+        ctx = _make_ctx(files, commits=commits, distinct_authors=3)
         findings = check_knowledge_silo(ctx)
         assert len(findings) == 1
+
+
+def _author_commits(filepath: str, author_counts: dict[str, int]) -> list[CommitInfo]:
+    """Create commits with specific author distributions."""
+    commits = []
+    idx = 0
+    for author, count in author_counts.items():
+        for i in range(count):
+            commits.append(
+                CommitInfo(
+                    hash=f"auth{idx:04d}",
+                    date=_RECENT - timedelta(days=idx),
+                    message=f"feat: work by {author} #{i}",
+                    author=author,
+                    files=[filepath],
+                )
+            )
+            idx += 1
+    return commits
 
 
 # --- emergency-hotspots tests ---
@@ -2123,3 +2144,84 @@ class TestBulkCommitFilter:
         ctx = _make_ctx(files, commits=normal_source + bulk_source + test_commits)
         findings = check_test_erosion(ctx)
         assert len(findings) == 0
+
+
+# --- reviewed suppression tests ---
+
+
+class TestReviewedSuppression:
+    """Verify that 'pysmelly: reviewed' resets the analysis window for a file."""
+
+    def test_bug_magnet_suppressed_after_review(self):
+        """Pre-review fix commits are excluded, dropping below threshold."""
+        files = {"services/billing.py": "x = 1"}
+        # 8 fix commits before review, 2 feature commits after
+        review_date = _RECENT - timedelta(days=5)
+        old_fixes = [
+            CommitInfo(
+                hash=f"old_fix{i:04d}",
+                date=_RECENT - timedelta(days=20 + i),
+                message=f"fix: old bug #{i}",
+                files=["services/billing.py"],
+            )
+            for i in range(8)
+        ]
+        new_feats = [
+            CommitInfo(
+                hash=f"new_feat{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"feat: new feature #{i}",
+                files=["services/billing.py"],
+            )
+            for i in range(2)
+        ]
+        ctx = _make_ctx(files, commits=old_fixes + new_feats, message_quality=1.0)
+        # Without review: 8/10 = 80% fix ratio -> finding
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 1
+
+        # With review: only 2 post-review commits (< 5 min) -> no finding
+        ctx.git_history.reviewed_at = {"services/billing.py": review_date}
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 0
+
+    def test_blast_radius_suppressed_after_review(self):
+        """Pre-review high-blast commits excluded after review."""
+        files = {"services/payment.py": "x = 1"}
+        review_date = _RECENT - timedelta(days=5)
+        # 7 old high-blast commits + 5 new low-blast commits
+        old_commits = [
+            CommitInfo(
+                hash=f"old{i:04d}",
+                date=_RECENT - timedelta(days=20 + i),
+                message=f"commit {i}",
+                files=["services/payment.py"] + [f"other_{i}_{j}.py" for j in range(10)],
+            )
+            for i in range(7)
+        ]
+        new_commits = [
+            CommitInfo(
+                hash=f"new{i:04d}",
+                date=_RECENT - timedelta(days=i),
+                message=f"commit new {i}",
+                files=["services/payment.py", f"just_one_{i}.py"],
+            )
+            for i in range(5)
+        ]
+        ctx = _make_ctx(files, commits=old_commits + new_commits)
+        # Without review: median co-changes ~10 -> finding
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 1
+
+        # With review: only 5 new commits with 1 co-change each -> no finding
+        ctx.git_history.reviewed_at = {"services/payment.py": review_date}
+        findings = check_blast_radius(ctx)
+        assert len(findings) == 0
+
+    def test_no_review_uses_full_history(self):
+        """Without a review marker, full commit history is used."""
+        files = {"services/billing.py": "x = 1"}
+        commits = _fix_commits("services/billing.py", 8) + _feat_commits("services/billing.py", 4)
+        ctx = _make_ctx(files, commits=commits, message_quality=1.0)
+        findings = check_bug_magnet(ctx)
+        assert len(findings) == 1

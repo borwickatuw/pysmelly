@@ -214,6 +214,7 @@ class GitHistory:
         self._message_quality: float | None = None
         self._numstat_parsed: bool = False
         self._file_stats: dict[str, FileStats] = {}
+        self._post_review_file_stats: dict[str, FileStats] = {}
         self.authors_for_file: dict[str, dict[str, int]] = {}
         self._time_slices: list[TimeSlice] | None = None
         self._commits_per_slice: float | None = None
@@ -391,6 +392,31 @@ class GitHistory:
             self._median_commit_size = median(sizes) if sizes else 1.0
         return self._median_commit_size
 
+    def commits_since_review(self, filepath: str) -> list[CommitInfo]:
+        """Commits for a file, filtered to after reviewed_at if set."""
+        commits = self.commits_for_file.get(filepath, [])
+        review_date = self.reviewed_at.get(filepath)
+        if review_date is None:
+            return commits
+        return [c for c in commits if c.date > review_date]
+
+    def file_stats_since_review(self, filepath: str) -> FileStats | None:
+        """File stats filtered to commits after reviewed_at if set.
+
+        Falls back to full-window stats if no review date is set.
+        For reviewed files, re-computes stats from only post-review commits
+        using the numstat data.
+        """
+        review_date = self.reviewed_at.get(filepath)
+        if review_date is None:
+            return self.file_stats.get(filepath)
+
+        # Re-compute from post-review numstat
+        if not self._numstat_parsed:
+            self._parse_numstat()
+        post_review = self._post_review_file_stats.get(filepath)
+        return post_review
+
     @property
     def file_stats(self) -> dict[str, FileStats]:
         """Lazy-parsed per-file insertion/deletion/commit stats from numstat."""
@@ -430,22 +456,38 @@ class GitHistory:
         if not result.stdout.strip():
             return
 
+        # Build a hash→date index for post-review filtering
+        commit_dates = {c.hash: c.date for c in self._commits}
+
         # Track which files appeared in each commit for commit_count
         current_commit_files: set[str] = set()
+        current_hash: str = ""
+
+        def _flush() -> None:
+            for filepath in current_commit_files:
+                self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+                # Also count for post-review stats if this commit is after the review
+                review_date = self.reviewed_at.get(filepath)
+                if review_date is not None:
+                    commit_date = commit_dates.get(current_hash)
+                    if commit_date is not None and commit_date > review_date:
+                        self._post_review_file_stats.setdefault(
+                            filepath, FileStats()
+                        ).commit_count += 1
+
         for line in result.stdout.splitlines():
             line = line.strip()
             if not line:
                 # Blank line — flush current commit's files
-                for filepath in current_commit_files:
-                    self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+                _flush()
                 current_commit_files = set()
                 continue
             # Hash line (40-char hex)
             if len(line) == 40 and all(c in "0123456789abcdef" for c in line):
                 # Flush previous commit
-                for filepath in current_commit_files:
-                    self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+                _flush()
                 current_commit_files = set()
+                current_hash = line
                 continue
             # Numstat line: insertions\tdeletions\tfilepath
             parts = line.split("\t", 2)
@@ -463,10 +505,17 @@ class GitHistory:
                 stats.total_insertions += insertions
                 stats.total_deletions += deletions
                 current_commit_files.add(filepath)
+                # Also accumulate for post-review stats
+                review_date = self.reviewed_at.get(filepath)
+                if review_date is not None:
+                    commit_date = commit_dates.get(current_hash)
+                    if commit_date is not None and commit_date > review_date:
+                        post_stats = self._post_review_file_stats.setdefault(filepath, FileStats())
+                        post_stats.total_insertions += insertions
+                        post_stats.total_deletions += deletions
 
         # Flush last commit
-        for filepath in current_commit_files:
-            self._file_stats.setdefault(filepath, FileStats()).commit_count += 1
+        _flush()
 
     @property
     def time_slices(self) -> list[TimeSlice]:

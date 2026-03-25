@@ -385,7 +385,10 @@ uvx pysmelly git-history reviewed a.py b.py          # acknowledge multiple file
 ```
 
 This creates an empty git commit with `pysmelly: reviewed path/to/file.py`
-markers, which resets the last-modified clock for that file.
+markers. All git-history checks will then only analyze commits **after** the
+review date for that file. This effectively resets the analysis window — if the
+underlying problem was fixed, the finding disappears. If the pattern re-emerges
+from new commits, the finding returns.
 
 You can also add the marker manually to any commit message:
 
@@ -396,11 +399,9 @@ pysmelly: reviewed utils/legacy_parser.py
 pysmelly: reviewed utils/old_helpers.py
 ```
 
-**Note:** The `reviewed` command only affects checks that use recency (currently
-`abandoned-code`). Checks that analyze the full commit history within the window
-— like `bug-magnet`, `blast-radius`, `yo-yo-code`, and `fix-follows-feature` —
-will continue to report findings until the underlying pattern changes (the code
-is refactored, the commit history ages out of the window, etc.).
+When the review commit ages out of the time window, the full history is analyzed
+again — which is correct, because stale acknowledgments shouldn't suppress
+findings forever.
 
 ## Suppressing findings
 

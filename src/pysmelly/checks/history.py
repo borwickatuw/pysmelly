@@ -20,6 +20,16 @@ def _is_bulk_commit(commit: CommitInfo) -> bool:
     return sum(1 for f in commit.files if f.endswith(".py")) >= _BULK_COMMIT_THRESHOLD
 
 
+def _slices_since_review(
+    slices: list[TimeSlice], history: GitHistory, filepath: str
+) -> list[TimeSlice]:
+    """Filter time slices to only those after the file's review date."""
+    review_date = history.reviewed_at.get(filepath)
+    if review_date is None:
+        return slices
+    return [ts for ts in slices if ts.end > review_date]
+
+
 def _is_expected_coupling(file_a: str, file_b: str, patterns: list[list[str]]) -> bool:
     """Check if a file pair matches any expected-coupling pattern pair."""
     for pat_a, pat_b in patterns:
@@ -158,7 +168,7 @@ def check_blast_radius(ctx: AnalysisContext) -> list[Finding]:
         if _is_test_file(file_str):
             continue
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = history.commits_since_review(file_str)
         if not commits:
             continue
 
@@ -381,7 +391,7 @@ def check_growth_trajectory(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 100:
             continue
 
-        stats = history.file_stats.get(file_str)
+        stats = history.file_stats_since_review(file_str)
         if stats is None:
             continue
 
@@ -442,7 +452,7 @@ def check_churn_without_growth(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 50:
             continue
 
-        stats = history.file_stats.get(file_str)
+        stats = history.file_stats_since_review(file_str)
         if stats is None:
             continue
 
@@ -495,7 +505,7 @@ def check_yo_yo_code(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 100:
             continue
 
-        stats = history.file_stats.get(file_str)
+        stats = history.file_stats_since_review(file_str)
         if stats is None:
             continue
 
@@ -556,7 +566,7 @@ def check_bug_magnet(ctx: AnalysisContext) -> list[Finding]:
         if _is_test_file(file_str):
             continue
 
-        commits = [c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)]
+        commits = [c for c in history.commits_since_review(file_str) if not _is_bulk_commit(c)]
         if len(commits) < 5:
             continue
 
@@ -743,7 +753,7 @@ def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 50:
             continue
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = history.commits_since_review(file_str)
         if not commits:
             continue
 
@@ -834,7 +844,14 @@ def check_knowledge_silo(ctx: AnalysisContext) -> list[Finding]:
         if _is_test_file(file_str):
             continue
 
-        authors = history.authors_for_file.get(file_str)
+        # Compute authors from post-review commits
+        commits = history.commits_since_review(file_str)
+        if not commits:
+            continue
+        authors: dict[str, int] = {}
+        for c in commits:
+            if c.author:
+                authors[c.author] = authors.get(c.author, 0) + 1
         if not authors:
             continue
 
@@ -893,7 +910,7 @@ def check_emergency_hotspots(ctx: AnalysisContext) -> list[Finding]:
     for file_path in ctx.all_trees:
         file_str = str(file_path)
 
-        commits = [c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)]
+        commits = [c for c in history.commits_since_review(file_str) if not _is_bulk_commit(c)]
         if not commits:
             continue
 
@@ -946,7 +963,7 @@ def check_no_refactoring(ctx: AnalysisContext) -> list[Finding]:
         if current_lines < 50:
             continue
 
-        commits = [c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)]
+        commits = [c for c in history.commits_since_review(file_str) if not _is_bulk_commit(c)]
         if len(commits) < 8:
             continue
 
@@ -1014,14 +1031,15 @@ def check_fix_follows_feature(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         # Find feature-then-fix pairs within 2 periods
+        file_slices = _slices_since_review(slices, history, file_str)
         pairs = 0
-        for i, ts in enumerate(slices):
+        for i, ts in enumerate(file_slices):
             feature_files = ts.files_by_category.get("feature", set())
             if file_str not in feature_files:
                 continue
             # Look ahead up to 2 slices for fix activity
-            for j in range(i + 1, min(i + 3, len(slices))):
-                fix_files = slices[j].files_by_category.get("fix", set())
+            for j in range(i + 1, min(i + 3, len(file_slices))):
+                fix_files = file_slices[j].files_by_category.get("fix", set())
                 if file_str in fix_files:
                     pairs += 1
                     break
@@ -1066,12 +1084,13 @@ def check_stabilization_failure(ctx: AnalysisContext) -> list[Finding]:
     for file_path in ctx.all_trees:
         file_str = str(file_path)
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = history.commits_since_review(file_str)
         if len(commits) < 8:
             continue
 
         # Mark which slices are active for this file
-        active = [file_str in ts.files_touched for ts in slices]
+        file_slices = _slices_since_review(slices, history, file_str)
+        active = [file_str in ts.files_touched for ts in file_slices]
 
         # Count bursts: 2+ consecutive active slices separated by 3+ inactive
         bursts = 0
@@ -1133,10 +1152,6 @@ def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
     if len(slices) < 4:
         return []
 
-    mid = len(slices) // 2
-    first_half = slices[:mid]
-    second_half = slices[mid:]
-
     findings: list[Finding] = []
 
     for file_path in ctx.all_trees:
@@ -1145,9 +1160,16 @@ def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
         if _is_test_file(file_str):
             continue
 
-        commits = history.commits_for_file.get(file_str, [])
+        commits = history.commits_since_review(file_str)
         if len(commits) < 5:
             continue
+
+        file_slices = _slices_since_review(slices, history, file_str)
+        if len(file_slices) < 4:
+            continue
+        mid = len(file_slices) // 2
+        first_half = file_slices[:mid]
+        second_half = file_slices[mid:]
 
         # Count commits per slice for this file (skip bulk commits)
         first_counts = []
@@ -1250,7 +1272,7 @@ def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         source_commits = [
-            c for c in history.commits_for_file.get(file_str, []) if not _is_bulk_commit(c)
+            c for c in history.commits_since_review(file_str) if not _is_bulk_commit(c)
         ]
         if len(source_commits) < 5:
             continue
@@ -1260,7 +1282,7 @@ def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         test_commits = [
-            c for c in history.commits_for_file.get(test_file, []) if not _is_bulk_commit(c)
+            c for c in history.commits_since_review(test_file) if not _is_bulk_commit(c)
         ]
         test_count = max(len(test_commits), 1)
         ratio = len(source_commits) / test_count
