@@ -178,7 +178,7 @@ def check_dead_dispatch_entries(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         d = dd["dict_node"]
-        key_lines = {k.lineno for k in d.keys if hasattr(k, "lineno")}
+        key_lines = {k.lineno for k in d.keys if getattr(k, "lineno", None) is not None}
         for key_node in d.keys:
             key_value = key_node.value  # type: ignore[union-attr]
             occurrences = _count_string_occurrences(key_value, ctx.all_trees, filepath, key_lines)

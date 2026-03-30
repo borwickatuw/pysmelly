@@ -250,7 +250,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         # Skip functions spanning 10+ lines — too large to inline
-        if func_node and hasattr(func_node, "end_lineno") and func_node.end_lineno:
+        if func_node and func_node.end_lineno:
             if func_node.end_lineno - func_node.lineno + 1 > max_body_lines:
                 continue
 
@@ -880,8 +880,9 @@ def _classify_error_handling(
             try_body_lines = set()
             for stmt in current.body:
                 for node in ast.walk(stmt):
-                    if hasattr(node, "lineno"):
-                        try_body_lines.add(node.lineno)
+                    lineno = getattr(node, "lineno", None)
+                    if lineno is not None:
+                        try_body_lines.add(lineno)
             if call_line not in try_body_lines:
                 continue
 

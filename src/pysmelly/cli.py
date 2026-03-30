@@ -12,7 +12,13 @@ from pathlib import Path
 import pysmelly.checks  # noqa: F401
 from pysmelly.config import load_config
 from pysmelly.context import AnalysisContext
-from pysmelly.discovery import get_changed_lines, get_git_root, get_python_files, parse_file
+from pysmelly.discovery import (
+    GitNotFoundError,
+    get_changed_lines,
+    get_git_root,
+    get_python_files,
+    parse_file,
+)
 from pysmelly.output import format_text
 from pysmelly.registry import (
     CHECK_CATEGORIES,
@@ -304,18 +310,20 @@ def _apply_filters(
     findings = [f for f in findings if severity_order[f.severity] >= min_level]
 
     if diff_ref is not None:
-        git_root = get_git_root(base)
-        if git_root:
-            changed = get_changed_lines(diff_ref, git_root)
-            try:
-                offset = base.relative_to(git_root)
-            except ValueError:
-                offset = Path()
-            findings = [
-                f
-                for f in findings
-                if str(offset / f.file) in changed and f.line in changed[str(offset / f.file)]
-            ]
+        try:
+            git_root = get_git_root(base)
+        except GitNotFoundError:
+            return findings
+        changed = get_changed_lines(diff_ref, git_root)
+        try:
+            offset = base.relative_to(git_root)
+        except ValueError:
+            offset = Path()
+        findings = [
+            f
+            for f in findings
+            if str(offset / f.file) in changed and f.line in changed[str(offset / f.file)]
+        ]
 
     return findings
 
@@ -565,8 +573,9 @@ def _handle_reviewed(args: list[str]) -> None:
         sys.exit(1)
 
     # Verify we're in a git repo
-    git_root = get_git_root(Path.cwd())
-    if git_root is None:
+    try:
+        git_root = get_git_root(Path.cwd())
+    except GitNotFoundError:
         print("Error: pysmelly git-history reviewed requires a git repository", file=sys.stderr)
         sys.exit(1)
 
@@ -714,8 +723,9 @@ def _handle_git_history(argv: list[str]) -> None:
 
     # Must be in a git repo
     base, all_trees = _discover_and_parse(roots, args.exclude)
-    git_root = get_git_root(base)
-    if git_root is None:
+    try:
+        git_root = get_git_root(base)
+    except GitNotFoundError:
         print("Error: pysmelly git-history requires a git repository", file=sys.stderr)
         sys.exit(1)
 

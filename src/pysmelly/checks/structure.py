@@ -902,7 +902,7 @@ def check_long_function(ctx: AnalysisContext) -> list[Finding]:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if not hasattr(node, "end_lineno") or not node.end_lineno:
+            if not node.end_lineno:
                 continue
             lines = node.end_lineno - node.lineno + 1
             if lines >= min_lines:
@@ -1027,11 +1027,7 @@ def check_long_elif_chain(ctx: AnalysisContext) -> list[Finding]:
             for fn in ast.walk(tree):
                 if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                if (
-                    hasattr(fn, "end_lineno")
-                    and fn.end_lineno
-                    and fn.lineno <= node.lineno <= fn.end_lineno
-                ):
+                if fn.end_lineno and fn.lineno <= node.lineno <= fn.end_lineno:
                     func_name = fn.name
 
             if compared_var:

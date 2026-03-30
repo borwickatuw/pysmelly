@@ -39,8 +39,16 @@ def parse_file(path: Path) -> ast.Module | None:
         return None
 
 
-def get_git_root(cwd: Path) -> Path | None:
-    """Get the git repository root directory."""
+class GitNotFoundError(Exception):
+    """Raised when a git repository cannot be found."""
+
+
+def get_git_root(cwd: Path) -> Path:
+    """Get the git repository root directory.
+
+    Raises:
+        GitNotFoundError: If cwd is not inside a git repository.
+    """
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -51,7 +59,7 @@ def get_git_root(cwd: Path) -> Path | None:
         )
         return Path(result.stdout.strip())
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
+        raise GitNotFoundError(f"not a git repository: {cwd}")
 
 
 def get_changed_lines(ref: str, cwd: Path) -> dict[str, set[int]]:

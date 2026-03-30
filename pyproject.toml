@@ -79,6 +79,12 @@ exclude_lines = [
 fail_under = 70
 show_missing = true
 
+[tool.pysmelly]
+# isinstance-chain and arrow-code are inherent to AST processing —
+# you can't add methods to ast.List or avoid nesting when walking trees.
+# shotgun-surgery on ctx.all_trees is by design (shared analysis context).
+skip = ["isinstance-chain", "arrow-code", "shotgun-surgery"]
+
 [tool.bandit]
 exclude_dirs = [".venv", "tests"]
 skips = ["B101"]
