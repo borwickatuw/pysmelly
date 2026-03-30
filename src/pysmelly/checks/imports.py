@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 
+from pysmelly.checks.framework import is_manage_py
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
@@ -23,7 +24,7 @@ def check_compat_shims(ctx: AnalysisContext) -> list[Finding]:
 
     for filepath, tree in ctx.all_trees.items():
         # manage.py has Django's auto-generated try/except ImportError boilerplate
-        if filepath.name == "manage.py":
+        if is_manage_py(filepath):
             continue
 
         for node in ast.walk(tree):

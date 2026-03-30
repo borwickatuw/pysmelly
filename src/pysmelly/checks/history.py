@@ -7,6 +7,7 @@ import fnmatch
 from pathlib import Path
 from statistics import median
 
+from pysmelly.checks.framework import is_migration_file
 from pysmelly.context import AnalysisContext
 from pysmelly.git_history import CommitInfo, GitHistory, TimeSlice, classify_commit
 from pysmelly.registry import Finding, Severity, check
@@ -105,10 +106,6 @@ def _get_line_count(file_path: str, all_trees: dict) -> int:
     if tree is None or not tree.body:
         return 0
     return tree.body[-1].end_lineno
-
-
-def _is_migration_file(filepath: str) -> bool:
-    return "migrations" in Path(filepath).parts
 
 
 def _is_test_file(filepath: str) -> bool:
@@ -262,7 +259,7 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
             if f.endswith(".py")
             and f in analyzed_files
             and not Path(f).name == "__init__.py"
-            and not _is_migration_file(f)
+            and not is_migration_file(f)
         )
         # Skip bulk commits
         if len(py_files) >= 20:
@@ -701,7 +698,7 @@ def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
             if f.endswith(".py")
             and f in analyzed_files
             and Path(f).name != "__init__.py"
-            and not _is_migration_file(f)
+            and not is_migration_file(f)
         )
 
         if len(py_files) >= 20:
@@ -1345,7 +1342,7 @@ def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
             continue
         if file_path.name in _SKIP_NAMES or file_path.name.endswith(_SKIP_SUFFIXES):
             continue
-        if _is_migration_file(file_str):
+        if is_migration_file(file_str):
             continue
 
         current_lines = _get_line_count(file_str, ctx.all_trees)

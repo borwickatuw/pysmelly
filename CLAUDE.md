@@ -21,6 +21,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/checks/recommendations.py` - Stdlib alternatives check with TOML catalog
 - `src/pysmelly/checks/repetition.py` - Repetition checks (scattered-constants, scattered-isinstance, shotgun-surgery, repeated-string-parsing)
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
+- `src/pysmelly/checks/framework.py` - Framework-specific suppression logic (migration/settings/manage.py detection, hook methods, dispatch decorators)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
 - `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth, bug-magnet, fix-propagation, conscious-debt, divergent-change, knowledge-silo, emergency-hotspots, no-refactoring, fix-follows-feature, stabilization-failure, hotspot-acceleration, test-erosion); noise gates: team-size for knowledge-silo, relative threshold for blast-radius, min-lines for abandoned-code, bulk-commit filter
 - `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats/TimeSlice dataclasses, reviewed marker parsing, lazy numstat, commit classifier (conventional + emoji), author tracking, time-slice infrastructure, distinct_authors/median_commit_size properties

@@ -7,6 +7,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from pysmelly.checks.framework import is_migration_file, is_settings_file
 from pysmelly.checks.helpers import is_in_dunder_all, is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
@@ -1128,19 +1129,6 @@ def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
 # --- dead-constants helpers ---
 
 
-def _is_settings_file(filepath: Path) -> bool:
-    """Check if a file looks like a Django/framework settings file.
-
-    Settings files contain UPPER_CASE constants read by the framework via
-    getattr() — they appear unused in static analysis but are required.
-    """
-    if filepath.name == "settings.py":
-        return True
-    if "settings" in filepath.parts:
-        return True
-    return False
-
-
 def _collect_all_name_and_attr_loads(
     all_trees: dict[Path, ast.Module],
 ) -> set[str]:
@@ -1219,7 +1207,7 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
     for filepath, tree in ctx.all_trees.items():
         # Settings files contain UPPER_CASE constants read by frameworks
         # via getattr() — they're not dead, just invisible to static analysis
-        if _is_settings_file(filepath):
+        if is_settings_file(filepath):
             continue
         for name, (lineno, desc) in _collect_module_level_names(tree).items():
             if not _is_constant_reassigned(tree, name, lineno):
@@ -2286,15 +2274,6 @@ _AST_NAV_ATTRS = frozenset(
 )
 
 
-def _is_migration_path(filepath: Path) -> bool:
-    """Check if a file is a Django migration (migrations/0001_*.py pattern)."""
-    parts = filepath.parts
-    for i, part in enumerate(parts):
-        if part == "migrations" and i + 1 < len(parts):
-            return parts[i + 1][:1].isdigit()
-    return False
-
-
 @check(
     "law-of-demeter",
     severity=Severity.LOW,
@@ -2309,7 +2288,7 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
         if is_test_file(filepath):
             continue
         # Migration files are auto-generated — fully-qualified paths are expected
-        if _is_migration_path(filepath):
+        if is_migration_file(filepath):
             continue
 
         # Dedup: only report the deepest chain per line

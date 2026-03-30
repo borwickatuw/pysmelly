@@ -6,6 +6,7 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+from pysmelly.checks.framework import FRAMEWORK_HOOK_METHODS, FRAMEWORK_PARAM_NAMES
 from pysmelly.checks.helpers import is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
@@ -586,37 +587,6 @@ def _is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
-# Framework hook methods where accessing params more than self is expected
-_FRAMEWORK_HOOK_METHODS = frozenset(
-    {
-        # Django admin
-        "formfield_for_foreignkey",
-        "formfield_for_manytomany",
-        "formfield_for_dbfield",
-        "formfield_for_choice_field",
-        # Django views/forms
-        "get_context_data",
-        "get_queryset",
-        "get_form_kwargs",
-        "get_form_class",
-        "form_valid",
-        "form_invalid",
-        # Django management commands
-        "add_arguments",
-        # Django middleware
-        "process_request",
-        "process_response",
-        "process_view",
-        "process_exception",
-        # Django REST framework
-        "get_serializer_class",
-        "get_permissions",
-        "perform_create",
-        "perform_update",
-    }
-)
-
-
 @check(
     "feature-envy",
     severity=Severity.MEDIUM,
@@ -644,14 +614,14 @@ def check_feature_envy(ctx: AnalysisContext) -> list[Finding]:
 
                 # Skip known framework hooks where the signature is
                 # dictated and accessing params more than self is expected
-                if item.name in _FRAMEWORK_HOOK_METHODS:
+                if item.name in FRAMEWORK_HOOK_METHODS:
                     continue
 
                 # Get parameter names (excluding self/cls and framework
                 # objects that methods inherently operate on)
                 param_names: set[str] = set()
                 for arg in item.args.args:
-                    if arg.arg in ("self", "cls", "request", "response"):
+                    if arg.arg in {"self", "cls"} | FRAMEWORK_PARAM_NAMES:
                         continue
                     param_names.add(arg.arg)
 

@@ -6,6 +6,7 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+from pysmelly.checks.framework import is_migration_file
 from pysmelly.checks.helpers import is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
@@ -177,16 +178,6 @@ def _is_dict_access_key(node: ast.Constant, call: ast.Call) -> bool:
     return len(call.args) >= 1 and call.args[0] is node
 
 
-def _is_migration_file(filepath: Path) -> bool:
-    """Check if a file is a Django migration (migrations/0001_*.py pattern)."""
-    parts = filepath.parts
-    for i, part in enumerate(parts):
-        if part == "migrations" and i + 1 < len(parts):
-            # Next part is the filename — Django migrations start with digits
-            return parts[i + 1][:1].isdigit()
-    return False
-
-
 def _is_trivial(value: object) -> bool:
     """Check if a constant value is too common to be interesting."""
     if value in TRIVIAL_VALUES:
@@ -294,7 +285,7 @@ def check_scattered_constants(ctx: AnalysisContext) -> list[Finding]:
     occurrences: dict[tuple[str, str], list[tuple[Path, int]]] = defaultdict(list)
 
     for filepath, tree in ctx.all_trees.items():
-        if is_test_file(filepath) or _is_migration_file(filepath):
+        if is_test_file(filepath) or is_migration_file(filepath):
             continue
 
         parents = ctx.parent_map(tree)
