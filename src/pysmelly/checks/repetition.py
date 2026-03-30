@@ -23,6 +23,8 @@ TRIVIAL_STRINGS = frozenset(
         "latin1",
         # Python idioms
         "__main__",
+        "self",
+        "cls",
         # Argparse action constants
         "store_true",
         "store_false",

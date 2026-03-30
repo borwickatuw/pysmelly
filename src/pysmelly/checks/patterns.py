@@ -1777,7 +1777,18 @@ def _infer_return_type(node: ast.Return) -> str | None:
     if isinstance(val, ast.Call):
         # Constructor-like calls: int(x), str(x), MyClass() — use the name
         if isinstance(val.func, ast.Name):
-            return val.func.id
+            name = val.func.id
+            # Builtins with known return types — normalize to the type name
+            # so repr(x) and str(x) are both classified as "str"
+            if name in ("repr", "str", "format", "chr", "ascii", "input"):
+                return "str"
+            if name in ("int", "round", "hash", "len", "ord"):
+                return "int"
+            if name in ("float", "abs"):
+                return "float"
+            if name in ("bool",):
+                return "bool"
+            return name
         # Method calls: obj.method() — can't infer return type from name
         # (e.g. result.strip() returns str, not "strip")
         return None
