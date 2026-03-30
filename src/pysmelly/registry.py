@@ -29,6 +29,9 @@ class Finding:
     severity: Severity
 
 
+# Maximum width for truncating display values in finding messages
+MAX_DISPLAY_WIDTH = 40
+
 # Type for check functions
 CheckFn = Callable[["AnalysisContext"], list[Finding]]
 

@@ -9,7 +9,7 @@ from statistics import median
 
 from pysmelly.checks.framework import is_migration_file
 from pysmelly.context import AnalysisContext
-from pysmelly.git_history import CommitInfo, GitHistory, TimeSlice, classify_commit
+from pysmelly.git_history import CommitInfo, FileStats, GitHistory, TimeSlice, classify_commit
 from pysmelly.registry import Finding, Severity, check
 
 _MIN_MESSAGE_QUALITY = 0.5
@@ -108,9 +108,68 @@ def _get_line_count(file_path: str, all_trees: dict) -> int:
     return tree.body[-1].end_lineno
 
 
+def _coupling_ratio(
+    counts: dict[str, int], file_a: str, file_b: str, co_changes: int, threshold: float
+) -> float | None:
+    """Compute coupling ratio and return it if above threshold, else None.
+
+    Returns co_changes / min(count_a, count_b) when both counts are non-zero
+    and the ratio meets or exceeds *threshold*.
+    """
+    count_a = counts.get(file_a, 0)
+    count_b = counts.get(file_b, 0)
+    min_count = min(count_a, count_b)
+    if min_count == 0:
+        return None
+    ratio = co_changes / min_count
+    if ratio < threshold:
+        return None
+    return ratio
+
+
+def _history_time_slices(
+    ctx: AnalysisContext, min_slices: int
+) -> tuple[GitHistory, list[TimeSlice]] | None:
+    """Return (history, slices) if enough time slices exist, else None."""
+    history = ctx.git_history
+    if history is None:
+        return None
+    slices = history.time_slices
+    if len(slices) < min_slices:
+        return None
+    return history, slices
+
+
 def _is_test_file(filepath: str) -> bool:
     name = Path(filepath).name
     return name.startswith("test_") or name.endswith("_test.py")
+
+
+def _churned_files(
+    history: GitHistory,
+    ctx: AnalysisContext,
+    min_lines: int,
+    min_commits: int,
+) -> list[tuple[str, int, "FileStats"]]:
+    """Collect non-test files with enough lines and commits for churn analysis.
+
+    Returns (file_str, current_lines, stats) tuples.
+    """
+    results: list[tuple[str, int, FileStats]] = []
+    for file_path in ctx.all_trees:
+        file_str = str(file_path)
+        if _is_test_file(file_str):
+            continue
+        current_lines = _get_line_count(file_str, ctx.all_trees)
+        if current_lines < min_lines:
+            continue
+        stats = history.file_stats_since_review(file_str)
+        if stats is None:
+            continue
+        if stats.commit_count < min_commits:
+            continue
+        results.append((file_str, current_lines, stats))
+    return results
 
 
 @check(
@@ -286,14 +345,8 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
         if a_is_test != b_is_test:
             continue
 
-        count_a = file_commit_counts.get(file_a, 0)
-        count_b = file_commit_counts.get(file_b, 0)
-        min_count = min(count_a, count_b)
-        if min_count == 0:
-            continue
-
-        coupling_ratio = co_changes / min_count
-        if coupling_ratio < 0.7:
+        ratio = _coupling_ratio(file_commit_counts, file_a, file_b, co_changes, threshold=0.7)
+        if ratio is None:
             continue
 
         # Check import relationship
@@ -309,6 +362,10 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
             continue
         seen_pairs.add(pair)
 
+        min_count = min(
+            file_commit_counts.get(file_a, 0),
+            file_commit_counts.get(file_b, 0),
+        )
         findings.append(
             Finding(
                 file=file_a,
@@ -519,24 +576,9 @@ def check_churn_without_growth(ctx: AnalysisContext) -> list[Finding]:
 
     findings: list[Finding] = []
 
-    for file_path in ctx.all_trees:
-        file_str = str(file_path)
-
-        # Skip test files
-        if _is_test_file(file_str):
-            continue
-
-        current_lines = _get_line_count(file_str, ctx.all_trees)
-        if current_lines < 50:
-            continue
-
-        stats = history.file_stats_since_review(file_str)
-        if stats is None:
-            continue
-
-        if stats.commit_count < 10:
-            continue
-
+    for file_str, current_lines, stats in _churned_files(
+        history, ctx, min_lines=50, min_commits=10
+    ):
         net_growth = stats.total_insertions - stats.total_deletions
         # Flag if net growth <= 10% of current line count
         if net_growth > current_lines * 0.1:
@@ -573,23 +615,9 @@ def check_yo_yo_code(ctx: AnalysisContext) -> list[Finding]:
 
     findings: list[Finding] = []
 
-    for file_path in ctx.all_trees:
-        file_str = str(file_path)
-
-        if _is_test_file(file_str):
-            continue
-
-        current_lines = _get_line_count(file_str, ctx.all_trees)
-        if current_lines < 100:
-            continue
-
-        stats = history.file_stats_since_review(file_str)
-        if stats is None:
-            continue
-
-        if stats.commit_count < 5:
-            continue
-
+    for file_str, current_lines, stats in _churned_files(
+        history, ctx, min_lines=100, min_commits=5
+    ):
         gross_churn = stats.total_insertions + stats.total_deletions
         churn_ratio = gross_churn / current_lines
         if churn_ratio < 3.0:
@@ -722,19 +750,17 @@ def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
         if _is_test_file(file_a) != _is_test_file(file_b):
             continue
 
-        count_a = file_fix_counts.get(file_a, 0)
-        count_b = file_fix_counts.get(file_b, 0)
-        min_count = min(count_a, count_b)
-        if min_count == 0:
-            continue
-
-        ratio = co_fixes / min_count
-        if ratio < 0.6:
+        ratio = _coupling_ratio(file_fix_counts, file_a, file_b, co_fixes, threshold=0.6)
+        if ratio is None:
             continue
 
         if _is_expected_coupling(file_a, file_b, ctx.expected_coupling):
             continue
 
+        min_count = min(
+            file_fix_counts.get(file_a, 0),
+            file_fix_counts.get(file_b, 0),
+        )
         findings.append(
             Finding(
                 file=file_a,
@@ -1149,13 +1175,10 @@ def check_fix_follows_feature(ctx: AnalysisContext) -> list[Finding]:
     description="Files that repeatedly burst with activity, go quiet, then burst again",
 )
 def check_stabilization_failure(ctx: AnalysisContext) -> list[Finding]:
-    history = ctx.git_history
-    if history is None:
+    result = _history_time_slices(ctx, min_slices=6)
+    if result is None:
         return []
-
-    slices = history.time_slices
-    if len(slices) < 6:
-        return []
+    history, slices = result
 
     findings: list[Finding] = []
 
@@ -1222,13 +1245,10 @@ def check_stabilization_failure(ctx: AnalysisContext) -> list[Finding]:
     description="Files whose change frequency is increasing over time",
 )
 def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
-    history = ctx.git_history
-    if history is None:
+    result = _history_time_slices(ctx, min_slices=4)
+    if result is None:
         return []
-
-    slices = history.time_slices
-    if len(slices) < 4:
-        return []
+    history, slices = result
 
     findings: list[Finding] = []
 

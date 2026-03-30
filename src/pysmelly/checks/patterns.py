@@ -10,7 +10,7 @@ from pathlib import Path
 from pysmelly.checks.framework import is_migration_file, is_settings_file
 from pysmelly.checks.helpers import is_in_dunder_all, is_test_file
 from pysmelly.context import AnalysisContext
-from pysmelly.registry import Finding, Severity, check
+from pysmelly.registry import MAX_DISPLAY_WIDTH, Finding, Severity, check
 
 
 def _enclosing_function(
@@ -872,9 +872,11 @@ def _get_env_default(node: ast.Call) -> str | None:
 # --- fossilized-toggles helpers ---
 
 
-def _collect_module_constants(tree: ast.Module) -> dict[str, tuple[int, object]]:
-    """Find UPPER_CASE module-level names assigned literal values."""
-    constants: dict[str, tuple[int, object]] = {}
+def _iter_uppercase_assigns(
+    tree: ast.Module,
+) -> list[tuple[str, int, ast.expr]]:
+    """Yield (name, lineno, value_node) for UPPER_CASE module-level assignments."""
+    results: list[tuple[str, int, ast.expr]] = []
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, ast.Assign):
             continue
@@ -886,10 +888,42 @@ def _collect_module_constants(tree: ast.Module) -> dict[str, tuple[int, object]]
         name = target.id
         if not name.isupper() or name.startswith("_"):
             continue
-        if not isinstance(node.value, ast.Constant):
-            continue
-        constants[name] = (node.lineno, node.value.value)
+        results.append((name, node.lineno, node.value))
+    return results
+
+
+def _collect_module_constants(tree: ast.Module) -> dict[str, tuple[int, object]]:
+    """Find UPPER_CASE module-level names assigned literal values."""
+    constants: dict[str, tuple[int, object]] = {}
+    for name, lineno, value_node in _iter_uppercase_assigns(tree):
+        if isinstance(value_node, ast.Constant):
+            constants[name] = (lineno, value_node.value)
     return constants
+
+
+def _walk_name_assignments(body: list[ast.stmt], name: str) -> tuple[bool, bool]:
+    """Walk a function body for global declarations and assignments to *name*.
+
+    Skips nested function/class scopes.  Returns (has_global, has_assign).
+    """
+    has_global = False
+    has_assign = False
+    todo = list(body)
+    while todo:
+        child = todo.pop()
+        if isinstance(child, ast.Global) and name in child.names:
+            has_global = True
+        if isinstance(child, ast.Assign):
+            for t in child.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    has_assign = True
+        if isinstance(child, ast.AugAssign):
+            if isinstance(child.target, ast.Name) and child.target.id == name:
+                has_assign = True
+        for sub in ast.iter_child_nodes(child):
+            if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                todo.append(sub)
+    return has_global, has_assign
 
 
 def _is_constant_reassigned(tree: ast.Module, name: str, def_lineno: int) -> bool:
@@ -916,23 +950,7 @@ def _is_constant_reassigned(tree: ast.Module, name: str, def_lineno: int) -> boo
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        has_global = False
-        has_assign = False
-        todo = list(node.body)
-        while todo:
-            child = todo.pop()
-            if isinstance(child, ast.Global) and name in child.names:
-                has_global = True
-            if isinstance(child, ast.Assign):
-                for t in child.targets:
-                    if isinstance(t, ast.Name) and t.id == name:
-                        has_assign = True
-            if isinstance(child, ast.AugAssign):
-                if isinstance(child.target, ast.Name) and child.target.id == name:
-                    has_assign = True
-            for sub in ast.iter_child_nodes(child):
-                if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    todo.append(sub)
+        has_global, has_assign = _walk_name_assignments(node.body, name)
         if has_global and has_assign:
             return True
 
@@ -943,23 +961,7 @@ def _function_shadows_toggle(func: ast.FunctionDef | ast.AsyncFunctionDef, name:
     """Check if a function locally shadows a module-level name."""
     if name in _get_param_names(func):
         return True
-    has_global = False
-    has_assign = False
-    todo = list(func.body)
-    while todo:
-        child = todo.pop()
-        if isinstance(child, ast.Global) and name in child.names:
-            has_global = True
-        if isinstance(child, ast.Assign):
-            for t in child.targets:
-                if isinstance(t, ast.Name) and t.id == name:
-                    has_assign = True
-        if isinstance(child, ast.AugAssign):
-            if isinstance(child.target, ast.Name) and child.target.id == name:
-                has_assign = True
-        for sub in ast.iter_child_nodes(child):
-            if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                todo.append(sub)
+    has_global, has_assign = _walk_name_assignments(func.body, name)
     if has_global:
         return False
     return has_assign
@@ -1143,6 +1145,29 @@ def _collect_all_name_and_attr_loads(
     return names
 
 
+_AST_TYPE_DESCRIPTIONS: dict[type, str] = {
+    ast.Dict: "{...}",
+    ast.List: "[...]",
+    ast.Set: "{...}",
+    ast.Tuple: "(...)",
+}
+
+
+def _describe_ast_value(val: ast.expr) -> str:
+    """Build a short human-readable description of an AST value node."""
+    if isinstance(val, ast.Constant):
+        return repr(val.value)
+    if isinstance(val, ast.Call):
+        if isinstance(val.func, ast.Name):
+            return f"{val.func.id}(...)"
+        if isinstance(val.func, ast.Attribute):
+            return f"{val.func.attr}(...)"
+    desc = _AST_TYPE_DESCRIPTIONS.get(type(val))
+    if desc is not None:
+        return desc
+    return "..."
+
+
 def _collect_module_level_names(tree: ast.Module) -> dict[str, tuple[int, str]]:
     """Find all UPPER_CASE module-level names (including non-literal assignments).
 
@@ -1150,40 +1175,11 @@ def _collect_module_level_names(tree: ast.Module) -> dict[str, tuple[int, str]]:
     representation of the assigned value for the finding message.
     """
     names: dict[str, tuple[int, str]] = {}
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if len(node.targets) != 1:
-            continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        name = target.id
-        if not name.isupper() or name.startswith("_"):
-            continue
-
-        # Build a short description of the value
-        val = node.value
-        if isinstance(val, ast.Constant):
-            desc = repr(val.value)
-        elif isinstance(val, ast.Call) and isinstance(val.func, ast.Name):
-            desc = f"{val.func.id}(...)"
-        elif isinstance(val, ast.Call) and isinstance(val.func, ast.Attribute):
-            desc = f"{val.func.attr}(...)"
-        elif isinstance(val, ast.Dict):
-            desc = "{...}"
-        elif isinstance(val, ast.List):
-            desc = "[...]"
-        elif isinstance(val, ast.Set):
-            desc = "{...}"
-        elif isinstance(val, ast.Tuple):
-            desc = "(...)"
-        else:
-            desc = "..."
-
-        if len(desc) > 40:
-            desc = desc[:37] + "..."
-        names[name] = (node.lineno, desc)
+    for name, lineno, val in _iter_uppercase_assigns(tree):
+        desc = _describe_ast_value(val)
+        if len(desc) > MAX_DISPLAY_WIDTH:
+            desc = desc[: MAX_DISPLAY_WIDTH - 3] + "..."
+        names[name] = (lineno, desc)
     return names
 
 

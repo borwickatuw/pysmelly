@@ -9,7 +9,7 @@ from pathlib import Path
 from pysmelly.checks.framework import is_migration_file
 from pysmelly.checks.helpers import is_test_file
 from pysmelly.context import AnalysisContext
-from pysmelly.registry import Finding, Severity, check
+from pysmelly.registry import MAX_DISPLAY_WIDTH, Finding, Severity, check
 
 TRIVIAL_VALUES = frozenset({None, True, False, 0, 1, -1, 2, 0.0, 1.0, "", b""})
 
@@ -354,7 +354,11 @@ def check_scattered_constants(ctx: AnalysisContext) -> list[Finding]:
         type_name, repr_value = key
         locs_sorted = sorted(locs, key=lambda x: str(x[0]))
         loc_strs = [f"{loc[0]}:{loc[1]}" for loc in locs_sorted]
-        display = repr_value if len(repr_value) <= 40 else repr_value[:37] + "..."
+        display = (
+            repr_value
+            if len(repr_value) <= MAX_DISPLAY_WIDTH
+            else repr_value[: MAX_DISPLAY_WIDTH - 3] + "..."
+        )
         findings.append(
             Finding(
                 file=str(locs_sorted[0][0]),

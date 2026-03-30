@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+DEFAULT_COMMIT_MESSAGES = "auto"
+
 
 class AnalysisContext:
     """Holds parsed trees and lazily-computed indices shared across checks.
@@ -19,7 +21,7 @@ class AnalysisContext:
         verbose: bool,
         git_root: Path | None = None,
         git_window: str = "6m",
-        commit_messages: str = "auto",
+        commit_messages: str = DEFAULT_COMMIT_MESSAGES,
         expected_coupling: list[list[str]] | None = None,
     ) -> None:
         self.all_trees = all_trees

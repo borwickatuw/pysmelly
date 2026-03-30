@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import median
 
+from pysmelly.context import DEFAULT_COMMIT_MESSAGES
+
 
 @dataclass
 class FileStats:
@@ -202,7 +204,9 @@ class GitHistory:
     efficient lookup by file path.
     """
 
-    def __init__(self, git_root: Path, window: str = "6m", commit_messages: str = "auto") -> None:
+    def __init__(
+        self, git_root: Path, window: str = "6m", commit_messages: str = DEFAULT_COMMIT_MESSAGES
+    ) -> None:
         self.git_root = git_root
         self.window = window
         self.commit_messages = commit_messages

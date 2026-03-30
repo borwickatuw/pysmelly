@@ -11,7 +11,7 @@ from pathlib import Path
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
 from pysmelly.config import load_config
-from pysmelly.context import AnalysisContext
+from pysmelly.context import DEFAULT_COMMIT_MESSAGES, AnalysisContext
 from pysmelly.discovery import (
     GitNotFoundError,
     get_changed_lines,
@@ -296,6 +296,27 @@ def _discover_and_parse(roots: list[Path], excludes: list[str]) -> tuple[Path, d
                 all_trees[rel] = tree
 
     return base, all_trees
+
+
+def _load_and_merge_config(args: argparse.Namespace) -> dict:
+    """Load config file and merge common settings into args.
+
+    Handles exclude, skip, and min-severity — the settings shared between
+    the main command and git-history subcommand.  Returns the raw config
+    dict so callers can apply command-specific merges.
+    """
+    roots = [Path(t).resolve() for t in args.targets]
+    config_dir = roots[0] if len(roots) == 1 else Path.cwd()
+    config = load_config(config_dir, set(CHECKS.keys()))
+
+    if "exclude" in config:
+        args.exclude = config["exclude"] + args.exclude
+    if "skip" in config:
+        args.skip = config["skip"] + args.skip
+    if "min-severity" in config and args.min_severity == "low":
+        args.min_severity = config["min-severity"]
+
+    return config
 
 
 def _apply_filters(
@@ -694,8 +715,8 @@ def _handle_git_history(argv: list[str]) -> None:
     )
     parser.add_argument(
         "--commit-messages",
-        choices=["auto", "structured", "unstructured"],
-        default="auto",
+        choices=[DEFAULT_COMMIT_MESSAGES, "structured", "unstructured"],
+        default=DEFAULT_COMMIT_MESSAGES,
         help="Commit message quality (default: auto-detect)",
     )
     parser.add_argument(
@@ -706,22 +727,14 @@ def _handle_git_history(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     # Load config and merge
-    roots = [Path(t).resolve() for t in args.targets]
-    config_dir = roots[0] if len(roots) == 1 else Path.cwd()
-    config = load_config(config_dir, set(CHECKS.keys()))
-
-    if "exclude" in config:
-        args.exclude = config["exclude"] + args.exclude
-    if "skip" in config:
-        args.skip = config["skip"] + args.skip
-    if "min-severity" in config and args.min_severity == "low":
-        args.min_severity = config["min-severity"]
+    config = _load_and_merge_config(args)
     if "git-window" in config and args.window == "6m":
         args.window = config["git-window"]
-    if "commit-messages" in config and args.commit_messages == "auto":
+    if "commit-messages" in config and args.commit_messages == DEFAULT_COMMIT_MESSAGES:
         args.commit_messages = config["commit-messages"]
 
     # Must be in a git repo
+    roots = [Path(t).resolve() for t in args.targets]
     base, all_trees = _discover_and_parse(roots, args.exclude)
     try:
         git_root = get_git_root(base)
@@ -870,19 +883,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     # Load config file and merge with CLI args
-    roots = [Path(t).resolve() for t in args.targets]
-    config_dir = roots[0] if len(roots) == 1 else Path.cwd()
-    config = load_config(config_dir, set(CHECKS.keys()))
-
-    # Config provides defaults; CLI args override.
-    # For list args, config values come first, CLI values extend.
-    if "exclude" in config:
-        args.exclude = config["exclude"] + args.exclude
-    if "skip" in config:
-        args.skip = config["skip"] + args.skip
-    # String args: CLI overrides config (argparse defaults are sentinel values)
-    if "min-severity" in config and args.min_severity == "low":
-        args.min_severity = config["min-severity"]
+    config = _load_and_merge_config(args)
     if "check" in config and args.check is None:
         check_name = config["check"]
         if CHECK_CATEGORIES.get(check_name) == "git-history":
@@ -894,6 +895,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         args.check = check_name
 
+    roots = [Path(t).resolve() for t in args.targets]
     base, all_trees = _discover_and_parse(roots, args.exclude)
 
     # Determine which checks to run (exclude git-history checks)

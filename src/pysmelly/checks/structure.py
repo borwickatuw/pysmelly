@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pysmelly.checks.helpers import is_test_file
 from pysmelly.context import AnalysisContext
-from pysmelly.registry import Finding, Severity, check
+from pysmelly.registry import MAX_DISPLAY_WIDTH, Finding, Severity, check
 
 NOISE_PARAMS = frozenset({"verbose", "debug", "dry_run", "timeout", "logger", "log", "quiet"})
 
@@ -212,7 +212,7 @@ def _extract_statement_blocks(
                     stmts = body[start : start + size]
                     wrapper = ast.Module(body=stmts, type_ignores=[])
                     signature = _normalize_ast(wrapper)
-                    if len(signature) < 40:
+                    if len(signature) < MAX_DISPLAY_WIDTH:
                         continue
 
                     blocks.append(
