@@ -307,6 +307,61 @@ def _find_consumer(siblings: list[ast.AST], var_name: str) -> tuple[str | None, 
     return None, None
 
 
+def _build_accumulator_message(
+    var_name: str,
+    append_count: int,
+    loop_appends: int,
+    conditional_appends: int,
+    bare_appends: int,
+    consumer_desc: str | None,
+    consumer_line: int | None,
+) -> tuple[Severity, str]:
+    """Build severity and message for a temp-accumulator finding."""
+    if loop_appends > 0:
+        severity = Severity.MEDIUM
+        if consumer_desc:
+            message = (
+                f"'{var_name}' is built by loop-and-append only to "
+                f"populate {consumer_desc} (line {consumer_line}) "
+                f"— inline with a comprehension"
+            )
+        else:
+            message = (
+                f"'{var_name}' is a loop-and-append accumulator " f"— replace with a comprehension"
+            )
+    elif conditional_appends > 0 and bare_appends == 0:
+        severity = Severity.LOW
+        if consumer_desc:
+            message = (
+                f"'{var_name}' is built from {conditional_appends} "
+                f"independent conditions only to populate "
+                f"{consumer_desc} (line {consumer_line}) "
+                f"— accumulator may be appropriate here"
+            )
+        else:
+            message = (
+                f"'{var_name}' is built from {conditional_appends} "
+                f"independent conditions then joined/checked "
+                f"— accumulator may be appropriate here"
+            )
+    else:
+        severity = Severity.MEDIUM
+        if consumer_desc:
+            message = (
+                f"'{var_name}' is a temporary accumulator "
+                f"({append_count} appends) only to populate "
+                f"{consumer_desc} (line {consumer_line}) "
+                f"— consider a comprehension or direct construction"
+            )
+        else:
+            message = (
+                f"'{var_name}' is a temporary accumulator "
+                f"({append_count} appends then join/check) — "
+                f"consider a comprehension or direct approach"
+            )
+    return severity, message
+
+
 @check(
     "temp-accumulators",
     severity=Severity.MEDIUM,
@@ -405,50 +460,15 @@ def check_temp_accumulators(ctx: AnalysisContext) -> list[Finding]:
                 if has_assignment_consumer:
                     consumer_desc, consumer_line = _find_consumer(siblings, var_name)
 
-                if loop_appends > 0:
-                    severity = Severity.MEDIUM
-                    if consumer_desc:
-                        message = (
-                            f"'{var_name}' is built by loop-and-append only to "
-                            f"populate {consumer_desc} (line {consumer_line}) "
-                            f"— inline with a comprehension"
-                        )
-                    else:
-                        message = (
-                            f"'{var_name}' is a loop-and-append accumulator "
-                            f"— replace with a comprehension"
-                        )
-                elif conditional_appends > 0 and bare_appends == 0:
-                    severity = Severity.LOW
-                    if consumer_desc:
-                        message = (
-                            f"'{var_name}' is built from {conditional_appends} "
-                            f"independent conditions only to populate "
-                            f"{consumer_desc} (line {consumer_line}) "
-                            f"— accumulator may be appropriate here"
-                        )
-                    else:
-                        message = (
-                            f"'{var_name}' is built from {conditional_appends} "
-                            f"independent conditions then joined/checked "
-                            f"— accumulator may be appropriate here"
-                        )
-                else:
-                    severity = Severity.MEDIUM
-                    if consumer_desc:
-                        message = (
-                            f"'{var_name}' is a temporary accumulator "
-                            f"({append_count} appends) only to populate "
-                            f"{consumer_desc} (line {consumer_line}) "
-                            f"— consider a comprehension or direct construction"
-                        )
-                    else:
-                        message = (
-                            f"'{var_name}' is a temporary accumulator "
-                            f"({append_count} appends then join/check) — "
-                            f"consider a comprehension or direct approach"
-                        )
-
+                severity, message = _build_accumulator_message(
+                    var_name,
+                    append_count,
+                    loop_appends,
+                    conditional_appends,
+                    bare_appends,
+                    consumer_desc,
+                    consumer_line,
+                )
                 findings.append(
                     Finding(
                         file=str(filepath),

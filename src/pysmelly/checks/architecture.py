@@ -152,6 +152,47 @@ def _resolve_star_import_names(
     return None, set()
 
 
+def _resolve_accessible_names(
+    filepath: Path,
+    tree: ast.Module,
+    all_trees: dict[Path, ast.Module],
+    mutable_vars: dict[str, list[tuple[Path, int]]],
+) -> tuple[dict[str, Path], dict[str, Path], dict[str, str]]:
+    """Resolve which mutable var names from other files are accessible here.
+
+    Returns (imported_names, star_imported_names, imported_modules).
+    """
+    imported_names: dict[str, Path] = {}
+    star_imported_names: dict[str, Path] = {}
+    imported_modules: dict[str, str] = {}
+
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.ImportFrom):
+            if any(alias.name == "*" for alias in node.names):
+                source_path, names = _resolve_star_import_names(node, filepath, all_trees)
+                if source_path:
+                    for name in names:
+                        if name in mutable_vars:
+                            star_imported_names[name] = source_path
+            else:
+                for alias in node.names:
+                    actual_name = alias.asname or alias.name
+                    if alias.name in mutable_vars:
+                        for def_path, _ in mutable_vars[alias.name]:
+                            if def_path != filepath:
+                                imported_names[actual_name] = def_path
+                                break
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.name != "*":
+                    imported_modules[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+
+    return imported_names, star_imported_names, imported_modules
+
+
 def _collect_mutations(
     all_trees: dict[Path, ast.Module],
     mutable_vars: dict[str, list[tuple[Path, int]]],
@@ -166,41 +207,9 @@ def _collect_mutations(
         if is_test_file(filepath):
             continue
 
-        # What names from other files are accessible here?
-        # Track direct imports: from X import VAR
-        imported_names: dict[str, Path] = {}  # name -> source file
-        star_imported_names: dict[str, Path] = {}  # name -> source file
-
-        for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.ImportFrom):
-                if any(alias.name == "*" for alias in node.names):
-                    source_path, names = _resolve_star_import_names(node, filepath, all_trees)
-                    if source_path:
-                        for name in names:
-                            if name in mutable_vars:
-                                star_imported_names[name] = source_path
-                else:
-                    for alias in node.names:
-                        actual_name = alias.asname or alias.name
-                        if alias.name in mutable_vars:
-                            # Find which file defines it
-                            for def_path, _ in mutable_vars[alias.name]:
-                                if def_path != filepath:
-                                    imported_names[actual_name] = def_path
-                                    break
-
-        # Also track module imports for attribute-style mutations
-        imported_modules: dict[str, str] = {}  # alias -> module_name
-        for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    imported_modules[alias.asname or alias.name] = alias.name
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                for alias in node.names:
-                    if alias.name != "*":
-                        # from package import module -> module is accessible
-                        imported_modules[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-
+        imported_names, star_imported_names, imported_modules = _resolve_accessible_names(
+            filepath, tree, all_trees, mutable_vars
+        )
         accessible = set(imported_names.keys()) | set(star_imported_names.keys())
         if not accessible and not imported_modules:
             continue
