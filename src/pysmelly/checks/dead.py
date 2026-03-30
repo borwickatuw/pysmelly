@@ -231,12 +231,28 @@ def check_orphaned_test_helpers(ctx: AnalysisContext) -> list[Finding]:
     test_funcs = build_test_function_index(ctx.all_trees)
     fixture_params = _collect_fixture_param_names(ctx.all_trees)
 
+    # If test files were excluded (e.g. via --exclude tests/), conftest.py may
+    # still be present but the test files that *consume* its fixtures are missing.
+    # In that case we can't determine fixture usage, so skip fixture findings.
+    # Detect this by checking for test_* functions — the primary fixture consumers.
+    has_test_functions = any(
+        is_test_file(fp)
+        and any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test")
+            for node in ast.iter_child_nodes(tree)
+        )
+        for fp, tree in ctx.all_trees.items()
+    )
+
     for func_info in test_funcs:
         name = func_info["name"]
         def_file = func_info["file"]
         is_fixture = func_info["is_fixture"]
 
         if is_fixture:
+            if not has_test_functions:
+                continue
             # Fixtures are "called" by appearing as parameter names
             if name in fixture_params:
                 continue

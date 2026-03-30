@@ -63,3 +63,11 @@ pysmelly's differentiator is cross-file call-graph analysis. Adding single-file 
 - `boolean-parameter-smell` — Functions with boolean params where the first statement is `if flag:`. Too noisy — many legitimate uses of boolean parameters. The interesting case (function should be split) is hard to distinguish from the common case (feature toggle).
 - `stale-comments` — Comments referencing names that no longer exist. Comments aren't structured, so name matching produces false positives on partial matches, English words, etc. Fragile and low-confidence.
 - `remainder-flags` — Argparse REMAINDER swallowing flags. Extremely niche — only relevant to CLI-heavy codebases using `argparse.REMAINDER`.
+
+## Skip fixture findings in `orphaned-test-helpers` when test files are excluded
+
+**Decision:** When no `test_*` functions exist in `all_trees`, skip fixture-related findings entirely.
+
+**Context:** When a project uses `--exclude tests/ test_*`, conftest.py files can slip through the exclude filter (since `conftest.py` doesn't match `test_*`). The check would then flag all conftest fixtures as "never requested" because the test files that consume them via pytest parameter injection were excluded from parsing. Discovered via outscience project where all 4 conftest fixtures were false positives.
+
+**Rationale:** Fixture usage is determined by scanning parameter names across test functions. If those test functions aren't in the parsed trees, the check can't determine usage and should not report. The heuristic — checking for `test_*` functions rather than non-conftest test files — handles edge cases like `tests/__init__.py` files that pass through excludes but contain no test functions.

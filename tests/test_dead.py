@@ -604,6 +604,27 @@ def test_something():
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
 
+    def test_skips_fixture_findings_when_test_files_excluded(self, trees):
+        """When test files are excluded, conftest fixtures can't be checked."""
+        t = trees.files(
+            {
+                "conftest.py": """\
+import pytest
+
+@pytest.fixture
+def client():
+    return TestClient()
+
+@pytest.fixture
+def db():
+    return connect()
+""",
+            }
+        )
+        # Only conftest.py, no test files — fixtures should not be flagged
+        findings = check_orphaned_test_helpers(t)
+        assert len(findings) == 0
+
 
 class TestDeadAbstraction:
     def test_finds_abc_with_no_subclasses(self, trees):
