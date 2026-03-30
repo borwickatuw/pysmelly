@@ -19,10 +19,10 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Testing",
 ]
-dependencies = []
+dependencies = ["click>=8.0"]
 
 [project.scripts]
-pysmelly = "pysmelly.cli:main"
+pysmelly = "pysmelly.cli:cli"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

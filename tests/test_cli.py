@@ -69,7 +69,10 @@ used()
 
     def test_list_checks(self, capsys):
         """--list-checks prints check names and exits cleanly."""
-        main(["--list-checks"])
+        try:
+            main(["--list-checks"])
+        except SystemExit as e:
+            assert e.code == 0
         output = capsys.readouterr().out
         assert "dead-code" in output
         assert "high" in output
@@ -252,7 +255,10 @@ used()
 
     def test_list_checks_shows_git_marker(self, capsys):
         """--list-checks shows [git] marker for git-history checks."""
-        main(["--list-checks"])
+        try:
+            main(["--list-checks"])
+        except SystemExit as e:
+            assert e.code == 0
         output = capsys.readouterr().out
         assert "abandoned-code" in output
         assert "[git]" in output
@@ -314,7 +320,10 @@ used()
         prev = os.getcwd()
         try:
             os.chdir(git_repo)
-            main(["git-history", "reviewed", "old.py"])
+            try:
+                main(["git-history", "reviewed", "old.py"])
+            except SystemExit as e:
+                assert e.code == 0
         finally:
             os.chdir(prev)
 
@@ -344,7 +353,10 @@ used()
         prev = os.getcwd()
         try:
             os.chdir(git_repo)
-            main(["git-history", "reviewed", "a.py", "b.py"])
+            try:
+                main(["git-history", "reviewed", "a.py", "b.py"])
+            except SystemExit as e:
+                assert e.code == 0
         finally:
             os.chdir(prev)
 

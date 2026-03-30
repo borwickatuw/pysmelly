@@ -1,12 +1,13 @@
 """CLI entry point for pysmelly."""
 
-import argparse  # pysmelly: ignore[stdlib-alternatives] — zero-dependency design
 import fnmatch
 import os
 import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+import click
 
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
@@ -28,61 +29,6 @@ from pysmelly.registry import (
     Finding,
     Severity,
 )
-
-EPILOG = """\
-pysmelly finds code smells that survive after design changes — vestigial
-patterns that accumulate as code evolves. It performs cross-file call-graph
-analysis to detect patterns that single-file linters miss.
-
-Install:  uvx pysmelly (zero dependencies, no setup required)
-
-Suppression:
-  # pysmelly: ignore              Suppress all checks on this line
-  # pysmelly: ignore[dead-code]   Suppress specific check(s)
-
-Configuration:
-  .pysmelly.toml or [tool.pysmelly] in pyproject.toml
-  exclude = ["tests/", "test_*"]
-  skip = ["single-call-site"]
-  min-severity = "medium"
-
-Git history analysis:
-  pysmelly git-history             Analyze git history for structural smells
-  pysmelly git-history --window 1y Look back 1 year instead of 6 months
-  pysmelly git-history reviewed    Acknowledge git history findings
-
-Incremental analysis:
-  pysmelly --diff              Findings in uncommitted changes only
-  pysmelly --diff main         Findings in changes since main
-
-Severity levels:
-  high    Act on this or explicitly justify keeping it
-  medium  Review each finding, fix what makes sense
-  low     Informational — skim for surprises
-
-Output pacing:
-  By default, shows top 10 highest-confidence findings.
-  pysmelly --more-please       Show all findings
-
-Exit codes:
-  0       No findings
-  1       One or more findings reported
-
-Output includes a guidance preamble to help LLM consumers interpret
-findings in context. Use --no-context to suppress. Use --list-checks
-to see available checks with descriptions.
-
-Complementary tools to run alongside pysmelly:
-  vulture     Dead code detection (name-matching, no call graph)
-  ruff        Fast single-file linting (style, bugs, complexity)
-  pylint      Broad static analysis and code quality
-  mypy        Static type checking
-  bandit      Security-focused static analysis
-
-pysmelly does NOT check formatting, types, or security — use the tools
-above for those. pysmelly focuses on design smells and refactoring signals
-that require cross-file analysis.
-"""
 
 _GIT_HISTORY_CHECKS = {name for name, cat in CHECK_CATEGORIES.items() if cat == "git-history"}
 
@@ -267,7 +213,7 @@ def _print_check_list() -> None:
         else:
             tag = ""
         description = CHECK_DESCRIPTIONS.get(name, "")
-        print(f"  {name:<{name_width}}  [{severity:<6}]{tag}  {description}")
+        click.echo(f"  {name:<{name_width}}  [{severity:<6}]{tag}  {description}")
 
 
 def _discover_and_parse(roots: list[Path], excludes: list[str]) -> tuple[Path, dict[Path, object]]:
@@ -277,7 +223,7 @@ def _discover_and_parse(roots: list[Path], excludes: list[str]) -> tuple[Path, d
     """
     for root in roots:
         if not root.is_dir():
-            print(f"Error: {root} is not a directory", file=sys.stderr)
+            click.echo(f"Error: {root} is not a directory", err=True)
             sys.exit(1)
 
     if len(roots) == 1:
@@ -298,25 +244,28 @@ def _discover_and_parse(roots: list[Path], excludes: list[str]) -> tuple[Path, d
     return base, all_trees
 
 
-def _load_and_merge_config(args: argparse.Namespace) -> dict:
-    """Load config file and merge common settings into args.
+def _load_and_merge_config(
+    targets: list[str],
+    exclude: list[str],
+    skip: list[str],
+    min_severity: str,
+) -> tuple[dict, list[str], list[str], str]:
+    """Load config file and merge common settings.
 
-    Handles exclude, skip, and min-severity — the settings shared between
-    the main command and git-history subcommand.  Returns the raw config
-    dict so callers can apply command-specific merges.
+    Returns (raw_config, merged_exclude, merged_skip, merged_min_severity).
     """
-    roots = [Path(t).resolve() for t in args.targets]
+    roots = [Path(t).resolve() for t in targets]
     config_dir = roots[0] if len(roots) == 1 else Path.cwd()
     config = load_config(config_dir, set(CHECKS.keys()))
 
     if "exclude" in config:
-        args.exclude = config["exclude"] + args.exclude
+        exclude = config["exclude"] + exclude
     if "skip" in config:
-        args.skip = config["skip"] + args.skip
-    if "min-severity" in config and args.min_severity == "low":
-        args.min_severity = config["min-severity"]
+        skip = config["skip"] + skip
+    if "min-severity" in config and min_severity == "low":
+        min_severity = config["min-severity"]
 
-    return config
+    return config, exclude, skip, min_severity
 
 
 def _apply_filters(
@@ -359,6 +308,42 @@ def _apply_suppression(findings: list[Finding], base: Path) -> list[Finding]:
         except OSError:
             pass
     return [f for f in findings if not _is_suppressed(f, source_lines)]
+
+
+def _run_checks_and_filter(
+    ctx: AnalysisContext,
+    checks_to_run: dict,
+    min_severity: str,
+    diff_ref: str | None,
+    base: Path,
+) -> list[Finding]:
+    """Run checks, apply severity/diff filters and inline suppressions."""
+    all_findings: list[Finding] = []
+    for name, check_fn in checks_to_run.items():
+        all_findings.extend(check_fn(ctx))
+    all_findings = _apply_filters(all_findings, min_severity, diff_ref, base)
+    return _apply_suppression(all_findings, base)
+
+
+def _output_and_exit(
+    findings: list[Finding],
+    file_count: int,
+    context: list[str] | None,
+    summary: bool,
+    more_please: bool,
+) -> None:
+    """Format output and exit with appropriate code."""
+    max_findings = 0 if more_please else 10
+    click.echo(
+        format_text(
+            findings,
+            file_count,
+            context=context,
+            summary=summary,
+            max_findings=max_findings,
+        )
+    )
+    sys.exit(1 if findings else 0)
 
 
 GUIDANCE_CONTENT = """\
@@ -556,9 +541,9 @@ Read [{path}]({path}) before running pysmelly code smell analysis on this projec
 """
 
 
-def _handle_init(args: list[str]) -> None:
+def _handle_init(path_args: tuple[str, ...]) -> None:
     """Handle `pysmelly init [PATH]` — write guidance file and reference in CLAUDE.md."""
-    path = Path(args[0]) if args else Path("PYSMELLY.md")
+    path = Path(path_args[0]) if path_args else Path("PYSMELLY.md")
 
     # Create parent directories if needed
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -567,7 +552,7 @@ def _handle_init(args: list[str]) -> None:
     content_hash = hashlib.sha256(GUIDANCE_CONTENT.encode()).hexdigest()[:12]
     versioned = f"<!-- pysmelly-guidance {content_hash} -->\n{GUIDANCE_CONTENT}"
     path.write_text(versioned)
-    print(f"Wrote {path}")
+    click.echo(f"Wrote {path}")
 
     # Add reference to CLAUDE.md (idempotent)
     claude_md = Path("CLAUDE.md")
@@ -575,21 +560,21 @@ def _handle_init(args: list[str]) -> None:
     if claude_md.exists():
         existing = claude_md.read_text()
         if marker in existing:
-            print(f"CLAUDE.md already references pysmelly")
+            click.echo("CLAUDE.md already references pysmelly")
             return
         with claude_md.open("a") as f:
             f.write(CLAUDE_MD_REFERENCE.format(path=path))
     else:
         claude_md.write_text(CLAUDE_MD_REFERENCE.format(path=path).lstrip())
-    print(f"Added pysmelly reference to CLAUDE.md")
+    click.echo("Added pysmelly reference to CLAUDE.md")
 
 
-def _handle_reviewed(args: list[str]) -> None:
+def _handle_reviewed(files: tuple[str, ...]) -> None:
     """Handle `pysmelly git-history reviewed <file|dir> [...]` — create acknowledgment commit."""
-    if not args:
-        print(
+    if not files:
+        click.echo(
             "Error: pysmelly git-history reviewed requires at least one file or directory path",
-            file=sys.stderr,
+            err=True,
         )
         sys.exit(1)
 
@@ -597,34 +582,34 @@ def _handle_reviewed(args: list[str]) -> None:
     try:
         git_root = get_git_root(Path.cwd())
     except GitNotFoundError:
-        print("Error: pysmelly git-history reviewed requires a git repository", file=sys.stderr)
+        click.echo("Error: pysmelly git-history reviewed requires a git repository", err=True)
         sys.exit(1)
 
     # Expand directories to .py files, verify paths exist
     filepaths: list[str] = []
-    for arg in args:
+    for arg in files:
         p = Path(arg)
         if not p.exists():
-            print(f"Error: {arg} does not exist", file=sys.stderr)
+            click.echo(f"Error: {arg} does not exist", err=True)
             sys.exit(1)
         if p.is_dir():
             py_files = sorted(str(f) for f in p.rglob("*.py"))
             if not py_files:
-                print(f"Warning: no .py files found in {arg}", file=sys.stderr)
+                click.echo(f"Warning: no .py files found in {arg}", err=True)
             filepaths.extend(py_files)
         else:
             filepaths.append(arg)
 
     if not filepaths:
-        print("Error: no files to review", file=sys.stderr)
+        click.echo("Error: no files to review", err=True)
         sys.exit(1)
 
     # Build commit message
     markers = "\n".join(f"pysmelly: reviewed {f}" for f in filepaths)
     if len(filepaths) == 1:
         subject = f"Acknowledge pysmelly finding for {filepaths[0]}"
-    elif len(args) == 1 and Path(args[0]).is_dir():
-        subject = f"Acknowledge pysmelly findings for {args[0]}/ ({len(filepaths)} files)"
+    elif len(files) == 1 and Path(files[0]).is_dir():
+        subject = f"Acknowledge pysmelly findings for {files[0]}/ ({len(filepaths)} files)"
     else:
         subject = f"Acknowledge pysmelly findings for {len(filepaths)} files"
     message = f"{subject}\n\n{markers}"
@@ -636,143 +621,349 @@ def _handle_reviewed(args: list[str]) -> None:
             cwd=git_root,
         )
     except subprocess.CalledProcessError as e:
-        print(f"Error: git commit failed (exit {e.returncode})", file=sys.stderr)
+        click.echo(f"Error: git commit failed (exit {e.returncode})", err=True)
         sys.exit(1)
 
 
-def _handle_git_history(argv: list[str]) -> None:
-    """Handle `pysmelly git-history [reviewed|TARGETS...]` subcommand."""
-    if argv and argv[0] == "reviewed":
-        _handle_reviewed(argv[1:])
+# AST check names (exclude git-history checks)
+_AST_CHECK_NAMES = [n for n in CHECKS if n not in _GIT_HISTORY_CHECKS]
+_GIT_HISTORY_CHECK_NAMES = list(
+    name for name, cat in CHECK_CATEGORIES.items() if cat == "git-history"
+)
+
+
+class _GroupWithTargets(click.Group):
+    """Click Group that accepts positional target arguments alongside subcommands.
+
+    Standard Click groups treat the first positional arg as a subcommand name
+    and fail with "No such command" for directory paths. This subclass
+    intercepts parsing: when the first positional arg is not a known subcommand,
+    it collects all positional args in ctx.args as directory targets and invokes
+    the group callback (invoke_without_command behavior).
+
+    Group callbacks should read targets from ``ctx.args`` instead of declaring
+    a ``click.argument``.
+    """
+
+    def parse_args(self, ctx, args):
+        # Find the first positional (non-option) token.
+        # If it is a known subcommand, let Click route normally.
+        # If not, stash everything in ctx.args and skip subcommand resolution.
+        first_pos_idx = None
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg == "--":
+                break
+            if arg.startswith("-"):
+                # Check if this option expects a value (skip next arg if so).
+                # We detect this by checking the group's declared options.
+                param = self._find_param(arg)
+                if param is not None and not param.is_flag:
+                    i += 1  # skip the option's value
+                i += 1
+                continue
+            first_pos_idx = i
+            break
+
+        if first_pos_idx is not None and args[first_pos_idx] in self.commands:
+            # It's a real subcommand — let Click handle it normally
+            return super().parse_args(ctx, args)
+
+        # No subcommand found. Parse only the options (everything before and
+        # after the first positional), and put positional args in ctx.args.
+        # Split args into options and positional targets.
+        opts = []
+        targets = []
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg == "--":
+                targets.extend(args[i + 1 :])
+                break
+            if arg.startswith("-"):
+                opts.append(arg)
+                # If the option takes a value and it's not joined with =,
+                # consume the next token as the value.
+                opt_key = arg.split("=", 1)[0] if "=" in arg else arg
+                param = self._find_param(opt_key)
+                if param is not None and not param.is_flag and "=" not in arg and i + 1 < len(args):
+                    i += 1
+                    opts.append(args[i])
+            else:
+                targets.append(arg)
+            i += 1
+
+        # Let Click parse just the options
+        super().parse_args(ctx, opts)
+        # Stash targets for the callback to read
+        ctx.args = targets
+        return args
+
+    def _find_param(self, opt_string: str) -> click.Parameter | None:
+        """Look up a parameter by its option string (e.g., '--check')."""
+        for param in self.params:
+            if isinstance(param, click.Option) and opt_string in param.opts:
+                return param
+            if isinstance(param, click.Option) and opt_string in param.secondary_opts:
+                return param
+        return None
+
+
+@click.group(cls=_GroupWithTargets, invoke_without_command=True)
+@click.version_option(version=_get_version(), prog_name="pysmelly")
+@click.option(
+    "--check",
+    type=click.Choice(_AST_CHECK_NAMES, case_sensitive=True),
+    default=None,
+    help="Run only this check (see --list-checks)",
+)
+@click.option("--skip", multiple=True, help="Skip this check (can be repeated)")
+@click.option(
+    "--exclude",
+    multiple=True,
+    help="Exclude files matching pattern (repeatable; 'test_*' for names, 'path/to/dir/' for directories)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show additional detail")
+@click.option(
+    "--min-severity",
+    type=click.Choice(["low", "medium", "high"]),
+    default="low",
+    help="Minimum severity to report (default: low)",
+)
+@click.option(
+    "--diff",
+    "diff_ref",
+    default=None,
+    metavar="REF",
+    help="Only report findings in lines changed since REF (e.g., --diff HEAD)",
+)
+@click.option(
+    "--no-context",
+    is_flag=True,
+    help="Suppress the guidance preamble (on by default for LLM consumers)",
+)
+@click.option(
+    "--summary",
+    is_flag=True,
+    help="Show finding counts per check without individual findings",
+)
+@click.option(
+    "--list-checks",
+    is_flag=True,
+    help="List all available checks with descriptions and exit",
+)
+@click.option(
+    "--more-please/--no-more-please",
+    "--all",
+    is_flag=True,
+    default=False,
+    help="Show all findings (default: top 10 highest-confidence)",
+)
+@click.pass_context
+def cli(
+    ctx,
+    check,
+    skip,
+    exclude,
+    verbose,
+    min_severity,
+    diff_ref,
+    no_context,
+    summary,
+    list_checks,
+    more_please,
+):
+    """AST-based Python code smell detector."""
+    # If a subcommand is being invoked, do nothing here
+    if ctx.invoked_subcommand is not None:
         return
 
-    git_history_checks = {
-        name: fn for name, fn in CHECKS.items() if CHECK_CATEGORIES.get(name) == "git-history"
-    }
+    if list_checks:
+        _print_check_list()
+        return
 
-    parser = argparse.ArgumentParser(
-        prog="pysmelly git-history",
-        description="Analyze git history for structural and evolutionary code smells",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "targets",
-        nargs="*",
-        default=["."],
-        help="Directories to analyze (default: current directory)",
-    )
-    parser.add_argument(
-        "--check",
-        choices=list(git_history_checks.keys()),
-        metavar="CHECK",
-        help="Run only this check",
-    )
-    parser.add_argument(
-        "--skip",
-        action="append",
-        default=[],
-        help="Skip this check (can be repeated)",
-    )
-    parser.add_argument(
-        "--exclude",
-        action="append",
-        default=[],
-        help="Exclude files matching pattern (repeatable)",
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Show additional detail",
-    )
-    parser.add_argument(
-        "--min-severity",
-        choices=["low", "medium", "high"],
-        default="low",
-        help="Minimum severity to report (default: low)",
-    )
-    parser.add_argument(
-        "--no-context",
-        action="store_true",
-        help="Suppress the guidance preamble",
-    )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Show finding counts per check without individual findings",
-    )
-    parser.add_argument(
-        "--more-please",
-        "--all",
-        action="store_true",
-        help="Show all findings (default: top 10 highest-confidence)",
-    )
-    parser.add_argument(
-        "--window",
-        default="6m",
-        metavar="PERIOD",
-        help="Time window for git history analysis (default: 6m; e.g., 3m, 1y, 90d)",
-    )
-    parser.add_argument(
-        "--commit-messages",
-        choices=[DEFAULT_COMMIT_MESSAGES, "structured", "unstructured"],
-        default=DEFAULT_COMMIT_MESSAGES,
-        help="Commit message quality (default: auto-detect)",
-    )
-    parser.add_argument(
-        "--ignore-reviewed",
-        action="store_true",
-        help="Analyze full history, ignoring any 'pysmelly: reviewed' markers",
-    )
-    args = parser.parse_args(argv)
+    # Targets come from ctx.args (positional args collected by _GroupWithTargets)
+    targets = ctx.args or ["."]
 
-    # Load config and merge
-    config = _load_and_merge_config(args)
-    if "git-window" in config and args.window == "6m":
-        args.window = config["git-window"]
-    if "commit-messages" in config and args.commit_messages == DEFAULT_COMMIT_MESSAGES:
-        args.commit_messages = config["commit-messages"]
+    # Convert tuples to lists for merging
+    exclude = list(exclude)
+    skip = list(skip)
 
-    # Must be in a git repo
-    roots = [Path(t).resolve() for t in args.targets]
-    base, all_trees = _discover_and_parse(roots, args.exclude)
-    try:
-        git_root = get_git_root(base)
-    except GitNotFoundError:
-        print("Error: pysmelly git-history requires a git repository", file=sys.stderr)
-        sys.exit(1)
+    # Load config file and merge with CLI args
+    config, exclude, skip, min_severity = _load_and_merge_config(
+        targets, exclude, skip, min_severity
+    )
+    if "check" in config and check is None:
+        check_name = config["check"]
+        if CHECK_CATEGORIES.get(check_name) == "git-history":
+            click.echo(
+                f"Error: {check_name} is a git-history check. "
+                f"Use: pysmelly git-history --check {check_name}",
+                err=True,
+            )
+            sys.exit(1)
+        check = check_name
 
-    # Determine which checks to run
-    if args.check:
-        checks_to_run = {args.check: git_history_checks[args.check]}
+    roots = [Path(t).resolve() for t in targets]
+    base, all_trees = _discover_and_parse(roots, exclude)
+
+    # Determine which checks to run (exclude git-history checks)
+    if check:
+        checks_to_run = {check: CHECKS[check]}
     else:
         checks_to_run = {
-            name: fn for name, fn in git_history_checks.items() if name not in args.skip
+            name: fn
+            for name, fn in CHECKS.items()
+            if name not in skip and CHECK_CATEGORIES.get(name, "ast") != "git-history"
         }
 
     # Run checks
+    analysis_ctx = AnalysisContext(all_trees, verbose)
+    all_findings = _run_checks_and_filter(analysis_ctx, checks_to_run, min_severity, diff_ref, base)
+
+    # Build guidance preamble for LLM consumers (on by default)
+    context: list[str] | None = None
+    if not no_context:
+        checks_with_findings = {f.check for f in all_findings}
+        context = _build_guidance(exclude, checks_with_findings)
+
+    _output_and_exit(all_findings, len(all_trees), context, summary, more_please)
+
+
+@cli.command("init")
+@click.argument("path", nargs=-1)
+def init_cmd(path):
+    """Write PYSMELLY.md guidance file for AI code review."""
+    _handle_init(path)
+
+
+@cli.group("git-history", cls=_GroupWithTargets, invoke_without_command=True)
+@click.option(
+    "--check",
+    type=click.Choice(_GIT_HISTORY_CHECK_NAMES, case_sensitive=True),
+    default=None,
+    metavar="CHECK",
+    help="Run only this check",
+)
+@click.option("--skip", multiple=True, help="Skip this check (can be repeated)")
+@click.option(
+    "--exclude",
+    multiple=True,
+    help="Exclude files matching pattern (repeatable)",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show additional detail")
+@click.option(
+    "--min-severity",
+    type=click.Choice(["low", "medium", "high"]),
+    default="low",
+    help="Minimum severity to report (default: low)",
+)
+@click.option(
+    "--no-context",
+    is_flag=True,
+    help="Suppress the guidance preamble",
+)
+@click.option(
+    "--summary",
+    is_flag=True,
+    help="Show finding counts per check without individual findings",
+)
+@click.option(
+    "--more-please/--no-more-please",
+    "--all",
+    is_flag=True,
+    default=False,
+    help="Show all findings (default: top 10 highest-confidence)",
+)
+@click.option(
+    "--window",
+    default="6m",
+    metavar="PERIOD",
+    help="Time window for git history analysis (default: 6m; e.g., 3m, 1y, 90d)",
+)
+@click.option(
+    "--commit-messages",
+    type=click.Choice([DEFAULT_COMMIT_MESSAGES, "structured", "unstructured"]),
+    default=DEFAULT_COMMIT_MESSAGES,
+    help="Commit message quality (default: auto-detect)",
+)
+@click.option(
+    "--ignore-reviewed",
+    is_flag=True,
+    help="Analyze full history, ignoring any 'pysmelly: reviewed' markers",
+)
+@click.pass_context
+def git_history_group(
+    ctx,
+    check,
+    skip,
+    exclude,
+    verbose,
+    min_severity,
+    no_context,
+    summary,
+    more_please,
+    window,
+    commit_messages,
+    ignore_reviewed,
+):
+    """Analyze git history for structural and evolutionary code smells."""
+    # If a subcommand (like 'reviewed') is being invoked, do nothing here
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # Targets come from ctx.args (positional args collected by _GroupWithTargets)
+    targets = ctx.args or ["."]
+
+    # Convert tuples to lists for merging
+    exclude = list(exclude)
+    skip = list(skip)
+
+    # Load config and merge
+    config, exclude, skip, min_severity = _load_and_merge_config(
+        targets, exclude, skip, min_severity
+    )
+    if "git-window" in config and window == "6m":
+        window = config["git-window"]
+    if "commit-messages" in config and commit_messages == DEFAULT_COMMIT_MESSAGES:
+        commit_messages = config["commit-messages"]
+
+    # Must be in a git repo
+    roots = [Path(t).resolve() for t in targets]
+    base, all_trees = _discover_and_parse(roots, exclude)
+    try:
+        git_root = get_git_root(base)
+    except GitNotFoundError:
+        click.echo("Error: pysmelly git-history requires a git repository", err=True)
+        sys.exit(1)
+
+    # Determine which checks to run
+    git_history_checks = {
+        name: fn for name, fn in CHECKS.items() if CHECK_CATEGORIES.get(name) == "git-history"
+    }
+    if check:
+        checks_to_run = {check: git_history_checks[check]}
+    else:
+        checks_to_run = {name: fn for name, fn in git_history_checks.items() if name not in skip}
+
+    # Run checks
     expected_coupling = config.get("expected-coupling", [])
-    ctx = AnalysisContext(
+    analysis_ctx = AnalysisContext(
         all_trees,
-        args.verbose,
+        verbose,
         git_root=git_root,
-        git_window=args.window,
-        commit_messages=args.commit_messages,
+        git_window=window,
+        commit_messages=commit_messages,
         expected_coupling=expected_coupling,
     )
-    if args.ignore_reviewed and ctx.git_history is not None:
-        ctx.git_history.reviewed_at = {}
-    all_findings: list[Finding] = []
-    for name, check_fn in checks_to_run.items():
-        all_findings.extend(check_fn(ctx))
-
-    # Filter and suppress
-    all_findings = _apply_filters(all_findings, args.min_severity, None, base)
-    all_findings = _apply_suppression(all_findings, base)
+    if ignore_reviewed and analysis_ctx.git_history is not None:
+        analysis_ctx.git_history.reviewed_at = {}
+    all_findings = _run_checks_and_filter(analysis_ctx, checks_to_run, min_severity, None, base)
 
     # Guidance
     context: list[str] | None = None
-    if not args.no_context:
+    if not no_context:
         context = [
             "pysmelly git-history analyzes version control history to find "
             "structural and evolutionary signals invisible to static analysis. "
@@ -780,163 +971,19 @@ def _handle_git_history(argv: list[str]) -> None:
             "or rapid growth that suggest design problems."
         ]
 
-    # Output
-    max_findings = 0 if args.more_please else 10
-    print(
-        format_text(
-            all_findings,
-            len(all_trees),
-            context=context,
-            summary=args.summary,
-            max_findings=max_findings,
-        )
-    )
+    _output_and_exit(all_findings, len(all_trees), context, summary, more_please)
 
-    sys.exit(1 if all_findings else 0)
+
+@git_history_group.command("reviewed")
+@click.argument("files", nargs=-1)
+def reviewed_cmd(files):
+    """Acknowledge git history findings by creating a review marker commit."""
+    _handle_reviewed(files)
 
 
 def main(argv: list[str] | None = None) -> None:
-    raw_args = argv if argv is not None else sys.argv[1:]
-    if raw_args and raw_args[0] == "init":
-        _handle_init(raw_args[1:])
-        return
-    if raw_args and raw_args[0] == "git-history":
-        _handle_git_history(raw_args[1:])
-        return
-
-    parser = argparse.ArgumentParser(
-        prog="pysmelly",
-        description="AST-based Python code smell detector",
-        epilog=EPILOG,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
-    parser.add_argument(
-        "targets",
-        nargs="*",
-        default=["."],
-        help="Directories to analyze (default: current directory)",
-    )
-    parser.add_argument(
-        "--check",
-        choices=[n for n in CHECKS if n not in _GIT_HISTORY_CHECKS],
-        metavar="CHECK",
-        help="Run only this check (see --list-checks)",
-    )
-    parser.add_argument(
-        "--skip",
-        action="append",
-        default=[],
-        help="Skip this check (can be repeated)",
-    )
-    parser.add_argument(
-        "--exclude",
-        action="append",
-        default=[],
-        help="Exclude files matching pattern (repeatable; 'test_*' for names, 'path/to/dir/' for directories)",
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Show additional detail",
-    )
-    parser.add_argument(
-        "--min-severity",
-        choices=["low", "medium", "high"],
-        default="low",
-        help="Minimum severity to report (default: low)",
-    )
-    parser.add_argument(
-        "--diff",
-        nargs="?",
-        const="HEAD",
-        default=None,
-        metavar="REF",
-        help="Only report findings in lines changed since REF (default: HEAD)",
-    )
-    parser.add_argument(
-        "--no-context",
-        action="store_true",
-        help="Suppress the guidance preamble (on by default for LLM consumers)",
-    )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Show finding counts per check without individual findings",
-    )
-    parser.add_argument(
-        "--list-checks",
-        action="store_true",
-        help="List all available checks with descriptions and exit",
-    )
-    parser.add_argument(
-        "--more-please",
-        "--all",
-        action="store_true",
-        help="Show all findings (default: top 10 highest-confidence)",
-    )
-    args = parser.parse_args(argv)
-
-    if args.list_checks:
-        _print_check_list()
-        return
-
-    # Load config file and merge with CLI args
-    config = _load_and_merge_config(args)
-    if "check" in config and args.check is None:
-        check_name = config["check"]
-        if CHECK_CATEGORIES.get(check_name) == "git-history":
-            print(
-                f"Error: {check_name} is a git-history check. "
-                f"Use: pysmelly git-history --check {check_name}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        args.check = check_name
-
-    roots = [Path(t).resolve() for t in args.targets]
-    base, all_trees = _discover_and_parse(roots, args.exclude)
-
-    # Determine which checks to run (exclude git-history checks)
-    if args.check:
-        checks_to_run = {args.check: CHECKS[args.check]}
-    else:
-        checks_to_run = {
-            name: fn
-            for name, fn in CHECKS.items()
-            if name not in args.skip and CHECK_CATEGORIES.get(name, "ast") != "git-history"
-        }
-
-    # Run checks
-    ctx = AnalysisContext(all_trees, args.verbose)
-    all_findings: list[Finding] = []
-    for name, check_fn in checks_to_run.items():
-        all_findings.extend(check_fn(ctx))
-
-    # Filter
-    all_findings = _apply_filters(all_findings, args.min_severity, args.diff, base)
-    all_findings = _apply_suppression(all_findings, base)
-
-    # Build guidance preamble for LLM consumers (on by default)
-    context: list[str] | None = None
-    if not args.no_context:
-        checks_with_findings = {f.check for f in all_findings}
-        context = _build_guidance(args.exclude, checks_with_findings)
-
-    # Output
-    max_findings = 0 if args.more_please else 10
-    print(
-        format_text(
-            all_findings,
-            len(all_trees),
-            context=context,
-            summary=args.summary,
-            max_findings=max_findings,
-        )
-    )
-
-    sys.exit(1 if all_findings else 0)
+    """Entry point wrapper for backward compatibility with tests."""
+    cli(argv, standalone_mode=True)
 
 
 if __name__ == "__main__":
