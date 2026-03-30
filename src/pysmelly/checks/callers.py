@@ -908,6 +908,55 @@ def _classify_error_handling(
     return "unhandled", []
 
 
+def _enclosing_function_name(
+    call_node: ast.Call, tree: ast.Module, ctx: AnalysisContext
+) -> str | None:
+    """Find the name of the function enclosing a call node."""
+    parents = ctx.parent_map(tree)
+    current: ast.AST = call_node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+    return None
+
+
+def _any_caller_catches(
+    func_name: str,
+    exc_names: set[str],
+    ctx: AnalysisContext,
+    _seen: frozenset[str] = frozenset(),
+) -> bool:
+    """Check if any caller of func_name catches one of the given exceptions.
+
+    Follows exception propagation through wrappers: if a caller doesn't
+    handle the exception, checks whether that caller's own callers do.
+    """
+    if func_name in _seen:
+        return False
+    seen = _seen | {func_name}
+    wrapper_calls = ctx.call_index.get(func_name, [])
+    wrapper_calls = [c for c in wrapper_calls if not is_test_file(Path(c["file"]))]
+    if not wrapper_calls:
+        return False
+    for call in wrapper_calls:
+        tree = ctx.all_trees.get(Path(call["file"]))
+        if tree is None:
+            continue
+        category, caught = _classify_error_handling(call["node"], tree, ctx)
+        if category == "specific" and exc_names.intersection(caught):
+            return True
+        if category == "broad":
+            return True
+        if category == "unhandled":
+            wrapper_name = _enclosing_function_name(call["node"], tree, ctx)
+            if wrapper_name and _any_caller_catches(
+                wrapper_name, exc_names, ctx, seen
+            ):
+                return True
+    return False
+
+
 @check(
     "inconsistent-error-handling",
     severity=Severity.MEDIUM,
@@ -935,7 +984,7 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
 
         specific_callers: list[dict] = []
         broad_callers: list[dict] = []
-        unhandled_callers: list[dict] = []
+        unhandled_callers: list[tuple[dict, dict]] = []  # (call_info, raw call)
         all_specific_names: set[str] = set()
 
         for call in calls:
@@ -948,13 +997,34 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
             elif category == "broad":
                 broad_callers.append(call_info)
             else:
-                unhandled_callers.append(call_info)
+                unhandled_callers.append((call_info, call))
 
         # Only flag when at least one caller catches specific exceptions
         # AND at least one other caller is broad or unhandled
         if not specific_callers:
             continue
         if not broad_callers and not unhandled_callers:
+            continue
+
+        # Check for exception propagation through wrappers: if an "unhandled"
+        # caller is inside a function whose own callers catch the specific
+        # exceptions, the exception is being deliberately propagated.
+        if unhandled_callers and all_specific_names:
+            still_unhandled: list[dict] = []
+            for call_info, call in unhandled_callers:
+                tree = ctx.all_trees[Path(call["file"])]
+                wrapper_name = _enclosing_function_name(call["node"], tree, ctx)
+                if wrapper_name and _any_caller_catches(
+                    wrapper_name, all_specific_names, ctx
+                ):
+                    specific_callers.append(call_info)
+                else:
+                    still_unhandled.append(call_info)
+            unhandled_callers_final = still_unhandled
+        else:
+            unhandled_callers_final = [info for info, _ in unhandled_callers]
+
+        if not broad_callers and not unhandled_callers_final:
             continue
 
         def_info = defs[0]
@@ -964,10 +1034,10 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
             parts.append(f"{len(specific_callers)} catch specific ({exc_str})")
         if broad_callers:
             parts.append(f"{len(broad_callers)} catch broad Exception")
-        if unhandled_callers:
-            parts.append(f"{len(unhandled_callers)} unhandled")
+        if unhandled_callers_final:
+            parts.append(f"{len(unhandled_callers_final)} unhandled")
 
-        total = len(specific_callers) + len(broad_callers) + len(unhandled_callers)
+        total = len(specific_callers) + len(broad_callers) + len(unhandled_callers_final)
         findings.append(
             Finding(
                 file=def_info["file"],

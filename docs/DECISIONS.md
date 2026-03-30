@@ -71,3 +71,11 @@ pysmelly's differentiator is cross-file call-graph analysis. Adding single-file 
 **Context:** When a project uses `--exclude tests/ test_*`, conftest.py files can slip through the exclude filter (since `conftest.py` doesn't match `test_*`). The check would then flag all conftest fixtures as "never requested" because the test files that consume them via pytest parameter injection were excluded from parsing. Discovered via outscience project where all 4 conftest fixtures were false positives.
 
 **Rationale:** Fixture usage is determined by scanning parameter names across test functions. If those test functions aren't in the parsed trees, the check can't determine usage and should not report. The heuristic — checking for `test_*` functions rather than non-conftest test files — handles edge cases like `tests/__init__.py` files that pass through excludes but contain no test functions.
+
+## Track exception propagation through wrappers in `inconsistent-error-handling`
+
+**Decision:** When a caller is classified as "unhandled," check if its enclosing function has any caller (at any depth) that catches the specific exception. If so, treat it as deliberate propagation, not missing error handling.
+
+**Context:** Thin wrapper functions like `get_access_token() → get_token()` intentionally propagate exceptions without catching them. The check was flagging these as "unhandled" even though callers higher in the chain DO catch the exception. This is normal exception propagation, not an unclear error contract. Discovered via outscience project where `get_token()` and `get_access_token()` both had false positives from wrapper intermediaries.
+
+**Rationale:** The heuristic uses `_any_caller_catches()` which follows the call graph upward: for each "unhandled" call site, find the enclosing function, then check whether any of THAT function's callers catch the specific exception (recursively, with cycle detection). Using "any" rather than "all" is correct because the wrapper's own inconsistent handling would be a separate finding for the wrapper itself — not evidence that the inner function's error contract is unclear.

@@ -1311,6 +1311,90 @@ except Exception:
         assert len(findings) == 1
         assert findings[0].severity == Severity.MEDIUM
 
+    def test_exception_propagation_through_wrapper(self, trees):
+        """Wrapper that propagates exception to callers that catch it."""
+        t = trees.files(
+            {
+                "lib.py": "def get_token():\n    raise AuthError()",
+                "auth.py": (
+                    "from lib import get_token\n"
+                    "def get_access_token():\n"
+                    "    return get_token()['access']\n"
+                ),
+                "a.py": (
+                    "from lib import get_token\n"
+                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                ),
+                "b.py": (
+                    "from lib import get_token\n"
+                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                ),
+                "c.py": (
+                    "from auth import get_access_token\n"
+                    "try:\n    get_access_token()\nexcept AuthError:\n    pass"
+                ),
+            }
+        )
+        findings = check_inconsistent_error_handling(t)
+        # get_access_token is a wrapper — its caller catches AuthError,
+        # so get_token's "unhandled" call in auth.py should not be flagged
+        assert len(findings) == 0
+
+    def test_exception_propagation_multi_level(self, trees):
+        """Exception propagates through multiple wrapper levels."""
+        t = trees.files(
+            {
+                "lib.py": "def get_token():\n    raise AuthError()",
+                "auth.py": (
+                    "from lib import get_token\n"
+                    "def get_access_token():\n"
+                    "    return get_token()['access']\n"
+                    "def get_root():\n"
+                    "    return make_root(get_access_token())\n"
+                ),
+                "a.py": (
+                    "from lib import get_token\n"
+                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                ),
+                "b.py": (
+                    "from lib import get_token\n"
+                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                ),
+                "c.py": (
+                    "from auth import get_root\n"
+                    "try:\n    get_root()\nexcept AuthError:\n    pass"
+                ),
+            }
+        )
+        findings = check_inconsistent_error_handling(t)
+        assert len(findings) == 0
+
+    def test_still_flags_truly_unhandled(self, trees):
+        """Wrapper whose callers don't catch the exception is still flagged."""
+        t = trees.files(
+            {
+                "lib.py": "def get_token():\n    raise AuthError()",
+                "auth.py": (
+                    "from lib import get_token\n"
+                    "def get_access_token():\n"
+                    "    return get_token()['access']\n"
+                ),
+                "a.py": (
+                    "from lib import get_token\n"
+                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                ),
+                "b.py": (
+                    "from lib import get_token\n"
+                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                ),
+                # get_access_token called without any error handling
+                "c.py": "from auth import get_access_token\nget_access_token()",
+            }
+        )
+        findings = check_inconsistent_error_handling(t)
+        assert len(findings) == 1
+        assert "unhandled" in findings[0].message
+
 
 class TestVestigialParams:
     def test_finds_unused_param(self, trees):
