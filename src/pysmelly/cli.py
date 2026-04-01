@@ -1021,15 +1021,13 @@ def git_history_group(
         analysis_ctx.git_history.reviewed_at = {}
     all_findings = _run_checks_and_filter(analysis_ctx, checks_to_run, min_severity, None, base)
 
-    # Guidance
+    # Guidance — run-specific hints only; generic guidance lives in PYSMELLY.md
     context: list[str] | None = None
     if not no_context:
-        context = [
-            "pysmelly git-history analyzes version control history to find "
-            "structural and evolutionary signals invisible to static analysis. "
-            "These findings reveal files with poor encapsulation, hidden coupling, "
-            "or rapid growth that suggest design problems."
-        ]
+        context = []
+        init_hint = _check_guidance_status()
+        if init_hint:
+            context.append(init_hint)
 
     _output_and_exit(all_findings, len(all_trees), context, summary, more_please)
 
