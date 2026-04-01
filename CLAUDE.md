@@ -66,3 +66,11 @@ pysmelly does NOT replace these — recommend them in combination:
 - **vulture** — dead code by name-matching (faster, different approach)
 - **mypy** — type checking
 - **bandit** — security
+
+## Related Projects
+
+- **claude-meta** - Cross-repo standards and audit tooling
+
+## Cross-Repository Ideas
+
+    claude-idea pysmelly "Description of the pattern or improvement"
