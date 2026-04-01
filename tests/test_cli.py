@@ -1,10 +1,12 @@
 """Tests for CLI behavior."""
 
+import hashlib
+import os
 import subprocess
 
 import pytest
 
-from pysmelly.cli import main
+from pysmelly.cli import GUIDANCE_CONTENT, SHORT_GUIDANCE_CONTENT, main
 
 
 class TestCLI:
@@ -208,15 +210,15 @@ used()
         assert "[test files excluded]" not in output
 
     def test_context_on_by_default(self, tmp_path, capsys):
-        """Guidance preamble is emitted by default."""
-        (tmp_path / "app.py").write_text("x = 1\n")
+        """Guidance preamble includes run-specific context when relevant."""
+        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
         try:
-            main(["--min-severity", "high", str(tmp_path)])
+            main(["--exclude", "test_*", str(tmp_path)])
         except SystemExit:
             pass
         output = capsys.readouterr().out
         assert "--- Guidance ---" in output
-        assert "vestigial" in output
+        assert "speculative generality" in output
 
     def test_no_context_suppresses_guidance(self, tmp_path, capsys):
         """--no-context suppresses the guidance preamble."""
@@ -392,3 +394,178 @@ used()
             assert "does not exist" in err
         finally:
             os.chdir(prev)
+
+
+class TestInit:
+    def test_init_writes_full_guidance(self, tmp_path, capsys):
+        """pysmelly init writes full guidance by default."""
+        target = tmp_path / "PYSMELLY.md"
+        try:
+            main(["init", str(target)])
+        except SystemExit:
+            pass
+        content = target.read_text()
+        assert "pysmelly-guidance" in content
+        assert "Code Smell Review Guide" in content
+        assert "How to act on AST findings" in content
+        output = capsys.readouterr().out
+        assert f"Wrote {target}" in output
+
+    def test_init_short_writes_short_guidance(self, tmp_path, capsys):
+        """pysmelly init --short writes the short variant."""
+        target = tmp_path / "PYSMELLY.md"
+        try:
+            main(["init", "--short", str(target)])
+        except SystemExit:
+            pass
+        content = target.read_text()
+        assert "pysmelly-guidance" in content
+        assert "(Short)" in content
+        assert "How to act on AST findings" not in content
+
+    def test_init_short_default_path(self, tmp_path, capsys):
+        """pysmelly init --short without path writes to PYSMELLY.md."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            try:
+                main(["init", "--short"])
+            except SystemExit:
+                pass
+            content = (tmp_path / "PYSMELLY.md").read_text()
+            assert "(Short)" in content
+        finally:
+            os.chdir(prev)
+
+    def test_init_creates_claude_md_reference(self, tmp_path, capsys):
+        """pysmelly init creates CLAUDE.md with pysmelly reference."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            try:
+                main(["init"])
+            except SystemExit:
+                pass
+            claude_md = (tmp_path / "CLAUDE.md").read_text()
+            assert "pysmelly" in claude_md
+            assert "PYSMELLY.md" in claude_md
+        finally:
+            os.chdir(prev)
+
+    def test_init_idempotent_claude_md(self, tmp_path, capsys):
+        """Running init twice does not duplicate the CLAUDE.md reference."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            try:
+                main(["init"])
+            except SystemExit:
+                pass
+            try:
+                main(["init"])
+            except SystemExit:
+                pass
+            claude_md = (tmp_path / "CLAUDE.md").read_text()
+            assert claude_md.count("## pysmelly") == 1
+        finally:
+            os.chdir(prev)
+
+
+class TestGuidanceStaleness:
+    def test_full_guidance_recognized_as_current(self, tmp_path, capsys):
+        """Full PYSMELLY.md is not flagged as outdated."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            try:
+                main(["init"])
+            except SystemExit:
+                pass
+            (tmp_path / "app.py").write_text("x = 1\n")
+            try:
+                main(["--min-severity", "high", str(tmp_path)])
+            except SystemExit:
+                pass
+            output = capsys.readouterr().out
+            assert "outdated" not in output
+        finally:
+            os.chdir(prev)
+
+    def test_short_guidance_recognized_as_current(self, tmp_path, capsys):
+        """Short PYSMELLY.md is not flagged as outdated."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            try:
+                main(["init", "--short"])
+            except SystemExit:
+                pass
+            (tmp_path / "app.py").write_text("x = 1\n")
+            try:
+                main(["--min-severity", "high", str(tmp_path)])
+            except SystemExit:
+                pass
+            output = capsys.readouterr().out
+            assert "outdated" not in output
+        finally:
+            os.chdir(prev)
+
+    def test_custom_path_recognized_via_claude_md(self, tmp_path, capsys):
+        """Guidance at a custom path is found via CLAUDE.md reference."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            docs = tmp_path / "docs"
+            docs.mkdir()
+            try:
+                main(["init", "docs/PYSMELLY.md"])
+            except SystemExit:
+                pass
+            # PYSMELLY.md should NOT exist at root
+            assert not (tmp_path / "PYSMELLY.md").exists()
+            (tmp_path / "app.py").write_text("x = 1\n")
+            try:
+                main(["--min-severity", "high", str(tmp_path)])
+            except SystemExit:
+                pass
+            output = capsys.readouterr().out
+            assert "outdated" not in output
+            assert "pysmelly init" not in output
+        finally:
+            os.chdir(prev)
+
+    def test_tampered_guidance_flagged_as_outdated(self, tmp_path, capsys):
+        """Modified PYSMELLY.md is flagged as outdated."""
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            (tmp_path / "PYSMELLY.md").write_text("<!-- pysmelly-guidance badhash -->\nold")
+            (tmp_path / "app.py").write_text("x = 1\n")
+            try:
+                main(["--min-severity", "high", str(tmp_path)])
+            except SystemExit:
+                pass
+            output = capsys.readouterr().out
+            assert "outdated" in output
+        finally:
+            os.chdir(prev)
+
+
+class TestGuidanceContentSync:
+    """Ensure short and full guidance cover the same key concepts."""
+
+    KEY_PHRASES = [
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "pysmelly: ignore",
+        ".pysmelly.toml",
+    ]
+
+    @pytest.mark.parametrize("phrase", KEY_PHRASES)
+    def test_key_phrase_in_full(self, phrase):
+        assert phrase in GUIDANCE_CONTENT
+
+    @pytest.mark.parametrize("phrase", KEY_PHRASES)
+    def test_key_phrase_in_short(self, phrase):
+        assert phrase in SHORT_GUIDANCE_CONTENT
