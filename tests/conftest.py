@@ -25,7 +25,9 @@ def parse_files(files: dict[str, str]) -> AnalysisContext:
 def trees():
     """Factory fixture: call trees.code(...) or trees.files(...) to get AnalysisContext."""
     return type(
-        "Trees", (), {"code": staticmethod(parse_code), "files": staticmethod(parse_files)}
+        "Trees",
+        (),
+        {"code": staticmethod(parse_code), "files": staticmethod(parse_files)},
     )()
 
 

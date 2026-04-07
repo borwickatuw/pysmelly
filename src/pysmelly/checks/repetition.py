@@ -11,7 +11,7 @@ from pysmelly.checks.helpers import is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import MAX_DISPLAY_WIDTH, Finding, Severity, check
 
-TRIVIAL_VALUES = frozenset({None, True, False, 0, 1, -1, 2, 0.0, 1.0, "", b""})
+TRIVIAL_VALUES = frozenset({None, True, False, -1, 2, "", b""})
 
 TRIVIAL_STRINGS = frozenset(
     {
@@ -198,10 +198,7 @@ def _is_assignment_to_all(node: ast.AST) -> bool:
     """Check if a node is an Assign to __all__."""
     if not isinstance(node, ast.Assign):
         return False
-    for target in node.targets:
-        if isinstance(target, ast.Name) and target.id == "__all__":
-            return True
-    return False
+    return any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
 
 
 def _is_log_call(node: ast.AST) -> bool:
@@ -412,7 +409,7 @@ def check_scattered_isinstance(ctx: AnalysisContext) -> list[Finding]:
             if not isinstance(node, ast.Call):
                 continue
             if not (
-                isinstance(node.func, ast.Name) and node.func.id in ("isinstance", "issubclass")
+                isinstance(node.func, ast.Name) and node.func.id in {"isinstance", "issubclass"}
             ):
                 continue
             if len(node.args) < 2:
@@ -559,8 +556,6 @@ COMMON_ATTRS = frozenset(
         "write",
         "send",
         # ORM/model field access (stable API, not design-level coupling)
-        "pk",
-        "id",
         "slug",
         "save",
         "delete",
@@ -699,7 +694,7 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             attr_name = node.attr
 
             # Skip self/cls
-            if var_name in ("self", "cls"):
+            if var_name in {"self", "cls"}:
                 continue
             # Skip private attrs
             if attr_name.startswith("_"):

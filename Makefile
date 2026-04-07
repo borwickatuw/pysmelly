@@ -19,18 +19,20 @@ test-cov: ## Run tests with coverage report
 # =============================================================================
 
 .PHONY: format
-format: ## Format code with black and isort
-	@uv run black src/ tests/
-	@uv run isort src/ tests/
+format: ## Format code with ruff
+	@uv run ruff format .
 
 .PHONY: lint
-lint: ## Check formatting without modifying
-	@uv run black --check src/ tests/
-	@uv run isort --check src/ tests/
+lint: ## Check linting and formatting with ruff
+	@uv run ruff check .
+	@uv run ruff format --check .
 
 .PHONY: self-check
-self-check: ## Run pysmelly on itself
-	@uv run pysmelly src/
+self-check: ## Run pysmelly on itself (loads [tool.pysmelly] config from pyproject.toml)
+	@uv run pysmelly .
+
+.PHONY: pysmelly
+pysmelly: self-check ## Alias for self-check (cross-repo convention)
 
 .PHONY: check
 check: lint test self-check ## All checks (lint + test + self-check)
@@ -40,9 +42,30 @@ check: lint test self-check ## All checks (lint + test + self-check)
 # =============================================================================
 
 .PHONY: security
-security: ## Run security checks (bandit + pip-audit)
+security: security-bandit security-deps security-secrets ## Run all security checks
+	@echo "=== Security Checks Complete ==="
+
+.PHONY: security-bandit
+security-bandit: ## Run bandit security linter
 	@uv run bandit -c pyproject.toml -r src/ -ll
+
+.PHONY: security-deps
+security-deps: ## Check dependency vulnerabilities
 	@uv run pip-audit
+
+.PHONY: security-secrets
+security-secrets: ## Scan for hardcoded secrets
+	@uv tool run detect-secrets scan --baseline .secrets.baseline 2>/dev/null || \
+		uv tool run detect-secrets scan > .secrets.baseline
+
+# =============================================================================
+# Documentation
+# =============================================================================
+
+.PHONY: format-docs
+format-docs: ## Format markdown files
+	@command -v mdformat >/dev/null 2>&1 || { echo "Error: mdformat not found. Install with: uv tool install mdformat --with mdformat-gfm"; exit 1; }
+	@mdformat .
 
 # =============================================================================
 # Cleanup

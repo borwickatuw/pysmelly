@@ -1322,12 +1322,10 @@ except Exception:
                     "    return get_token()['access']\n"
                 ),
                 "a.py": (
-                    "from lib import get_token\n"
-                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                    "from lib import get_token\ntry:\n    get_token()\nexcept AuthError:\n    pass"
                 ),
                 "b.py": (
-                    "from lib import get_token\n"
-                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                    "from lib import get_token\ntry:\n    get_token()\nexcept AuthError:\n    pass"
                 ),
                 "c.py": (
                     "from auth import get_access_token\n"
@@ -1353,16 +1351,13 @@ except Exception:
                     "    return make_root(get_access_token())\n"
                 ),
                 "a.py": (
-                    "from lib import get_token\n"
-                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                    "from lib import get_token\ntry:\n    get_token()\nexcept AuthError:\n    pass"
                 ),
                 "b.py": (
-                    "from lib import get_token\n"
-                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                    "from lib import get_token\ntry:\n    get_token()\nexcept AuthError:\n    pass"
                 ),
                 "c.py": (
-                    "from auth import get_root\n"
-                    "try:\n    get_root()\nexcept AuthError:\n    pass"
+                    "from auth import get_root\ntry:\n    get_root()\nexcept AuthError:\n    pass"
                 ),
             }
         )
@@ -1380,12 +1375,10 @@ except Exception:
                     "    return get_token()['access']\n"
                 ),
                 "a.py": (
-                    "from lib import get_token\n"
-                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                    "from lib import get_token\ntry:\n    get_token()\nexcept AuthError:\n    pass"
                 ),
                 "b.py": (
-                    "from lib import get_token\n"
-                    "try:\n    get_token()\nexcept AuthError:\n    pass"
+                    "from lib import get_token\ntry:\n    get_token()\nexcept AuthError:\n    pass"
                 ),
                 # get_access_token called without any error handling
                 "c.py": "from auth import get_access_token\nget_access_token()",
@@ -1674,10 +1667,14 @@ def show_user(user):
         assert "1 file" in findings[0].message
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_data.py": """\
+        t = trees.files(
+            {
+                "tests/test_data.py": """\
 def get_fixture():
     return {"a": 1, "b": 2, "c": 3, "d": 4}
-"""})
+"""
+            }
+        )
         findings = check_dict_as_dataclass(t)
         assert len(findings) == 0
 

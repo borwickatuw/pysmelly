@@ -68,7 +68,7 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
             for item in config[key]:
                 if not isinstance(item, str):
                     raise ConfigError(
-                        f"{source}: '{key}' items must be strings, " f"got {type(item).__name__}"
+                        f"{source}: '{key}' items must be strings, got {type(item).__name__}"
                     )
 
     for key in STRING_KEYS:
@@ -89,16 +89,16 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
                 raise ConfigError(
                     f"{source}: '{key}' must be a list of pairs, got {type(config[key]).__name__}"
                 )
+            pair_length = 2
             for i, item in enumerate(config[key]):
-                if not isinstance(item, list) or len(item) != 2:
+                if not isinstance(item, list) or len(item) != pair_length:
                     raise ConfigError(
                         f"{source}: '{key}' items must be 2-element lists, "
                         f"got {item!r} at index {i}"
                     )
                 if not all(isinstance(s, str) for s in item):
                     raise ConfigError(
-                        f"{source}: '{key}' items must contain strings, "
-                        f"got {item!r} at index {i}"
+                        f"{source}: '{key}' items must contain strings, got {item!r} at index {i}"
                     )
 
     if "min-severity" in config and config["min-severity"] not in VALID_SEVERITIES:

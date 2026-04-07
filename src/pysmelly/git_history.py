@@ -205,7 +205,10 @@ class GitHistory:
     """
 
     def __init__(
-        self, git_root: Path, window: str = "6m", commit_messages: str = DEFAULT_COMMIT_MESSAGES
+        self,
+        git_root: Path,
+        window: str = "6m",
+        commit_messages: str = DEFAULT_COMMIT_MESSAGES,
     ) -> None:
         self.git_root = git_root
         self.window = window

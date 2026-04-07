@@ -38,10 +38,10 @@ def check_compat_shims(ctx: AnalysisContext) -> list[Finding]:
             for handler in node.handlers:
                 if handler.type is None:
                     continue
-                if isinstance(handler.type, ast.Name) and handler.type.id in (
+                if isinstance(handler.type, ast.Name) and handler.type.id in {
                     "ImportError",
                     "ModuleNotFoundError",
-                ):
+                }:
                     imp = node.body[0]
                     if isinstance(imp, ast.Import):
                         mod_name = imp.names[0].name

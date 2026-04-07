@@ -1,5 +1,25 @@
-# macOS
-.DS_Store
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
 
 # Editor files
 *.swp
@@ -12,13 +32,8 @@
 *.tmp
 *.bak
 
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.venv/
+# OS
+.DS_Store
 
-# Claude Code
+# Claude Code local settings
 .claude/

@@ -18,7 +18,9 @@ def _load_catalog() -> list[dict]:
     return data["patterns"]
 
 
-def _collect_imports(all_trees: dict[Path, ast.Module]) -> dict[Path, list[tuple[str, int]]]:
+def _collect_imports(
+    all_trees: dict[Path, ast.Module],
+) -> dict[Path, list[tuple[str, int]]]:
     """Collect all imports per file as (module_path, line_number) tuples."""
     result: dict[Path, list[tuple[str, int]]] = {}
 

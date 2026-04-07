@@ -616,14 +616,18 @@ class MyClass:
         assert len(findings) == 0
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_envy.py": """\
+        t = trees.files(
+            {
+                "tests/test_envy.py": """\
 class TestFormatter:
     def test_render(self, document):
         x = document.title
         y = document.body
         z = document.author
         w = document.date
-"""})
+"""
+            }
+        )
         findings = check_feature_envy(t)
         assert len(findings) == 0
 

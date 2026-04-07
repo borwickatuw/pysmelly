@@ -1,12 +1,9 @@
 """Tests for git history parsing infrastructure."""
 
-from unittest.mock import patch
-
 import pytest
 
 from pysmelly.git_history import (
     GitHistory,
-    TimeSlice,
     _is_quality_message,
     _parse_window,
     _window_to_days,

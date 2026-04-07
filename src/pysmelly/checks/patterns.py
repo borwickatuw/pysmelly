@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import re
-from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.checks.framework import is_migration_file, is_settings_file
@@ -37,7 +36,9 @@ def _get_param_names(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[s
     return names
 
 
-def _count_name_loads(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, int]:
+def _count_name_loads(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[str, int]:
     """Count Load occurrences of each name in a function body."""
     counts: dict[str, int] = {}
     for child in ast.walk(func_node):
@@ -106,10 +107,8 @@ def check_foo_equals_foo(ctx: AnalysisContext) -> list[Finding]:
                 single_use = [
                     n for n in foo_foo_names if n not in param_names and load_counts.get(n, 0) == 1
                 ]
-                forwarded = [n for n in foo_foo_names if n in param_names]
-                multi_use = [
-                    n for n in foo_foo_names if n not in param_names and load_counts.get(n, 0) > 1
-                ]
+                [n for n in foo_foo_names if n in param_names]
+                [n for n in foo_foo_names if n not in param_names and load_counts.get(n, 0) > 1]
 
                 # Only report when there are single-use locals to inline
                 if not single_use:
@@ -175,7 +174,7 @@ def check_suspicious_fallbacks(ctx: AnalysisContext) -> list[Finding]:
                 continue
             if not isinstance(node.func, ast.Attribute):
                 continue
-            if node.func.attr not in ("get", "setdefault"):
+            if node.func.attr not in {"get", "setdefault"}:
                 continue
             if not isinstance(node.func.value, ast.Name):
                 continue
@@ -185,7 +184,11 @@ def check_suspicious_fallbacks(ctx: AnalysisContext) -> list[Finding]:
                 continue
 
             default = node.args[1]
-            if isinstance(default, ast.Constant) and default.value in (None, 0, False, ""):
+            if isinstance(default, ast.Constant) and default.value in {
+                None,
+                0,
+                "",
+            }:
                 continue
 
             method = node.func.attr
@@ -280,28 +283,27 @@ def _find_consumer(siblings: list[ast.AST], var_name: str) -> tuple[str | None, 
     for stmt in siblings:
         for child in ast.walk(stmt):
             # bar["key"] = foo or bar.attr = foo
-            if isinstance(child, ast.Assign):
-                if (
-                    isinstance(child.value, ast.Name)
-                    and child.value.id == var_name
-                    and len(child.targets) == 1
-                ):
-                    target = child.targets[0]
-                    if isinstance(target, ast.Subscript):
-                        if isinstance(target.value, ast.Name):
-                            if isinstance(target.slice, ast.Constant) and isinstance(
-                                target.slice.value, str
-                            ):
-                                consumers.append(
-                                    (
-                                        f"{target.value.id}[{target.slice.value!r}]",
-                                        child.lineno,
-                                    )
+            if isinstance(child, ast.Assign) and (
+                isinstance(child.value, ast.Name)
+                and child.value.id == var_name
+                and len(child.targets) == 1
+            ):
+                target = child.targets[0]
+                if isinstance(target, ast.Subscript):
+                    if isinstance(target.value, ast.Name):
+                        if isinstance(target.slice, ast.Constant) and isinstance(
+                            target.slice.value, str
+                        ):
+                            consumers.append(
+                                (
+                                    f"{target.value.id}[{target.slice.value!r}]",
+                                    child.lineno,
                                 )
-                            else:
-                                consumers.append((f"{target.value.id}[...]", child.lineno))
-                    elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
-                        consumers.append((f"{target.value.id}.{target.attr}", child.lineno))
+                            )
+                        else:
+                            consumers.append((f"{target.value.id}[...]", child.lineno))
+                elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                    consumers.append((f"{target.value.id}.{target.attr}", child.lineno))
     if len(consumers) == 1:
         return consumers[0]
     return None, None
@@ -327,7 +329,7 @@ def _build_accumulator_message(
             )
         else:
             message = (
-                f"'{var_name}' is a loop-and-append accumulator " f"— replace with a comprehension"
+                f"'{var_name}' is a loop-and-append accumulator — replace with a comprehension"
             )
     elif conditional_appends > 0 and bare_appends == 0:
         severity = Severity.LOW
@@ -367,6 +369,7 @@ def _build_accumulator_message(
     severity=Severity.MEDIUM,
     description="Lists built by append then joined (use comprehension)",
 )
+# pysmelly: ignore[long-function]
 def check_temp_accumulators(ctx: AnalysisContext) -> list[Finding]:
     """Find temporary lists used only to accumulate and join/check.
 
@@ -435,16 +438,15 @@ def check_temp_accumulators(ctx: AnalysisContext) -> list[Finding]:
                             join_or_check = True
 
                     # Detect assignment consumers: bar["key"] = foo, bar.attr = foo
-                    if isinstance(child, ast.Assign):
-                        if (
-                            isinstance(child.value, ast.Name)
-                            and child.value.id == var_name
-                            and len(child.targets) == 1
-                        ):
-                            target = child.targets[0]
-                            if isinstance(target, (ast.Subscript, ast.Attribute)):
-                                has_assignment_consumer = True
-                                join_or_check = True
+                    if isinstance(child, ast.Assign) and (
+                        isinstance(child.value, ast.Name)
+                        and child.value.id == var_name
+                        and len(child.targets) == 1
+                    ):
+                        target = child.targets[0]
+                        if isinstance(target, (ast.Subscript, ast.Attribute)):
+                            has_assignment_consumer = True
+                            join_or_check = True
 
             loop_appends, conditional_appends, bare_appends = _classify_appends(siblings, var_name)
 
@@ -531,10 +533,7 @@ def check_constant_dispatch_dicts(ctx: AnalysisContext) -> list[Finding]:
             if all(v.id.isupper() for v in d.values):  # type: ignore[union-attr]
                 continue
 
-            if isinstance(node.targets[0], ast.Name):
-                var_name = node.targets[0].id
-            else:
-                var_name = "?"
+            var_name = node.targets[0].id if isinstance(node.targets[0], ast.Name) else "?"
 
             names = [v.id for v in d.values]  # type: ignore[union-attr]
             findings.append(
@@ -578,7 +577,7 @@ def _is_pure_forwarding_call(
     expressions, etc.) beyond what the wrapper receives — the wrapper
     is adding configuration, not just forwarding.
     """
-    param_names = {a.arg for a in func_node.args.args if a.arg not in ("self", "cls")}
+    param_names = {a.arg for a in func_node.args.args if a.arg not in {"self", "cls"}}
     param_names |= {a.arg for a in func_node.args.posonlyargs}
     param_names |= {a.arg for a in func_node.args.kwonlyargs}
 
@@ -694,13 +693,11 @@ def check_trivial_wrappers(ctx: AnalysisContext) -> list[Finding]:
 def _describe_trivial_return(value: ast.expr) -> str | None:
     """Describe a trivial return value, or None if it's not trivial."""
     # dict[key] or dict.get(key)
-    if isinstance(value, ast.Subscript):
-        if isinstance(value.value, ast.Name):
-            return f"{value.value.id}[...]"
+    if isinstance(value, ast.Subscript) and isinstance(value.value, ast.Name):
+        return f"{value.value.id}[...]"
     # obj.attr
-    if isinstance(value, ast.Attribute):
-        if isinstance(value.value, ast.Name):
-            return f"{value.value.id}.{value.attr}"
+    if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+        return f"{value.value.id}.{value.attr}"
     # single function call: func(...)
     if isinstance(value, ast.Call):
         if isinstance(value.func, ast.Name):
@@ -844,24 +841,30 @@ def _get_env_call_key(node: ast.Call) -> str | None:
     """Return the env var name if this is an os.environ.get() or os.getenv() call."""
     # os.environ.get("KEY", ...)
     if (
-        isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr == "environ"
-        and isinstance(node.func.value.value, ast.Name)
-        and node.func.value.value.id == "os"
+        (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "environ"
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == "os"
+        )
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
     ):
-        if node.args and isinstance(node.args[0], ast.Constant):
-            return str(node.args[0].value)
+        return str(node.args[0].value)
     # os.getenv("KEY", ...)
     if (
-        isinstance(node.func, ast.Attribute)
-        and node.func.attr == "getenv"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "os"
+        (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "getenv"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "os"
+        )
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
     ):
-        if node.args and isinstance(node.args[0], ast.Constant):
-            return str(node.args[0].value)
+        return str(node.args[0].value)
     return None
 
 
@@ -1032,6 +1035,7 @@ def _evaluate_toggle_condition(test: ast.expr, name: str, const_value: object) -
     severity=Severity.MEDIUM,
     description="Module-level constant makes conditional branches statically determinable",
 )
+# pysmelly: ignore[long-function]
 def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
     """Find UPPER_CASE module-level constants that gate conditionals.
 
@@ -1253,9 +1257,7 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
                     file=str(filepath),
                     line=lineno,
                     check="dead-constants",
-                    message=(
-                        f"{const_name} = {desc} is never referenced " f"anywhere in the codebase"
-                    ),
+                    message=(f"{const_name} = {desc} is never referenced anywhere in the codebase"),
                     severity=Severity.MEDIUM,
                 )
             )
@@ -1405,7 +1407,7 @@ def _get_boolean_params(
             bool_params.append(args.args[i + offset].arg)
 
     # Keyword-only args
-    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=False):
         if (
             default is not None
             and isinstance(default, ast.Constant)
@@ -1728,8 +1730,7 @@ def check_hungarian_notation(ctx: AnalysisContext) -> list[Finding]:
                                 line=line,
                                 check="hungarian-notation",
                                 message=(
-                                    f"{name} uses Hungarian notation"
-                                    f" — consider snake_case: {snake}"
+                                    f"{name} uses Hungarian notation — consider snake_case: {snake}"
                                 ),
                                 severity=Severity.LOW,
                             )
@@ -1780,13 +1781,15 @@ def _infer_return_type(node: ast.Return) -> str | None:
             name = val.func.id
             # Builtins with known return types — normalize to the type name
             # so repr(x) and str(x) are both classified as "str"
-            if name in ("repr", "str", "format", "chr", "ascii", "input"):
+            if name in {"repr", "str", "format", "chr", "ascii", "input"}:
                 return "str"
-            if name in ("int", "round", "hash", "len", "ord"):
+            if name in {"int", "round", "hash", "len", "ord"}:
                 return "int"
-            if name in ("float", "abs"):
+            if name in {"float", "abs"}:
                 return "float"
-            if name in ("bool",):
+            if name in {
+                "bool",
+            }:
                 return "bool"
             return name
         # Method calls: obj.method() — can't infer return type from name
@@ -2306,6 +2309,7 @@ _AST_NAV_ATTRS = frozenset(
     severity=Severity.LOW,
     description="Attribute chains 4+ deep (a.b.c.d) — reaching through object internals",
 )
+# pysmelly: ignore[long-function]
 def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
     """Find deep attribute access chains suggesting Law of Demeter violations."""
     findings = []

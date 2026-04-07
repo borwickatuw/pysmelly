@@ -72,7 +72,7 @@ def check_dead_exceptions(ctx: AnalysisContext) -> list[Finding]:
 def _find_dispatch_dicts(
     all_trees: dict[Path, ast.Module],
 ) -> list[dict]:
-    """Find dispatch dicts: top-level Assign -> Dict with all string keys and Name values, 3+ entries."""
+    """Find top-level dispatch dicts (str keys, Name values, 3+ entries)."""
     min_entries = 3
     results = []
     for filepath, tree in all_trees.items():
@@ -141,7 +141,7 @@ def _count_string_occurrences(
     exclude_file: Path,
     exclude_lines: set[int],
 ) -> int:
-    """Count occurrences of an exact string constant across all files, excluding the dict definition."""
+    """Count occurrences of a string constant across all files, excluding the dict definition."""
     count = 0
     for filepath, tree in all_trees.items():
         for node in ast.walk(tree):
@@ -213,7 +213,7 @@ def _collect_fixture_param_names(all_trees: dict[Path, ast.Module]) -> set[str]:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for arg in node.args.args:
-                if arg.arg not in ("self", "cls"):
+                if arg.arg not in {"self", "cls"}:
                     names.add(arg.arg)
             for arg in node.args.kwonlyargs:
                 names.add(arg.arg)
@@ -283,8 +283,7 @@ def check_orphaned_test_helpers(ctx: AnalysisContext) -> list[Finding]:
                     line=func_info["line"],
                     check="orphaned-test-helpers",
                     message=(
-                        f"{name}() in {Path(def_file).name} has no callers "
-                        f"— orphaned test helper?"
+                        f"{name}() in {Path(def_file).name} has no callers — orphaned test helper?"
                     ),
                     severity=Severity.MEDIUM,
                 )
@@ -326,9 +325,12 @@ def _count_abstract_methods(node: ast.ClassDef) -> int:
         if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for deco in item.decorator_list:
-            if isinstance(deco, ast.Name) and deco.id == "abstractmethod":
-                count += 1
-            elif isinstance(deco, ast.Attribute) and deco.attr == "abstractmethod":
+            if (
+                isinstance(deco, ast.Name)
+                and deco.id == "abstractmethod"
+                or isinstance(deco, ast.Attribute)
+                and deco.attr == "abstractmethod"
+            ):
                 count += 1
     return count
 
@@ -385,7 +387,9 @@ def check_dead_abstractions(ctx: AnalysisContext) -> list[Finding]:
 # --- broken-backends helpers ---
 
 
-def _body_is_raise_not_implemented(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _body_is_raise_not_implemented(
+    method: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
     """Check if a method body is just `raise NotImplementedError` (with optional docstring)."""
     stmts = method.body
     # Strip leading docstring

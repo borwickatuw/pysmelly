@@ -29,6 +29,7 @@ from pysmelly.registry import (
     Finding,
     Severity,
 )
+import contextlib
 
 _GIT_HISTORY_CHECKS = {name for name, cat in CHECK_CATEGORIES.items() if cat == "git-history"}
 
@@ -69,14 +70,12 @@ def _is_excluded(rel: Path, patterns: list[str]) -> bool:
                     subpath = str(Path(*rel.parts[:i]))
                     if fnmatch.fnmatch(subpath, dir_pattern):
                         return True
-            else:
-                # Full path pattern
-                if fnmatch.fnmatch(rel_str, pattern):
-                    return True
-        else:
-            # Filename-only pattern
-            if fnmatch.fnmatch(name, pattern):
+            # Full path pattern
+            elif fnmatch.fnmatch(rel_str, pattern):
                 return True
+        # Filename-only pattern
+        elif fnmatch.fnmatch(name, pattern):
+            return True
     return False
 
 
@@ -142,7 +141,7 @@ def _find_guidance_path() -> Path | None:
     claude_md = Path("CLAUDE.md")
     if claude_md.exists():
         try:
-            text = claude_md.read_text()
+            text = claude_md.read_text(encoding="utf-8")
         except OSError:
             pass
         else:
@@ -227,10 +226,7 @@ def _print_check_list() -> None:
     for name in CHECKS:
         severity = CHECK_SEVERITY[name].value
         category = CHECK_CATEGORIES.get(name, "ast")
-        if category == "git-history":
-            tag = " [git] (use: pysmelly git-history)"
-        else:
-            tag = ""
+        tag = " [git] (use: pysmelly git-history)" if category == "git-history" else ""
         description = CHECK_DESCRIPTIONS.get(name, "")
         click.echo(f"  {name:<{name_width}}  [{severity:<6}]{tag}  {description}")
 
@@ -245,10 +241,7 @@ def _discover_and_parse(roots: list[Path], excludes: list[str]) -> tuple[Path, d
             click.echo(f"Error: {root} is not a directory", err=True)
             sys.exit(1)
 
-    if len(roots) == 1:
-        base = roots[0]
-    else:
-        base = Path(os.path.commonpath(roots))
+    base = roots[0] if len(roots) == 1 else Path(os.path.commonpath(roots))
 
     all_trees = {}
     for root in roots:
@@ -322,10 +315,8 @@ def _apply_suppression(findings: list[Finding], base: Path) -> list[Finding]:
     source_lines: dict[str, list[str]] = {}
     files_with_findings = {f.file for f in findings}
     for file_rel in files_with_findings:
-        try:
+        with contextlib.suppress(OSError):
             source_lines[file_rel] = (base / file_rel).read_text().splitlines()
-        except OSError:
-            pass
     return [f for f in findings if not _is_suppressed(f, source_lines)]
 
 
@@ -338,7 +329,7 @@ def _run_checks_and_filter(
 ) -> list[Finding]:
     """Run checks, apply severity/diff filters and inline suppressions."""
     all_findings: list[Finding] = []
-    for name, check_fn in checks_to_run.items():
+    for _name, check_fn in checks_to_run.items():
         all_findings.extend(check_fn(ctx))
     all_findings = _apply_filters(all_findings, min_severity, diff_ref, base)
     return _apply_suppression(all_findings, base)
@@ -615,14 +606,14 @@ def _handle_init(path_args: tuple[str, ...], *, short: bool = False) -> None:
     claude_md = Path("CLAUDE.md")
     marker = "pysmelly"
     if claude_md.exists():
-        existing = claude_md.read_text()
+        existing = claude_md.read_text(encoding="utf-8")
         if marker in existing:
             click.echo("CLAUDE.md already references pysmelly")
             return
-        with claude_md.open("a") as f:
+        with claude_md.open("a", encoding="utf-8") as f:
             f.write(CLAUDE_MD_REFERENCE.format(path=path))
     else:
-        claude_md.write_text(CLAUDE_MD_REFERENCE.format(path=path).lstrip())
+        claude_md.write_text(CLAUDE_MD_REFERENCE.format(path=path).lstrip(), encoding="utf-8")
     click.echo("Added pysmelly reference to CLAUDE.md")
 
 
@@ -890,7 +881,9 @@ def cli(
 
 @cli.command("init")
 @click.option(
-    "--short", is_flag=True, help="Generate a ~30-line summary instead of the full guidance file"
+    "--short",
+    is_flag=True,
+    help="Generate a ~30-line summary instead of the full guidance file",
 )
 @click.argument("path", nargs=-1)
 def init_cmd(short, path):

@@ -1,6 +1,5 @@
 """Tests for CLI behavior."""
 
-import hashlib
 import os
 import subprocess
 

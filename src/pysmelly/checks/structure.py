@@ -85,7 +85,7 @@ def check_duplicate_blocks(ctx: AnalysisContext) -> list[Finding]:
 
     best_per_pair: dict[frozenset, dict] = {}
 
-    for sig, blocks in by_sig.items():
+    for _sig, blocks in by_sig.items():
         if len(blocks) < 2:
             continue
 
@@ -111,7 +111,11 @@ def check_duplicate_blocks(ctx: AnalysisContext) -> list[Finding]:
 
     for finding_data in sorted(best_per_pair.values(), key=lambda f: -f["num_stmts"]):
         deduped, locations_str = _dedup_and_format_locations(
-            finding_data["blocks"], "file", "func", "line_start", line_end_key="line_end"
+            finding_data["blocks"],
+            "file",
+            "func",
+            "line_start",
+            line_end_key="line_end",
         )
         first = deduped[0]
         findings.append(
@@ -252,7 +256,7 @@ def check_duplicate_except_blocks(ctx: AnalysisContext) -> list[Finding]:
 
     reported: set[frozenset] = set()
 
-    for sig, handlers in by_sig.items():
+    for _sig, handlers in by_sig.items():
         if len(handlers) < 2:
             continue
 
@@ -435,7 +439,7 @@ def _get_meaningful_params(
     """Extract param names excluding self/cls/vararg/kwarg/noise."""
     params = set()
     for arg in func_node.args.posonlyargs + func_node.args.args + func_node.args.kwonlyargs:
-        if arg.arg not in ("self", "cls") and arg.arg not in NOISE_PARAMS:
+        if arg.arg not in {"self", "cls"} and arg.arg not in NOISE_PARAMS:
             params.add(arg.arg)
     return frozenset(params)
 
@@ -911,9 +915,7 @@ def check_long_function(ctx: AnalysisContext) -> list[Finding]:
                         file=str(filepath),
                         line=node.lineno,
                         check="long-function",
-                        message=(
-                            f"{node.name}() spans {lines} lines " f"— review for decomposition"
-                        ),
+                        message=(f"{node.name}() spans {lines} lines — review for decomposition"),
                         severity=Severity.LOW,
                     )
                 )
@@ -1031,7 +1033,7 @@ def check_long_elif_chain(ctx: AnalysisContext) -> list[Finding]:
                     func_name = fn.name
 
             if compared_var:
-                detail = f"comparing {compared_var} to literals " f"— consider a dict or enum"
+                detail = f"comparing {compared_var} to literals — consider a dict or enum"
             else:
                 detail = "— review for dispatch table or decomposition"
 
@@ -1042,7 +1044,7 @@ def check_long_elif_chain(ctx: AnalysisContext) -> list[Finding]:
                     file=str(filepath),
                     line=node.lineno,
                     check="long-elif-chain",
-                    message=(f"{branch_count}-branch if/elif chain in " f"{location} {detail}"),
+                    message=(f"{branch_count}-branch if/elif chain in {location} {detail}"),
                     severity=Severity.LOW,
                 )
             )

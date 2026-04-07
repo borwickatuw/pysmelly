@@ -90,18 +90,18 @@ def _is_mutable_value(node: ast.expr) -> bool:
         return True
     # set(), defaultdict(), OrderedDict(), etc.
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in (
+        if isinstance(node.func, ast.Name) and node.func.id in {
             "set",
             "dict",
             "list",
             "defaultdict",
             "OrderedDict",
-        ):
+        }:
             return True
-        if isinstance(node.func, ast.Attribute) and node.func.attr in (
+        if isinstance(node.func, ast.Attribute) and node.func.attr in {
             "defaultdict",
             "OrderedDict",
-        ):
+        }:
             return True
     return False
 
@@ -124,28 +124,22 @@ def _resolve_star_import_names(
         parent = importing_file.parent
         for _ in range(level - 1):
             parent = parent.parent
-        if module:
-            source = parent / f"{module.replace('.', '/')}.py"
-        else:
-            source = parent / "__init__.py"
+        source = parent / f"{module.replace('.', '/')}.py" if module else parent / "__init__.py"
     else:
         # Absolute import
         source = Path(f"{module.replace('.', '/')}.py")
 
     # Find matching file in all_trees
-    for filepath in all_trees:
+    for filepath, tree in all_trees.items():
         if filepath == source or str(filepath).endswith(str(source)):
             # Collect top-level assignment names
             names = set()
-            tree = all_trees[filepath]
             for node in ast.iter_child_nodes(tree):
                 if isinstance(node, ast.Assign):
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             names.add(target.id)
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    names.add(node.name)
-                elif isinstance(node, ast.ClassDef):
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     names.add(node.name)
             return filepath, names
 
@@ -225,9 +219,7 @@ def _collect_mutations(
                     if var_name in accessible and method in _MUTATION_METHODS:
                         if method not in _REGISTRY_METHODS:
                             orig_name = var_name  # might be aliased
-                            if var_name in imported_names:
-                                mutations[orig_name].append((filepath, stmt.lineno, method))
-                            elif var_name in star_imported_names:
+                            if var_name in imported_names or var_name in star_imported_names:
                                 mutations[orig_name].append((filepath, stmt.lineno, method))
 
             # Pattern 2: module.VAR.method(...) — attribute mutation via module
@@ -258,18 +250,14 @@ def _collect_mutations(
                         and target.value.id in accessible
                     ):
                         var_name = target.value.id
-                        if var_name in imported_names:
-                            mutations[var_name].append((filepath, stmt.lineno, "__setitem__"))
-                        elif var_name in star_imported_names:
+                        if var_name in imported_names or var_name in star_imported_names:
                             mutations[var_name].append((filepath, stmt.lineno, "__setitem__"))
 
             # Pattern 4: VAR += [...] (augmented assignment)
             if isinstance(stmt, ast.AugAssign):
                 if isinstance(stmt.target, ast.Name) and stmt.target.id in accessible:
                     var_name = stmt.target.id
-                    if var_name in imported_names:
-                        mutations[var_name].append((filepath, stmt.lineno, "__iadd__"))
-                    elif var_name in star_imported_names:
+                    if var_name in imported_names or var_name in star_imported_names:
                         mutations[var_name].append((filepath, stmt.lineno, "__iadd__"))
 
     return mutations
@@ -442,12 +430,17 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
 # --- temporal-coupling helpers ---
 
 
-def _is_staticmethod_or_classmethod(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _is_staticmethod_or_classmethod(
+    method: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
     """Check if a method has @staticmethod or @classmethod decorator."""
     for deco in method.decorator_list:
-        if isinstance(deco, ast.Name) and deco.id in ("staticmethod", "classmethod"):
+        if isinstance(deco, ast.Name) and deco.id in {"staticmethod", "classmethod"}:
             return True
-        if isinstance(deco, ast.Attribute) and deco.attr in ("staticmethod", "classmethod"):
+        if isinstance(deco, ast.Attribute) and deco.attr in {
+            "staticmethod",
+            "classmethod",
+        }:
             return True
     return False
 
@@ -547,8 +540,8 @@ def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
             # TestCase subclasses: setUp/setUpClass are framework-guaranteed
             # initialization — treat like __init__
             if _is_test_case_class(node):
-                init_writes = init_writes | writes.get("setUp", set())
-                init_writes = init_writes | writes.get("setUpClass", set())
+                init_writes |= writes.get("setUp", set())
+                init_writes |= writes.get("setUpClass", set())
 
             for method_name, method_reads in reads.items():
                 for attr in method_reads:
@@ -566,7 +559,7 @@ def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
                     setters = [
                         m
                         for m, w in writes.items()
-                        if attr in w and m != "__init__" and m != method_name
+                        if attr in w and m not in {"__init__", method_name}
                     ]
                     if setters:
                         setter_str = ", ".join(sorted(setters))

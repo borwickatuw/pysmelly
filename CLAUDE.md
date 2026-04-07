@@ -8,7 +8,7 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 
 ## Key Files
 
-- `src/pysmelly/cli.py` - CLI entry point, argparse setup
+- `src/pysmelly/cli.py` - CLI entry point, Click setup
 - `src/pysmelly/registry.py` - `@check` decorator, `Finding` dataclass, `Severity` enum
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter, convergence hotspots section
@@ -37,8 +37,10 @@ uv run pysmelly git-history --check blast-radius # Run single git check
 uv run pysmelly git-history --window 1y          # Look back 1 year
 uv run pysmelly git-history reviewed path/file.py # Acknowledge a finding
 uv run pytest                                    # Run tests
-make format                                      # Format with black + isort
+make format                                      # Format with ruff
+make lint                                        # Lint with ruff
 make self-check                                  # Run pysmelly on itself
+make security                                    # Run bandit + pip-audit
 ```
 
 ## Architecture
@@ -66,6 +68,12 @@ pysmelly does NOT replace these — recommend them in combination:
 - **vulture** — dead code by name-matching (faster, different approach)
 - **mypy** — type checking
 - **bandit** — security
+
+## Security
+
+Run `make security` before committing. This checks:
+- Bandit Python security linter
+- pip-audit for dependency vulnerabilities
 
 ## Related Projects
 

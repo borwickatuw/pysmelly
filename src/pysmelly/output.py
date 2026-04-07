@@ -20,7 +20,10 @@ _TAGLINES = [
     ("May the refactor be with you.", "Star Wars"),
     ("After all, tomorrow is another sprint.", "Gone with the Wind"),
     ("We're gonna need a bigger backlog.", "Jaws"),
-    ("To refactor, or not to refactor -- that is not the question. Refactor.", "Hamlet"),
+    (
+        "To refactor, or not to refactor -- that is not the question. Refactor.",
+        "Hamlet",
+    ),
     ("Elementary, my dear developer. It's dead code.", "Sherlock Holmes"),
     ("There's no place like a clean codebase.", "The Wizard of Oz"),
     ("One does not simply ignore code smells.", "The Lord of the Rings"),
@@ -28,18 +31,27 @@ _TAGLINES = [
     ("It's alive! ... unfortunately.", "Frankenstein"),
     ("In the room, the engineers come and go, talking of TODO.", "T.S. Eliot"),
     ("The first rule of dead code: you do not commit dead code.", "Fight Club"),
-    ("All those abstractions will be lost in time, like tears in rain.", "Blade Runner"),
+    (
+        "All those abstractions will be lost in time, like tears in rain.",
+        "Blade Runner",
+    ),
     ("Toto, I've a feeling we're not in clean code anymore.", "The Wizard of Oz"),
     ("You shall not deploy!", "The Lord of the Rings"),
     ("I find your lack of tests disturbing.", "Star Wars"),
     ("Say hello to my little linter.", "Scarface"),
-    ("Life is like a box of legacy code. You never know what you're gonna get.", "Forrest Gump"),
+    (
+        "Life is like a box of legacy code. You never know what you're gonna get.",
+        "Forrest Gump",
+    ),
     ("We have nothing to fear but spaghetti code itself.", "FDR"),
     ("Go ahead, make my pull request.", "Dirty Harry"),
     ("I think, therefore I refactor.", "Descartes"),
     ("Et tu, junior dev?", "Julius Caesar"),
     ("It was the best of code, it was the worst of code.", "A Tale of Two Cities"),
-    ("That's one small step for a dev, one giant leap for code quality.", "Neil Armstrong"),
+    (
+        "That's one small step for a dev, one giant leap for code quality.",
+        "Neil Armstrong",
+    ),
     ("Ask not what your codebase can do for you.", "JFK"),
     ("Frankly, my dear, I don't give a diff.", "Gone with the Wind"),
     ("We choose to refactor not because it is easy, but because it is hard.", "JFK"),
@@ -54,7 +66,10 @@ _TAGLINES = [
     ("Roads? Where we're going, we don't need dead code.", "Back to the Future"),
     ("Abandon all defaults, ye who enter here.", "Dante"),
     ("The unexamined codebase is not worth deploying.", "Socrates"),
-    ("Reports of this function's usefulness have been greatly exaggerated.", "Mark Twain"),
+    (
+        "Reports of this function's usefulness have been greatly exaggerated.",
+        "Mark Twain",
+    ),
     ("Smells like dead code spirit.", "Nirvana"),
     (
         "In this world, nothing is certain except dead code and taxes.",
@@ -150,7 +165,7 @@ def format_text(
         lines.append(f"Total: {total_count} finding(s)")
         if suppressed_count > 0:
             lines.append(
-                f"Showing top {max_findings}." f" Run with --more-please for all {total_count}."
+                f"Showing top {max_findings}. Run with --more-please for all {total_count}."
             )
     else:
         lines.append("All checks passed.")

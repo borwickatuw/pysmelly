@@ -254,7 +254,10 @@ def _is_name_or_attr(node: ast.expr, name: str) -> bool:
 
 
 def is_referenced_as_value(func_name: str, ctx: "AnalysisContext") -> bool:
-    """Check if a function name appears as a dict value, list element, or argument (O(1) via cached index)."""
+    """Check if a function name appears as a dict value, list element, or argument.
+
+    O(1) via cached index.
+    """
     return func_name in ctx.value_references
 
 
@@ -263,10 +266,7 @@ def is_test_file(filepath: Path) -> bool:
     name = filepath.name
     if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
         return True
-    for part in filepath.parts:
-        if part in ("tests", "test"):
-            return True
-    return False
+    return any(part in {"tests", "test"} for part in filepath.parts)
 
 
 def is_in_dunder_all(name: str, tree: ast.Module) -> bool:
@@ -384,7 +384,7 @@ def is_isinstance_target(class_name: str, all_trees: dict[Path, ast.Module]) -> 
             if not isinstance(node, ast.Call):
                 continue
             if not (
-                isinstance(node.func, ast.Name) and node.func.id in ("isinstance", "issubclass")
+                isinstance(node.func, ast.Name) and node.func.id in {"isinstance", "issubclass"}
             ):
                 continue
             if len(node.args) < 2:

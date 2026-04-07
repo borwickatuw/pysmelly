@@ -23,7 +23,15 @@ def get_python_files(root: Path) -> list[Path]:
         pass
 
     # Fallback: walk the directory, skipping common non-source dirs
-    skip_dirs = {".venv", "venv", ".git", "__pycache__", "node_modules", ".tox", ".mypy_cache"}
+    skip_dirs = {
+        ".venv",
+        "venv",
+        ".git",
+        "__pycache__",
+        "node_modules",
+        ".tox",
+        ".mypy_cache",
+    }
     files = []
     for path in root.rglob("*.py"):
         if not any(part in skip_dirs for part in path.parts):
@@ -34,7 +42,7 @@ def get_python_files(root: Path) -> list[Path]:
 def parse_file(path: Path) -> ast.Module | None:
     """Parse a Python file, returning AST or None on error."""
     try:
-        return ast.parse(path.read_text(), filename=str(path))
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except SyntaxError:
         return None
 
@@ -58,8 +66,9 @@ def get_git_root(cwd: Path) -> Path:
             check=True,
         )
         return Path(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        raise GitNotFoundError(f"not a git repository: {cwd}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as err:
+        msg = f"not a git repository: {cwd}"
+        raise GitNotFoundError(msg) from err
 
 
 def get_changed_lines(ref: str, cwd: Path) -> dict[str, set[int]]:

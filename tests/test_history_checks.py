@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from statistics import median
 
 from pysmelly.checks.history import (
     check_abandoned_code,
@@ -399,7 +398,7 @@ class TestBlastRadius:
         findings = check_blast_radius(ctx)
         assert len(findings) == 1
         assert "payment.py" in findings[0].message
-        assert "blast-radius" == findings[0].check
+        assert findings[0].check == "blast-radius"
 
     def test_low_blast_radius_no_finding(self):
         """File with median < 8 co-changes not flagged."""
@@ -793,7 +792,7 @@ class TestYoYoCode:
         findings = check_yo_yo_code(ctx)
         assert len(findings) == 1
         assert "3.5x turnover" in findings[0].message
-        assert "yo-yo-code" == findings[0].check
+        assert findings[0].check == "yo-yo-code"
 
     def test_low_gross_churn_no_finding(self):
         """File with gross churn < 3x -> no finding."""
@@ -899,7 +898,7 @@ class TestBugMagnet:
         findings = check_bug_magnet(ctx)
         assert len(findings) == 1
         assert "8 of 12" in findings[0].message
-        assert "bug-magnet" == findings[0].check
+        assert findings[0].check == "bug-magnet"
 
     def test_minority_fixes_no_finding(self):
         """File with < 50% fix commits -> no finding."""
@@ -1551,7 +1550,6 @@ def _make_time_slices(
 
     pattern is a list of strings like "feature", "fix", "both", "active", "inactive".
     """
-    from pysmelly.git_history import classify_commit
 
     slices = []
     base = _NOW - timedelta(days=len(pattern) * period_days)

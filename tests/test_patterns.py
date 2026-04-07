@@ -1661,7 +1661,9 @@ def outer():
         assert "inner()" in findings[0].message
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_deep.py": """\
+        t = trees.files(
+            {
+                "tests/test_deep.py": """\
 def test_something():
     for item in data:
         if item.valid:
@@ -1669,7 +1671,9 @@ def test_something():
                 if sub.active:
                     with open(sub.path) as f:
                         pass
-"""})
+"""
+            }
+        )
         findings = check_arrow_code(t)
         assert len(findings) == 0
 
@@ -1760,9 +1764,13 @@ integer = 5
         assert len(findings) == 0
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_naming.py": """\
+        t = trees.files(
+            {
+                "tests/test_naming.py": """\
 strName = "hello"
-"""})
+"""
+            }
+        )
         findings = check_hungarian_notation(t)
         assert len(findings) == 0
 
@@ -1973,11 +1981,15 @@ if password is not None:
         assert len(findings) == 0
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_auth.py": """\
+        t = trees.files(
+            {
+                "tests/test_auth.py": """\
 def test_check():
     if password == "expected":
         pass
-"""})
+"""
+            }
+        )
         findings = check_plaintext_passwords(t)
         assert len(findings) == 0
 
@@ -2032,9 +2044,13 @@ x = getattr(obj, attr_name)
         assert len(findings) == 0
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_getattr.py": """\
+        t = trees.files(
+            {
+                "tests/test_getattr.py": """\
 x = getattr(obj, 'name')
-"""})
+"""
+            }
+        )
         findings = check_getattr_strings(t)
         # Individual findings skipped for test files
         assert not any("without default" in f.message for f in findings)
@@ -2125,10 +2141,14 @@ def make_adders():
         assert len(findings) == 1
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_closures.py": """\
+        t = trees.files(
+            {
+                "tests/test_closures.py": """\
 for i in range(5):
     f = lambda x: x * i
-"""})
+"""
+            }
+        )
         findings = check_late_binding_closures(t)
         assert len(findings) == 0
 
@@ -2193,9 +2213,13 @@ x = os.path.sep.join(parts)
         assert len(findings) == 0
 
     def test_skips_test_files(self, trees):
-        t = trees.files({"tests/test_deep.py": """\
+        t = trees.files(
+            {
+                "tests/test_deep.py": """\
 x = order.user.address.city
-"""})
+"""
+            }
+        )
         findings = check_law_of_demeter(t)
         assert len(findings) == 0
 

@@ -39,8 +39,7 @@ include = ["src/pysmelly"]
 
 [dependency-groups]
 dev = [
-    "black>=24.0",
-    "isort>=5.13",
+    "ruff>=0.4",
     "bandit>=1.7",
     "pip-audit>=2.6",
 ]
@@ -52,13 +51,162 @@ test = [
 [tool.uv]
 default-groups = ["dev", "test"]
 
-[tool.black]
+[tool.ruff]
 line-length = 100
-target-version = ["py312"]
 
-[tool.isort]
-profile = "black"
-line_length = 100
+[tool.ruff.lint]
+preview = true
+select = [
+    "A",      # flake8-builtins
+    "ARG",    # flake8-unused-arguments
+    "B",      # flake8-bugbear
+    "BLE",    # flake8-blind-except
+    "C90",    # mccabe
+    "E",      # pycodestyle errors
+    "ERA",    # eradicate
+    "F",      # pyflakes
+    "FBT",    # flake8-boolean-trap
+    "N",      # pep8-naming
+    "PL",     # pylint
+    "S",      # flake8-bandit
+    "SIM",    # flake8-simplify
+    "T20",    # flake8-print
+    "TRY",    # tryceratops
+    "W",      # pycodestyle warnings
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.pylint]
+max-args = 6
+max-statements = 60
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",    # assert in tests
+    "ARG002",  # unused fixture args
+    "PLR6301", # methods could be functions
+    "PLR2004", # magic values in assertions
+    "PLC2701", # private name imports
+    "PLC1901", # empty string comparisons
+    "S603",    # subprocess calls in test fixtures
+    "S404",    # subprocess import in test fixtures
+    "S607",    # partial executable paths in test fixtures
+    "S105",    # hardcoded password (test fixtures use 'pickles' etc)
+    "S106",    # hardcoded password kwarg
+    "S311",    # non-cryptographic random in test fixtures
+    "T20",     # print in tests is OK
+    "PLR0915", # many statements in test functions
+    "PLR0912", # many branches
+    "C901",    # complexity
+    "FBT001",  # boolean positional in test helper params
+    "FBT002",  # boolean default in test helper params
+    "PLR0913", # many args (test fixtures)
+    "PLR0914", # many locals in test setup
+    "PLR0911", # many returns
+    "PLR0904", # many public methods on test classes
+    "PLR0916", # many boolean expressions
+    "PLR0917", # many positional args
+    "PLR1702", # nested blocks in test setup
+    "E501",    # long lines in test data fixtures
+    "ERA001",  # commented-out code in test fixtures (often shows the literal)
+    "TRY003",  # error messages in test fixtures
+    "SIM102",  # nested ifs in tests
+    "SIM103",  # needless bool in tests
+    "SIM105",  # try/except/pass in tests
+    "PLR6201", # tuple membership in tests
+    "PLC0415", # local imports in tests
+    "F841",    # unused vars in tests (sometimes intentional)
+    "B007",    # unused loop var in tests
+]
+"src/pysmelly/cli.py" = [
+    "T20",     # print is the UI for this CLI tool
+    "PLR0913", # CLI commands have many flags
+    "PLR0915", # CLI commands span many statements
+    "PLR0912", # CLI commands have many branches
+    "C901",    # CLI commands are inherently complex
+    "FBT001",  # boolean args injected by Click framework
+    "FBT002",  # boolean defaults from Click flags
+    "PLR0911", # CLI dispatch has many return paths
+    "PLR0914", # CLI commands have many locals
+    "PLR0917", # CLI commands have many positional args
+    "PLR1702", # CLI dispatch has nested blocks
+    "TRY003",  # CLI error messages
+    "S404",    # subprocess import for git is intentional
+    "S603",    # git subprocess calls are intentional
+    "S607",    # git on PATH is intentional
+    "PLC0415", # local imports for hashlib/re/etc avoid startup cost
+    "E501",    # Click help strings can be long
+]
+"src/pysmelly/checks/*.py" = [
+    "PLR0913", # check functions take context + many params
+    "PLR0915", # check functions span many statements (analyzing code)
+    "PLR0912", # check functions have many branches (different cases)
+    "C901",    # check functions are inherently complex (AST analysis)
+    "PLR2004", # check thresholds (like "5 isinstance checks") are deliberate
+    "PLR0911", # check functions have many early returns (guards)
+    "PLR0914", # AST analysis needs many locals
+    "PLR0904", # check classes have many public methods
+    "PLR0916", # complex AST conditions
+    "PLR0917", # check helpers have many positional args
+    "PLR1702", # AST walking has deeply nested blocks
+    "TRY003",  # check error messages
+    "SIM103",  # explicit booleans more readable in check logic
+    "ERA001",  # code-pattern comments document what AST shapes are matched
+    "SIM102",  # nested ifs (type check + attr check) are clearer than combined
+    "SIM108",  # nested ifs sometimes clearer than ternary in AST analysis
+    "PLW2901", # loop var redefinition in AST iteration
+    "B904",    # raising in except without `from` is fine for re-raising context
+]
+"src/pysmelly/output.py" = [
+    "T20",     # print is the output for this tool
+    "PLR0911", # formatter has many return paths
+    "PLR1702", # formatter has nested branches
+    "C901",    # format_text complexity is inherent to multi-format output
+    "PLR0912", # format_text has many branches (one per output mode)
+    "FBT001",  # summary: bool param to format_text is keyword-friendly via Click
+    "FBT002",  # summary default
+    "PLR2004", # convergence threshold (>=3 checks) is documented
+    "S311",    # random.choice for taglines is not security-sensitive
+]
+"src/pysmelly/git_history.py" = [
+    "S603",    # git subprocess calls are intentional
+    "S607",    # git on PATH is intentional
+    "S404",    # subprocess import is intentional
+    "PLR0915", # git parsing has many statements
+    "PLR0912", # git parsing has many branches
+    "C901",    # git parsing complexity
+    "PLR0913", # git parsers take many params
+    "PLR0914", # git parsers have many locals
+    "PLR0911", # git parsing has many early returns
+    "PLR0916", # complex commit classification
+    "PLR0917", # git parsers take many positional args
+    "PLR1702", # git parsing has nested loops
+    "TRY003",  # git parsing error messages
+    "PLR2004", # message length thresholds, parts.split counts
+    "PLW2901", # loop var stripping (record/line) is idiomatic
+]
+"src/pysmelly/discovery.py" = [
+    "S603",    # git subprocess calls are intentional
+    "S607",    # git on PATH is intentional
+    "S404",    # subprocess import is intentional
+]
+"src/pysmelly/config.py" = [
+    "TRY003",  # config validation error messages
+    "T20",     # print errors to stderr
+    "C901",    # _validate_config has many cases inherent to validation
+    "PLR0912", # _validate_config has many branches per key type
+]
+"src/pysmelly/context.py" = [
+    "PLR0914", # AST context has many cached indices
+    "FBT001",  # verbose flag is part of the public API
+    "PLC0415", # lazy imports of helpers avoid circular dependencies
+]
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+skips = ["B101", "B404", "B603"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -84,7 +232,4 @@ show_missing = true
 # you can't add methods to ast.List or avoid nesting when walking trees.
 # shotgun-surgery on ctx.all_trees is by design (shared analysis context).
 skip = ["isinstance-chain", "arrow-code", "shotgun-surgery"]
-
-[tool.bandit]
-exclude_dirs = [".venv", "tests"]
-skips = ["B101"]
+exclude = ["tests/", "test_*"]

@@ -139,7 +139,7 @@ def check_unused_defaults(ctx: AnalysisContext) -> list[Finding]:
 
 def _has_deprecation_warning(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function body contains warnings.warn(..., DeprecationWarning)."""
-    _DEPRECATION_NAMES = {"DeprecationWarning", "PendingDeprecationWarning"}
+    _deprecation_names = {"DeprecationWarning", "PendingDeprecationWarning"}
     for node in ast.walk(func_node):
         if not isinstance(node, ast.Call):
             continue
@@ -149,18 +149,20 @@ def _has_deprecation_warning(func_node: ast.FunctionDef | ast.AsyncFunctionDef) 
         # Check 2nd positional arg: warnings.warn("msg", DeprecationWarning)
         if len(node.args) >= 2:
             arg = node.args[1]
-            if isinstance(arg, ast.Name) and arg.id in _DEPRECATION_NAMES:
+            if isinstance(arg, ast.Name) and arg.id in _deprecation_names:
                 return True
         # Check category keyword: warnings.warn("msg", category=DeprecationWarning)
         for kw in node.keywords:
             if kw.arg == "category" and isinstance(kw.value, ast.Name):
-                if kw.value.id in _DEPRECATION_NAMES:
+                if kw.value.id in _deprecation_names:
                     return True
     return False
 
 
 @check(
-    "dead-code", severity=Severity.HIGH, description="Public functions with zero callers anywhere"
+    "dead-code",
+    severity=Severity.HIGH,
+    description="Public functions with zero callers anywhere",
 )
 def check_dead_code(ctx: AnalysisContext) -> list[Finding]:
     """Find public functions with no callers at all.
@@ -267,7 +269,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
         # Count non-self/cls params
         param_count = 0
         if func_node:
-            param_count = len([a for a in func_node.args.args if a.arg not in ("self", "cls")])
+            param_count = len([a for a in func_node.args.args if a.arg not in {"self", "cls"}])
 
         # Detect when all args come from a single object
         single_source = _args_from_single_object(call_node)
@@ -281,7 +283,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
         parts = [f"{func_name}()"]
         if param_count > 0:
             parts.append(f"has {param_count} params and")
-        parts.append(f"exactly 1 call site " f"({call['file'].split('/')[-1]}:{call['line']})")
+        parts.append(f"exactly 1 call site ({call['file'].split('/')[-1]}:{call['line']})")
         if single_source:
             parts.append(f"— all args from '{single_source}'")
         parts.append("— consider inlining")
@@ -378,7 +380,7 @@ def check_constant_args(ctx: AnalysisContext) -> list[Finding]:
         if func_node is None:
             continue
 
-        params = [a.arg for a in func_node.args.args if a.arg not in ("self", "cls")]
+        params = [a.arg for a in func_node.args.args if a.arg not in {"self", "cls"}]
 
         for param_idx, param_name in enumerate(params):
             values: list[str] = []
@@ -590,9 +592,12 @@ def _count_none_guards(all_trees: dict[Path, ast.Module], func_name: str) -> tup
             if not isinstance(node.value, ast.Call):
                 continue
             call = node.value
-            if isinstance(call.func, ast.Name) and call.func.id == func_name:
-                pass
-            elif isinstance(call.func, ast.Attribute) and call.func.attr == func_name:
+            if (
+                isinstance(call.func, ast.Name)
+                and call.func.id == func_name
+                or isinstance(call.func, ast.Attribute)
+                and call.func.attr == func_name
+            ):
                 pass
             else:
                 continue
@@ -745,7 +750,7 @@ def _classify_param_uses(
         + [a.arg for a in func_node.args.args]
         + [a.arg for a in func_node.args.kwonlyargs]
     )
-    param_names = {p for p in all_params if p not in ("self", "cls")}
+    param_names = {p for p in all_params if p not in {"self", "cls"}}
 
     if not param_names:
         return {}
@@ -889,13 +894,12 @@ def _classify_error_handling(
             # Classify the handlers
             all_names: list[str] = []
             has_specific = False
-            has_broad = False
             for handler in current.handlers:
                 names = _get_except_handler_names(handler)
                 all_names.extend(names)
                 for name in names:
                     if name in _BROAD_EXCEPTIONS or name == "bare except":
-                        has_broad = True
+                        pass
                     else:
                         has_specific = True
 
@@ -1026,7 +1030,7 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         def_info = defs[0]
-        parts = []
+        parts = []  # pysmelly: ignore[temp-accumulators]
         if specific_callers:
             exc_str = ", ".join(sorted(all_specific_names))
             parts.append(f"{len(specific_callers)} catch specific ({exc_str})")
@@ -1096,9 +1100,12 @@ def _is_stub_body(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 def _has_interface_decorator(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function is decorated with @abstractmethod or @override."""
     for deco in func_node.decorator_list:
-        if isinstance(deco, ast.Name) and deco.id in ("abstractmethod", "override"):
+        if isinstance(deco, ast.Name) and deco.id in {"abstractmethod", "override"}:
             return True
-        if isinstance(deco, ast.Attribute) and deco.attr in ("abstractmethod", "override"):
+        if isinstance(deco, ast.Attribute) and deco.attr in {
+            "abstractmethod",
+            "override",
+        }:
             return True
     return False
 
@@ -1110,7 +1117,7 @@ def _find_unused_params(
     param_names: list[str] = []
     first_real_param = True
     for arg in func_node.args.posonlyargs + func_node.args.args + func_node.args.kwonlyargs:
-        if arg.arg in ("self", "cls"):
+        if arg.arg in {"self", "cls"}:
             continue
         if arg.arg.startswith("_"):
             continue
@@ -1182,7 +1189,7 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
                         f"{node.name}() — {caller_count} caller(s) still pass it"
                     )
                 else:
-                    msg = f"{param_name} is declared but never used in " f"{node.name}()"
+                    msg = f"{param_name} is declared but never used in {node.name}()"
 
                 findings.append(
                     Finding(

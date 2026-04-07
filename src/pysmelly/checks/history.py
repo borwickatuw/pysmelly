@@ -9,7 +9,13 @@ from statistics import median
 
 from pysmelly.checks.framework import is_migration_file
 from pysmelly.context import AnalysisContext
-from pysmelly.git_history import CommitInfo, FileStats, GitHistory, TimeSlice, classify_commit
+from pysmelly.git_history import (
+    CommitInfo,
+    FileStats,
+    GitHistory,
+    TimeSlice,
+    classify_commit,
+)
 from pysmelly.registry import Finding, Severity, check
 
 _MIN_MESSAGE_QUALITY = 0.5
@@ -317,7 +323,7 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
             for f in commit.files
             if f.endswith(".py")
             and f in analyzed_files
-            and not Path(f).name == "__init__.py"
+            and Path(f).name != "__init__.py"
             and not is_migration_file(f)
         )
         # Skip bulk commits
@@ -815,16 +821,14 @@ def check_conscious_debt(ctx: AnalysisContext) -> list[Finding]:
         if count == 1:
             detail = f'commit {commit_hash} "{message}" ({date_str})'
         else:
-            detail = (
-                f"{count} debt commits, most recent: {commit_hash} " f'"{message}" ({date_str})'
-            )
+            detail = f'{count} debt commits, most recent: {commit_hash} "{message}" ({date_str})'
 
         findings.append(
             Finding(
                 file=filepath,
                 line=1,
                 check="conscious-debt",
-                message=(f"{filepath} — {detail} — acknowledged debt, is it " f"still needed?"),
+                message=(f"{filepath} — {detail} — acknowledged debt, is it still needed?"),
                 severity=Severity.LOW,
             )
         )
