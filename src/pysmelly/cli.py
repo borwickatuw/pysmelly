@@ -473,6 +473,13 @@ reasons: framework requires this signature, public API contract, the method
 is called via reflection/dispatch. Invalid reasons: "the code is readable,"
 "it might be useful later," "the abstraction makes sense in isolation."
 
+**Tests should not dictate function signatures.** If the only callers using a
+default value are tests, that default is not part of the production API — it's
+a testing convenience. The fix is to make tests pass the argument explicitly,
+not to suppress the finding because "tests use it." (Note: if the default is a
+deliberate public API convenience for *future* callers, that's a valid reason
+to keep it — but "tests rely on it" alone is not.)
+
 **Use the cross-file context.** When pysmelly says a parameter has "18 callers
 still passing it," trace those callers and update them. When it says a constant
 is "never referenced anywhere," check whether the code that used it was removed
