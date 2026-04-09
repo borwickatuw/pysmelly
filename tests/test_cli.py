@@ -208,8 +208,9 @@ used()
         assert "dead-code" in output
         assert "[test files excluded]" not in output
 
-    def test_context_on_by_default(self, tmp_path, capsys):
-        """Guidance preamble includes run-specific context when relevant."""
+    def test_context_shows_init_hint_when_no_pysmelly_md(self, tmp_path, capsys, monkeypatch):
+        """Guidance preamble suggests pysmelly init when PYSMELLY.md is missing."""
+        monkeypatch.chdir(tmp_path)
         (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
         try:
             main(["--exclude", "test_*", str(tmp_path)])
@@ -217,7 +218,7 @@ used()
             pass
         output = capsys.readouterr().out
         assert "--- Guidance ---" in output
-        assert "speculative generality" in output
+        assert "pysmelly init" in output
 
     def test_no_context_suppresses_guidance(self, tmp_path, capsys):
         """--no-context suppresses the guidance preamble."""
@@ -228,16 +229,6 @@ used()
             pass
         output = capsys.readouterr().out
         assert "--- Guidance ---" not in output
-
-    def test_context_with_test_exclude(self, tmp_path, capsys):
-        """--exclude test_* includes test-specific guidance in preamble."""
-        (tmp_path / "app.py").write_text("def unused_func():\n    pass\n")
-        try:
-            main(["--exclude", "test_*", str(tmp_path)])
-        except SystemExit:
-            pass
-        output = capsys.readouterr().out
-        assert "speculative generality" in output
 
     def test_git_history_check_via_main_not_allowed(self, tmp_path, capsys):
         """abandoned-code is not a valid --check in main command."""
