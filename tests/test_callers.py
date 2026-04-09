@@ -1608,6 +1608,22 @@ def helper(data, unused):
         findings = check_vestigial_params(t)
         assert len(findings) == 0
 
+    def test_skips_django_admin_permission_methods(self, trees):
+        """Django admin permission methods have framework-dictated signatures."""
+        t = trees.code("""\
+class MyAdmin:
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
 
 class TestDictAsDataclass:
     def test_finds_large_dict_return(self, trees):

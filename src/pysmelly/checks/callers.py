@@ -9,7 +9,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from pysmelly.checks.framework import has_framework_dispatch_decorator
+from pysmelly.checks.framework import (
+    FRAMEWORK_HOOK_METHODS,
+    has_framework_dispatch_decorator,
+)
 from pysmelly.checks.helpers import (
     is_imported_elsewhere,
     is_in_dunder_all,
@@ -1166,12 +1169,14 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
 
-            # Skip stubs, interface methods, and framework dispatch
+            # Skip stubs, interface methods, and framework hook methods
             if _is_stub_body(node):
                 continue
             if _has_interface_decorator(node):
                 continue
             if has_framework_dispatch_decorator(node):
+                continue
+            if node.name in FRAMEWORK_HOOK_METHODS:
                 continue
 
             unused = _find_unused_params(node)

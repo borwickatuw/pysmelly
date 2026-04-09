@@ -89,6 +89,9 @@ FRAMEWORK_HOOK_METHODS = frozenset(
         "formfield_for_manytomany",
         "formfield_for_dbfield",
         "formfield_for_choice_field",
+        "has_add_permission",
+        "has_change_permission",
+        "has_delete_permission",
         # Django views/forms
         "get_context_data",
         "get_queryset",
