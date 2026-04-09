@@ -2,7 +2,7 @@
 
 import pytest
 
-from pysmelly.config import ConfigError, _validate_config, load_config
+from pysmelly.config import ConfigError, _validate_config, _warn_parent_config, load_config
 
 VALID_CHECKS = {
     "dead-code",
@@ -17,6 +17,28 @@ class TestLoadConfig:
     def test_no_config_file(self, tmp_path):
         result = load_config(tmp_path, VALID_CHECKS)
         assert result == {}
+
+    def test_warns_when_parent_has_config(self, tmp_path, capsys):
+        """Warn if target dir has no config but a parent does."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.pysmelly]\nskip = ["dead-code"]\n'
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        result = load_config(src, VALID_CHECKS)
+        assert result == {}
+        err = capsys.readouterr().err
+        assert "no config in" in err
+        assert "has pysmelly config" in err
+
+    def test_no_warning_when_no_parent_config(self, tmp_path, capsys):
+        """No warning when neither target nor parent has config."""
+        src = tmp_path / "src"
+        src.mkdir()
+        result = load_config(src, VALID_CHECKS)
+        assert result == {}
+        err = capsys.readouterr().err
+        assert err == ""
 
     def test_dotfile_toml(self, tmp_path):
         (tmp_path / ".pysmelly.toml").write_text(

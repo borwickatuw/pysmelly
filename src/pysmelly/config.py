@@ -134,6 +134,20 @@ def _validate_config(config: dict, source: str, valid_check_names: set[str]) -> 
         )
 
 
+def _warn_parent_config(target_dir: Path) -> None:
+    """Warn if a parent directory has pysmelly config that isn't being used."""
+    parent = target_dir.parent
+    while parent != parent.parent:
+        if _find_config_file(parent) is not None:
+            print(
+                f"Warning: no config in {target_dir}, but {parent} has pysmelly config. "
+                f"Run from {parent} (or pass it as the target) to use that config.",
+                file=sys.stderr,
+            )
+            return
+        parent = parent.parent
+
+
 def load_config(target_dir: Path, valid_check_names: set[str]) -> dict:
     """Find and load config from .pysmelly.toml or pyproject.toml.
 
@@ -142,6 +156,7 @@ def load_config(target_dir: Path, valid_check_names: set[str]) -> dict:
     """
     config_file = _find_config_file(target_dir)
     if config_file is None:
+        _warn_parent_config(target_dir)
         return {}
 
     try:
