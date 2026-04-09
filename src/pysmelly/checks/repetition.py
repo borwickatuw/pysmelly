@@ -22,7 +22,6 @@ TRIVIAL_STRINGS = frozenset(
         "latin-1",
         "latin1",
         # Python idioms
-        "__main__",
         "self",
         "cls",
         # Argparse action constants
@@ -188,6 +187,9 @@ def _is_trivial(value: object) -> bool:
         if len(value) <= 2:
             return True
         if value in TRIVIAL_STRINGS:
+            return True
+        # Dunder names (__all__, __init__, etc.) are well-known Python protocol names
+        if value.startswith("__") and value.endswith("__") and len(value) >= 5:
             return True
     if isinstance(value, int) and value in TRIVIAL_NUMBERS:
         return True
