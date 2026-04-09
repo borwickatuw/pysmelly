@@ -327,6 +327,24 @@ def check_shared_mutable_module_state(ctx: AnalysisContext) -> list[Finding]:
 # --- write-only-attributes helpers ---
 
 
+def _collect_exported_names(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Collect all names listed in __all__ assignments across the codebase."""
+    names: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "__all__":
+                    if isinstance(node.value, (ast.List, ast.Tuple)):
+                        for elt in node.value.elts:
+                            if isinstance(elt, ast.Constant) and isinstance(
+                                elt.value, str
+                            ):
+                                names.add(elt.value)
+    return names
+
+
 def _has_dataclass_decorator(node: ast.ClassDef) -> bool:
     """Check if a class has @dataclass or @dataclasses.dataclass decorator."""
     for deco in node.decorator_list:
@@ -400,6 +418,9 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
     parameters, but removal doesn't clean them up. Fields like
     async_max_connections or cache_compression persist long after the
     feature they configured was changed or dropped.
+
+    Classes listed in __all__ are considered public API — their fields
+    may be read by downstream consumers outside this codebase.
     """
     findings = []
 
@@ -408,8 +429,11 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
         return findings
 
     all_reads = _collect_all_attr_reads(ctx.all_trees)
+    exported = _collect_exported_names(ctx.all_trees)
 
     for field in dc_fields:
+        if field["class_name"] in exported:
+            continue
         if field["field_name"] not in all_reads:
             findings.append(
                 Finding(

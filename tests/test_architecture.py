@@ -368,6 +368,78 @@ def use(c):
         assert "unused_field" in findings[0].message
 
 
+    def test_skips_class_in_dunder_all(self, trees):
+        """Classes listed in __all__ are public API — fields may be read externally."""
+        t = trees.files(
+            {
+                "__init__.py": """\
+from .client import Config
+__all__ = ["Config"]
+""",
+                "client.py": """\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    timeout: int = 30
+    vestigial_field: str = "never_used"
+
+def use_config(c):
+    return c.timeout
+""",
+            }
+        )
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+    def test_still_flags_class_not_in_dunder_all(self, trees):
+        """Non-exported classes are still checked normally."""
+        t = trees.files(
+            {
+                "__init__.py": """\
+from .client import Config
+__all__ = ["Config"]
+""",
+                "client.py": """\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    timeout: int = 30
+
+@dataclass
+class InternalState:
+    cache_key: str = ""
+
+def use(c):
+    return c.timeout
+""",
+            }
+        )
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 1
+        assert "InternalState" in findings[0].message
+
+    def test_dunder_all_as_tuple(self, trees):
+        """__all__ defined as a tuple should also work."""
+        t = trees.files(
+            {
+                "__init__.py": """\
+__all__ = ("Config",)
+""",
+                "models.py": """\
+from dataclasses import dataclass
+
+@dataclass
+class Config:
+    unused: str = ""
+""",
+            }
+        )
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+
 class TestTemporalCoupling:
     def test_finds_coupling(self, trees):
         t = trees.code("""\
