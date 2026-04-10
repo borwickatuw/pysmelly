@@ -13,7 +13,10 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter, convergence hotspots section
 - `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling, dict-as-dataclass)
-- `src/pysmelly/checks/patterns.py` - Pattern detection (foo-equals-foo, suspicious-fallbacks, temp-accumulators, constant-dispatch-dicts, fossilized-toggles, dead-constants, unreachable-after-return, isinstance-chain, boolean-param-explosion, exception-flow-control, arrow-code, hungarian-notation, inconsistent-returns, plaintext-passwords, getattr-strings, late-binding-closures, law-of-demeter)
+- `src/pysmelly/checks/patterns_data.py` - Data pattern checks (foo-equals-foo, constant-dispatch-dicts, trivial-wrappers, dead-constants)
+- `src/pysmelly/checks/patterns_control.py` - Control flow pattern checks (suspicious-fallbacks, exception-flow-control, unreachable-after-return)
+- `src/pysmelly/checks/patterns_naming.py` - Naming pattern checks (hungarian-notation, getattr-strings, plaintext-passwords, late-binding-closures)
+- `src/pysmelly/checks/patterns_misc.py` - Remaining pattern checks (env-fallbacks, runtime-monkey-patch, boolean-param-explosion, arrow-code, isinstance-chain, inconsistent-returns, fossilized-toggles, temp-accumulators, law-of-demeter)
 - `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps, middle-man)
 - `src/pysmelly/checks/dead.py` - Dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers, dead-abstraction, broken-backends)
 - `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes, temporal-coupling, feature-envy, anemic-domain)
@@ -23,7 +26,11 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/catalog.toml` - Pattern catalog for stdlib-alternatives (22 patterns)
 - `src/pysmelly/checks/framework.py` - Framework-specific suppression logic (migration/settings/manage.py detection, hook methods, dispatch decorators)
 - `src/pysmelly/checks/helpers.py` - Shared AST utilities (call finder, function index)
-- `src/pysmelly/checks/history.py` - Git history checks (abandoned-code, blast-radius, change-coupling, growth-trajectory, churn-without-growth, bug-magnet, fix-propagation, conscious-debt, divergent-change, knowledge-silo, emergency-hotspots, no-refactoring, fix-follows-feature, stabilization-failure, hotspot-acceleration, test-erosion); noise gates: team-size for knowledge-silo, relative threshold for blast-radius, min-lines for abandoned-code, bulk-commit filter
+- `src/pysmelly/checks/history_helpers.py` - Shared constants and utilities for git history checks
+- `src/pysmelly/checks/history_growth.py` - Growth checks (growth-trajectory, churn-without-growth, hotspot-acceleration)
+- `src/pysmelly/checks/history_bugs.py` - Bug pattern checks (bug-magnet, fix-propagation, fix-follows-feature, stabilization-failure)
+- `src/pysmelly/checks/history_team.py` - Team/ownership checks (knowledge-silo, abandoned-code, divergent-change)
+- `src/pysmelly/checks/history_coupling.py` - Coupling checks (blast-radius, change-coupling, yo-yo-code, conscious-debt, emergency-hotspots, no-refactoring, test-erosion)
 - `src/pysmelly/git_history.py` - Git log parser, CommitInfo/FileStats/TimeSlice dataclasses, reviewed marker parsing, lazy numstat, commit classifier (conventional + emoji), author tracking, time-slice infrastructure, distinct_authors/median_commit_size properties
 
 ## Common Commands
