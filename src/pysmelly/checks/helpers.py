@@ -459,3 +459,106 @@ def _is_pytest_fixture(deco: ast.expr) -> bool:
     ):
         return True
     return False
+
+
+# --- Shared helpers for pattern-based checks ---
+
+
+def enclosing_function(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Walk up the parent chain to find the enclosing function."""
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current
+    return None
+
+
+def get_param_names(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Get all parameter names from a function definition."""
+    names = {a.arg for a in func_node.args.args}
+    names |= {a.arg for a in func_node.args.posonlyargs}
+    names |= {a.arg for a in func_node.args.kwonlyargs}
+    if func_node.args.vararg:
+        names.add(func_node.args.vararg.arg)
+    if func_node.args.kwarg:
+        names.add(func_node.args.kwarg.arg)
+    return names
+
+
+def iter_uppercase_assigns(
+    tree: ast.Module,
+) -> list[tuple[str, int, ast.expr]]:
+    """Return (name, lineno, value_node) for UPPER_CASE module-level assignments."""
+    results: list[tuple[str, int, ast.expr]] = []
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        name = target.id
+        if not name.isupper() or name.startswith("_"):
+            continue
+        results.append((name, node.lineno, node.value))
+    return results
+
+
+def walk_name_assignments(body: list[ast.stmt], name: str) -> tuple[bool, bool]:
+    """Walk a function body for global declarations and assignments to *name*.
+
+    Skips nested function/class scopes.  Returns (has_global, has_assign).
+    """
+    has_global = False
+    has_assign = False
+    todo = list(body)
+    while todo:
+        child = todo.pop()
+        if isinstance(child, ast.Global) and name in child.names:
+            has_global = True
+        if isinstance(child, ast.Assign):
+            for t in child.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    has_assign = True
+        if isinstance(child, ast.AugAssign):
+            if isinstance(child.target, ast.Name) and child.target.id == name:
+                has_assign = True
+        for sub in ast.iter_child_nodes(child):
+            if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                todo.append(sub)
+    return has_global, has_assign
+
+
+def is_constant_reassigned(tree: ast.Module, name: str, def_lineno: int) -> bool:
+    """Check if a module-level constant is reassigned in the same file.
+
+    Checks module-level Assign/AugAssign/Delete and global+assign inside functions.
+    Class body assignments are not considered reassignments (iter_child_nodes
+    only sees top-level statements).
+    """
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign) and node.lineno != def_lineno:
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    return True
+        if isinstance(node, ast.AugAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                return True
+        if isinstance(node, ast.Delete):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    return True
+
+    # global NAME + assignment inside any function (scope-aware: skip nested scopes)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_global, has_assign = walk_name_assignments(node.body, name)
+        if has_global and has_assign:
+            return True
+
+    return False
