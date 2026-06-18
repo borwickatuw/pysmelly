@@ -1624,6 +1624,47 @@ class MyAdmin:
         findings = check_vestigial_params(t)
         assert len(findings) == 0
 
+    def test_skips_context_manager_exit(self, trees):
+        """__exit__ signature is dictated by the context manager protocol."""
+        t = trees.code("""\
+class Resource:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_async_context_manager_exit(self, trees):
+        t = trees.code("""\
+class AsyncResource:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_skips_descriptor_protocol(self, trees):
+        """Descriptor protocol methods have language-dictated signatures."""
+        t = trees.code("""\
+class CachedProperty:
+    def __get__(self, instance, owner):
+        return instance._cache
+
+    def __set__(self, instance, value):
+        instance._cache = None
+
+    def __set_name__(self, owner, name):
+        self._cache = None
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
 
 class TestDictAsDataclass:
     def test_finds_large_dict_return(self, trees):

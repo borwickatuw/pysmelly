@@ -119,3 +119,24 @@ FRAMEWORK_HOOK_METHODS = frozenset(
 # Methods receiving these params inherently operate on them, so accessing
 # their attributes more than self is expected.
 FRAMEWORK_PARAM_NAMES = frozenset({"request", "response"})
+
+
+# Python protocol dunder methods whose signatures are dictated by the language.
+# The author cannot remove these params even if unused — the interpreter passes
+# them unconditionally (e.g. context manager calls __exit__(exc_type, exc_val,
+# exc_tb) on every exit). Treating their params as "vestigial" is wrong.
+PROTOCOL_DUNDER_METHODS = frozenset(
+    {
+        # Context manager protocol
+        "__exit__",
+        "__aexit__",
+        # Descriptor protocol
+        "__get__",
+        "__set__",
+        "__delete__",
+        "__set_name__",
+        # Subclass / generic hooks
+        "__init_subclass__",
+        "__class_getitem__",
+    }
+)

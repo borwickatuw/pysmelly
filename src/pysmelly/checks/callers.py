@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pysmelly.checks.framework import (
     FRAMEWORK_HOOK_METHODS,
+    PROTOCOL_DUNDER_METHODS,
     has_framework_dispatch_decorator,
 )
 from pysmelly.checks.helpers import (
@@ -1177,6 +1178,8 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
             if has_framework_dispatch_decorator(node):
                 continue
             if node.name in FRAMEWORK_HOOK_METHODS:
+                continue
+            if node.name in PROTOCOL_DUNDER_METHODS:
                 continue
 
             unused = _find_unused_params(node)
