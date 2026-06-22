@@ -20,6 +20,21 @@ def build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
     return parents
 
 
+def has_dataclass_decorator(node: ast.ClassDef) -> bool:
+    """Check if a class has @dataclass or @dataclasses.dataclass (any form)."""
+    for deco in node.decorator_list:
+        if isinstance(deco, ast.Name) and deco.id == "dataclass":
+            return True
+        if isinstance(deco, ast.Attribute) and deco.attr == "dataclass":
+            return True
+        if isinstance(deco, ast.Call):
+            if isinstance(deco.func, ast.Name) and deco.func.id == "dataclass":
+                return True
+            if isinstance(deco.func, ast.Attribute) and deco.func.attr == "dataclass":
+                return True
+    return False
+
+
 _EXCEPTION_BASES = frozenset(
     {
         "Exception",

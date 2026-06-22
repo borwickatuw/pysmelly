@@ -15,6 +15,7 @@ from pysmelly.checks.framework import (
     has_framework_dispatch_decorator,
 )
 from pysmelly.checks.helpers import (
+    has_dataclass_decorator,
     is_imported_elsewhere,
     is_imported_in_production_elsewhere,
     is_in_dunder_all,
@@ -1235,26 +1236,23 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
 # --- dict-as-dataclass ---
 
 
-def _collect_dict_returning_functions(
-    all_trees: dict[Path, ast.Module],
-) -> dict[str, list[dict]]:
+def _collect_dict_returning_functions(ctx: AnalysisContext) -> dict[str, list[dict]]:
     """Find functions that return dict literals with 4+ string keys.
 
-    Returns {func_name: [{"file": ..., "line": ..., "keys": set[str]}, ...]}.
+    Returns ``{func_name: [{"file", "line", "keys", "node", "enclosing_class"}, ...]}``.
     """
     results: dict[str, list[dict]] = {}
-    for filepath, tree in all_trees.items():
+    for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath):
             continue
+        parent_map = ctx.parent_map(tree)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            # Skip nested functions
             dict_keys: set[str] = set()
             for child in ast.walk(node):
                 if child is node:
                     continue
-                # Skip nested function defs
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 if not isinstance(child, ast.Return):
@@ -1277,10 +1275,133 @@ def _collect_dict_returning_functions(
                         "file": str(filepath),
                         "line": node.lineno,
                         "keys": dict_keys,
+                        "node": node,
+                        "enclosing_class": _enclosing_class(node, parent_map),
                     }
                 )
 
     return results
+
+
+def _enclosing_class(
+    node: ast.AST, parent_map: dict[ast.AST, ast.AST]
+) -> ast.ClassDef | None:
+    """Return the innermost ClassDef enclosing ``node``, or None."""
+    cur = parent_map.get(node)
+    while cur is not None:
+        if isinstance(cur, ast.ClassDef):
+            return cur
+        cur = parent_map.get(cur)
+    return None
+
+
+def _build_dataclass_like_class_names(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Names of classes that act as typed-record containers across the codebase:
+    ``@dataclass``-decorated classes plus subclasses of ``BaseModel`` (Pydantic)
+    or ``NamedTuple`` (typing). Used to recognize wire-format serializers that
+    project a typed record into a dict.
+    """
+    result: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if has_dataclass_decorator(node):
+                result.add(node.name)
+                continue
+            for base in node.bases:
+                base_name: str | None = None
+                if isinstance(base, ast.Name):
+                    base_name = base.id
+                elif isinstance(base, ast.Attribute):
+                    base_name = base.attr
+                if base_name in {"BaseModel", "NamedTuple"}:
+                    result.add(node.name)
+                    break
+    return result
+
+
+def _iter_returns_no_nested(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+):
+    """Yield ``Return`` statements in ``func``, without descending into nested
+    functions or classes."""
+    stack: list[ast.AST] = list(func.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Return):
+            yield node
+            continue
+        for child in ast.iter_child_nodes(node):
+            stack.append(child)
+
+
+def _expr_references_name(expr: ast.expr, name: str) -> bool:
+    """True if ``expr`` references the local name ``name`` anywhere."""
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Name) and node.id == name:
+            return True
+    return False
+
+
+def _projects_dataclass_source(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    enclosing_class: ast.ClassDef | None,
+    dataclass_classes: set[str],
+) -> str | None:
+    """If the function returns a dict literal that is essentially a projection
+    of a dataclass-typed source, return the source class name; else None.
+
+    Candidate sources:
+      - ``self``/``cls`` when the enclosing class is dataclass-like
+      - any parameter annotated with a known dataclass-like class name
+
+    A return-dict counts as a projection when at most one of its values does
+    NOT reference the source — i.e. the dict is essentially a re-shaping of
+    that record (allowing one computed/constant entry alongside direct field
+    accesses).
+    """
+    sources: dict[str, str] = {}
+    args = func_node.args
+
+    if (
+        enclosing_class is not None
+        and enclosing_class.name in dataclass_classes
+        and args.args
+        and args.args[0].arg in {"self", "cls"}
+    ):
+        sources[args.args[0].arg] = enclosing_class.name
+
+    for arg in args.args:
+        if arg.annotation is None:
+            continue
+        type_name: str | None = None
+        if isinstance(arg.annotation, ast.Name):
+            type_name = arg.annotation.id
+        elif isinstance(arg.annotation, ast.Attribute):
+            type_name = arg.annotation.attr
+        if type_name in dataclass_classes:
+            sources[arg.arg] = type_name
+
+    if not sources:
+        return None
+
+    for ret in _iter_returns_no_nested(func_node):
+        if not isinstance(ret.value, ast.Dict):
+            continue
+        values = [v for v in ret.value.values if v is not None]
+        if len(values) < 4:
+            continue
+        for source_name, source_class in sources.items():
+            referenced = sum(
+                1 for v in values if _expr_references_name(v, source_name)
+            )
+            if referenced >= len(values) - 1:
+                return source_class
+
+    return None
 
 
 @check(
@@ -1289,15 +1410,25 @@ def _collect_dict_returning_functions(
     description="Functions returning dict literals with 4+ keys — consider a dataclass",
 )
 def check_dict_as_dataclass(ctx: AnalysisContext) -> list[Finding]:
-    """Find functions returning large dict literals that should be dataclasses."""
+    """Find functions returning large dict literals that should be dataclasses.
+
+    Suppresses functions that project an existing dataclass/BaseModel/NamedTuple
+    into a dict — that's wire-format serialization, not a missing dataclass.
+    """
     findings = []
 
-    dict_funcs = _collect_dict_returning_functions(ctx.all_trees)
+    dict_funcs = _collect_dict_returning_functions(ctx)
     if not dict_funcs:
         return findings
 
+    dataclass_classes = _build_dataclass_like_class_names(ctx.all_trees)
+
     for func_name, defs in dict_funcs.items():
         for func_def in defs:
+            if _projects_dataclass_source(
+                func_def["node"], func_def["enclosing_class"], dataclass_classes
+            ):
+                continue
             keys = func_def["keys"]
             # Count how many files access these dict keys from call results
             access_files: set[str] = set()

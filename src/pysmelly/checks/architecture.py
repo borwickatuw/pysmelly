@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.checks.framework import FRAMEWORK_HOOK_METHODS, FRAMEWORK_PARAM_NAMES
-from pysmelly.checks.helpers import is_test_file
+from pysmelly.checks.helpers import has_dataclass_decorator, is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
@@ -345,28 +345,6 @@ def _collect_exported_names(all_trees: dict[Path, ast.Module]) -> set[str]:
     return names
 
 
-def _has_dataclass_decorator(node: ast.ClassDef) -> bool:
-    """Check if a class has @dataclass or @dataclasses.dataclass decorator."""
-    for deco in node.decorator_list:
-        if isinstance(deco, ast.Name) and deco.id == "dataclass":
-            return True
-        if (
-            isinstance(deco, ast.Call)
-            and isinstance(deco.func, ast.Name)
-            and deco.func.id == "dataclass"
-        ):
-            return True
-        if isinstance(deco, ast.Attribute) and deco.attr == "dataclass":
-            return True
-        if (
-            isinstance(deco, ast.Call)
-            and isinstance(deco.func, ast.Attribute)
-            and deco.func.attr == "dataclass"
-        ):
-            return True
-    return False
-
-
 def _collect_dataclass_fields(
     all_trees: dict[Path, ast.Module],
 ) -> list[dict]:
@@ -378,7 +356,7 @@ def _collect_dataclass_fields(
         for node in ast.iter_child_nodes(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
-            if not _has_dataclass_decorator(node):
+            if not has_dataclass_decorator(node):
                 continue
             for item in node.body:
                 if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
@@ -544,7 +522,7 @@ def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
         for node in ast.iter_child_nodes(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
-            if _has_dataclass_decorator(node):
+            if has_dataclass_decorator(node):
                 continue
 
             # Need at least 3 methods
@@ -700,7 +678,7 @@ _DATA_CLASS_DECORATORS = frozenset({"dataclass", "attrs", "define", "attr.s", "a
 
 def _is_data_class_like(node: ast.ClassDef) -> bool:
     """Check if a class is a dataclass, NamedTuple, TypedDict, Pydantic BaseModel, or attrs."""
-    if _has_dataclass_decorator(node):
+    if has_dataclass_decorator(node):
         return True
     for deco in node.decorator_list:
         if isinstance(deco, ast.Name) and deco.id in _DATA_CLASS_DECORATORS:

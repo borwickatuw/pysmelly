@@ -1844,3 +1844,165 @@ def make_record():
         findings = check_dict_as_dataclass(t)
         assert len(findings) == 1
         assert "first" in findings[0].message
+
+    def test_suppresses_method_on_dataclass_projecting_self(self, trees):
+        """A dataclass method that returns a dict of self.* is a wire-format
+        serializer, not a missing dataclass."""
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class ArchiveOverlap:
+    name: str
+    size: int
+    extra: int
+    other: int
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "size": self.size,
+            "extra": self.extra,
+            "other": self.other,
+        }
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 0
+
+    def test_suppresses_function_with_dataclass_param(self, trees):
+        """A free function whose dict values project a dataclass-typed
+        parameter is also wire format."""
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class ArchiveOverlap:
+    name: str
+    size: int
+    extra: int
+    other: int
+
+def _archive_overlap_dict(ov: ArchiveOverlap):
+    return {
+        "name": ov.name,
+        "size": ov.size,
+        "extra": ov.extra,
+        "other": ov.other,
+    }
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 0
+
+    def test_allows_one_computed_value_alongside_projections(self, trees):
+        """A row serializer may transform one field (e.g. enum -> str) and
+        should still be recognized as a projection."""
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Row:
+    name: str
+    size: int
+    extra: int
+    other: int
+
+    def as_csv_row(self):
+        return {
+            "name": self.name,
+            "size_kb": self.size // 1024,
+            "extra": self.extra,
+            "other_label": format(self.other),
+        }
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 0
+
+    def test_does_not_suppress_method_on_plain_class(self, trees):
+        """Only @dataclass / BaseModel / NamedTuple-derived classes count.
+        A method on a plain class returning a 4+ key dict is still a smell."""
+        t = trees.code("""\
+class Plain:
+    def to_dict(self):
+        return {"a": 1, "b": 2, "c": 3, "d": 4}
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 1
+
+    def test_does_not_suppress_when_param_is_not_dataclass(self, trees):
+        """A function param typed as something we DON'T see as dataclass-like
+        does not justify the projection suppression."""
+        t = trees.code("""\
+class Plain:
+    pass
+
+def make(p: Plain):
+    return {
+        "name": p.name,
+        "size": p.size,
+        "extra": p.extra,
+        "other": p.other,
+    }
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 1
+
+    def test_suppresses_basemodel_projection(self, trees):
+        """Pydantic BaseModel subclasses are dataclass-like."""
+        t = trees.code("""\
+from pydantic import BaseModel
+
+class Config(BaseModel):
+    host: str
+    port: int
+    timeout: int
+    retries: int
+
+    def to_dict(self):
+        return {
+            "host": self.host,
+            "port": self.port,
+            "timeout": self.timeout,
+            "retries": self.retries,
+        }
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 0
+
+    def test_suppresses_namedtuple_projection(self, trees):
+        """typing.NamedTuple subclasses are dataclass-like."""
+        t = trees.code("""\
+from typing import NamedTuple
+
+class Point(NamedTuple):
+    x: int
+    y: int
+    z: int
+    w: int
+
+    def to_dict(self):
+        return {"x": self.x, "y": self.y, "z": self.z, "w": self.w}
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 0
+
+    def test_does_not_suppress_when_too_many_values_are_unrelated(self, trees):
+        """If most dict values aren't projections of the dataclass source,
+        the function is constructing a heterogeneous dict — still a smell."""
+        t = trees.code("""\
+from dataclasses import dataclass
+
+@dataclass
+class Thing:
+    name: str
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "timestamp": now(),
+            "version": "1.0",
+            "host": socket.gethostname(),
+            "extra": compute_extra(),
+        }
+""")
+        findings = check_dict_as_dataclass(t)
+        assert len(findings) == 1
