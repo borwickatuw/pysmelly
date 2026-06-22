@@ -1032,6 +1032,79 @@ def respond(kind):
         findings = check_inconsistent_returns(t)
         assert len(findings) == 1
 
+    def test_honors_declared_pep604_union(self, trees):
+        """A function declaring `-> A | B | C` and returning exactly those is
+        honoring its contract, not violating it."""
+        t = trees.code("""\
+def classify(record) -> Active | Stale | Malformed:
+    if record.deleted:
+        return Malformed()
+    if record.last_seen < cutoff:
+        return Stale()
+    return Active()
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_honors_declared_typing_union(self, trees):
+        """Union[...] form should also suppress."""
+        t = trees.code("""\
+from typing import Union
+
+def classify(record) -> Union[Active, Stale, Malformed]:
+    if record.deleted:
+        return Malformed()
+    if record.last_seen < cutoff:
+        return Stale()
+    return Active()
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_honors_optional_union(self, trees):
+        """Optional[X] expands to {X, None} and should suppress when matched."""
+        t = trees.code("""\
+from typing import Optional
+
+def lookup(key) -> Optional[User]:
+    if not key:
+        return None
+    if cache.has(key):
+        return cache.get(key)
+    return User()
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_still_flags_when_returns_exceed_declared_union(self, trees):
+        """If the function returns something OUTSIDE its declared union, the
+        annotation is being violated — still a real smell."""
+        t = trees.code("""\
+def classify(record) -> Active | Stale:
+    if record.broken:
+        return None
+    if record.last_seen < cutoff:
+        return Stale()
+    return Active()
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 1
+        assert "classify()" in findings[0].message
+
+    def test_does_not_suppress_for_single_concrete_annotation(self, trees):
+        """A single-type annotation like `-> User` is not a union — if the
+        function returns extras, that's still the original smell."""
+        t = trees.code("""\
+def maybe_user(key) -> User:
+    if not key:
+        return None
+    if cache.has(key):
+        return {}
+    return User()
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 1
+
     def test_ignores_overloaded(self, trees):
         t = trees.code("""\
 from typing import overload

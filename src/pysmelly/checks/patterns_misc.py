@@ -1013,6 +1013,45 @@ def _is_test_function(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return func.name.startswith("test_")
 
 
+def _unpack_union_annotation(annotation: ast.expr) -> set[str]:
+    """Expand a return-type annotation into the set of allowed type strings.
+
+    Handles `X | Y` (PEP 604), `Union[X, Y, ...]`, and `Optional[X]` (which
+    becomes `{X, "None"}`). Returns a single-element set for a non-union
+    annotation. Aliases like `ValidationResult = A | B | C` can't be
+    resolved without symbol-table analysis and stay opaque.
+    """
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _unpack_union_annotation(annotation.left) | _unpack_union_annotation(
+            annotation.right
+        )
+
+    if isinstance(annotation, ast.Subscript):
+        outer = annotation.value
+        outer_name: str | None = None
+        if isinstance(outer, ast.Name):
+            outer_name = outer.id
+        elif isinstance(outer, ast.Attribute):
+            outer_name = outer.attr
+
+        if outer_name == "Union":
+            slice_node = annotation.slice
+            if isinstance(slice_node, ast.Tuple):
+                result: set[str] = set()
+                for el in slice_node.elts:
+                    result |= _unpack_union_annotation(el)
+                return result
+            return _unpack_union_annotation(slice_node)
+
+        if outer_name == "Optional":
+            return _unpack_union_annotation(annotation.slice) | {"None"}
+
+    if isinstance(annotation, ast.Constant) and annotation.value is None:
+        return {"None"}
+
+    return {ast.unparse(annotation)}
+
+
 def _collect_returns(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Return]:
     """Collect all return statements in a function, excluding nested functions/classes."""
     returns: list[ast.Return] = []
@@ -1075,6 +1114,14 @@ def check_inconsistent_returns(ctx: AnalysisContext) -> list[Finding]:
                     types.add(t)
 
             if len(types) >= min_types:
+                # Honor declared union annotations: if the function declares
+                # `-> A | B | C` and every actual return is one of A/B/C, it
+                # is fulfilling its contract, not violating one.
+                if node.returns is not None:
+                    declared = _unpack_union_annotation(node.returns)
+                    if len(declared) >= 2 and types <= declared:
+                        continue
+
                 sorted_types = sorted(types)
                 findings.append(
                     Finding(
