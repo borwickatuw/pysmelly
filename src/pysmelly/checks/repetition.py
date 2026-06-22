@@ -705,6 +705,98 @@ def _enclosing_click_context_param(
     return None
 
 
+def _top_level_library_bound_names(
+    tree: ast.Module, file_imports: set[str]
+) -> set[str]:
+    """Library-bound names defined at the module's top level (importable as
+    ``from this_module import X``). Subset of _build_library_bound_names that
+    ignores assignments inside functions/classes — those aren't re-exportable.
+    """
+    bound: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for stmt in tree.body:
+            if not isinstance(stmt, ast.Assign):
+                continue
+            if not isinstance(stmt.value, ast.Call):
+                continue
+            callee = stmt.value.func
+            ref_name: str | None = None
+            if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+                ref_name = callee.value.id
+            elif isinstance(callee, ast.Name):
+                ref_name = callee.id
+            if ref_name is None:
+                continue
+            if ref_name not in file_imports and ref_name not in bound:
+                continue
+            for target in stmt.targets:
+                if isinstance(target, ast.Name) and target.id not in bound:
+                    bound.add(target.id)
+                    changed = True
+    return bound
+
+
+def _resolve_module_to_filepath(
+    module_name: str, all_trees: dict[Path, ast.Module]
+) -> Path | None:
+    """Map a dotted module name to a project filepath, if one exists.
+
+    Matches by path suffix: ``pkg.subpkg.module`` looks for a path that ends
+    with ``pkg/subpkg/module.py``. Falls back to the leaf name (``module.py``)
+    if no longer match exists — picks up cases where the codebase uses a flat
+    layout but the import was written with a fuller dotted path.
+    """
+    target = module_name.replace(".", "/") + ".py"
+    for filepath in all_trees:
+        if str(filepath).endswith(target):
+            return filepath
+    leaf = module_name.rsplit(".", 1)[-1] + ".py"
+    for filepath in all_trees:
+        if filepath.name == leaf:
+            return filepath
+    return None
+
+
+def _propagate_reexports(
+    all_trees: dict[Path, ast.Module],
+    library_bound: dict[str, set[str]],
+    top_level_bound: dict[str, set[str]],
+) -> None:
+    """Add re-exported library symbols to per-file library-bound sets.
+
+    If file A defines ``log = logging.getLogger(__name__)`` at the top level
+    and file B does ``from A import log``, then ``log`` in B is effectively
+    a library object — attribute reads on it (``log.warning``) are library
+    API. Iterates to fixed point so re-exports-of-re-exports also propagate.
+
+    Mutates both maps in place.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for filepath, tree in all_trees.items():
+            fp_str = str(filepath)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or not node.module:
+                    continue
+                source_fp = _resolve_module_to_filepath(node.module, all_trees)
+                if source_fp is None:
+                    continue
+                source_top = top_level_bound.get(str(source_fp), set())
+                if not source_top:
+                    continue
+                for alias in node.names:
+                    if alias.name not in source_top:
+                        continue
+                    bound_name = alias.asname or alias.name
+                    if bound_name not in library_bound[fp_str]:
+                        library_bound[fp_str].add(bound_name)
+                        top_level_bound[fp_str].add(bound_name)
+                        changed = True
+
+
 def _collect_project_module_names(all_trees: dict[Path, ast.Module]) -> set[str]:
     """Names that identify project modules/packages.
 
@@ -896,6 +988,23 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         if classes and all(_is_behavior_bearing_class(c) for c in classes)
     }
 
+    # Precompute per-file library-bound sets, then propagate re-exports
+    # (`from project_logging import log` where project_logging.log was bound
+    # from logging.getLogger). Done once across all trees because re-exports
+    # cross file boundaries.
+    library_bound_per_file: dict[str, set[str]] = {}
+    top_level_bound_per_file: dict[str, set[str]] = {}
+    for filepath, tree in ctx.all_trees.items():
+        fp_str = str(filepath)
+        file_imports = imports_per_file.get(fp_str, set())
+        library_bound_per_file[fp_str] = _build_library_bound_names(tree, file_imports)
+        top_level_bound_per_file[fp_str] = _top_level_library_bound_names(
+            tree, file_imports
+        )
+    _propagate_reexports(
+        ctx.all_trees, library_bound_per_file, top_level_bound_per_file
+    )
+
     # Collect (var_name, attr_name) -> set of (file, line)
     accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
 
@@ -905,7 +1014,7 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
 
         file_str = str(filepath)
         file_imports = imports_per_file.get(file_str, set())
-        library_bound = _build_library_bound_names(tree, file_imports)
+        library_bound = library_bound_per_file.get(file_str, set())
         parent_map = ctx.parent_map(tree)
 
         # Track per-file to dedup

@@ -1132,6 +1132,102 @@ class Anemic:
         # reader might be looking at Anemic.timeout.
         assert len(findings) == 1
 
+    def test_reexported_library_symbol_suppressed(self, trees):
+        """`log = logging.getLogger(...)` in one module, then `from that
+        module import log` in another — `log` in the importer is still a
+        library object, so `log.warning` reads suppress."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "_logging.py": """\
+import logging
+log = logging.getLogger(__name__)
+""",
+                "a.py": """\
+from _logging import log
+log.warning('a')
+""",
+                "b.py": """\
+from _logging import log
+log.warning('b')
+""",
+                "c.py": """\
+from _logging import log
+log.warning('c')
+""",
+                "d.py": """\
+from _logging import log
+log.warning('d')
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_reexport_of_reexport_propagates(self, trees):
+        """If A defines log (library-bound), B re-exports log from A, and C
+        imports log from B — fixed-point propagation should still mark log
+        as library-bound in C."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "first.py": """\
+import logging
+log = logging.getLogger(__name__)
+""",
+                "second.py": """\
+from first import log
+""",
+                "a.py": "from second import log\nlog.warning('a')",
+                "b.py": "from second import log\nlog.warning('b')",
+                "c.py": "from second import log\nlog.warning('c')",
+                "d.py": "from second import log\nlog.warning('d')",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_reexport_only_propagates_top_level_bindings(self, trees):
+        """An assignment inside a function isn't importable as a top-level
+        name, so re-export propagation should ignore it. If only an
+        in-function binding exists in the source module, the importer is
+        actually importing the name from somewhere else (or it'd fail at
+        import time) — we shouldn't claim it's library-bound."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                "src.py": """\
+import logging
+def _build():
+    # `log` here is local — not importable as `from src import log`
+    log = logging.getLogger('x')
+    return log
+log = something_else  # something_else isn't a library import
+""",
+                # 4 files import `log` from src and read log.timeout.
+                # `log` in src is NOT top-level library-bound, so the import
+                # doesn't suppress. (timeout is in project_attrs via Config.)
+                "a.py": "from src import log\nx = log.timeout",
+                "b.py": "from src import log\ny = log.timeout",
+                "c.py": "from src import log\nz = log.timeout",
+                "d.py": "from src import log\nw = log.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
     def test_does_not_suppress_ctx_outside_click_function(self, trees):
         """A `ctx` parameter on a non-Click function (e.g. AnalysisContext)
         is NOT a Click Context — reads on it should still be flagged."""
