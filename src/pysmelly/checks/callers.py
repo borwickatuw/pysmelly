@@ -16,6 +16,7 @@ from pysmelly.checks.framework import (
 )
 from pysmelly.checks.helpers import (
     has_dataclass_decorator,
+    is_click_callback_signature,
     is_imported_elsewhere,
     is_imported_in_production_elsewhere,
     is_in_dunder_all,
@@ -1201,6 +1202,10 @@ def check_vestigial_params(ctx: AnalysisContext) -> list[Finding]:
             if node.name in FRAMEWORK_HOOK_METHODS:
                 continue
             if node.name in PROTOCOL_DUNDER_METHODS:
+                continue
+            # Click ``callback=`` functions get (ctx, param, value) passed
+            # by the framework whether or not the author uses them.
+            if is_click_callback_signature(node):
                 continue
 
             unused = _find_unused_params(node)

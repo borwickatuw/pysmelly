@@ -1757,6 +1757,33 @@ class CachedProperty:
         findings = check_vestigial_params(t)
         assert len(findings) == 0
 
+    def test_skips_click_callback_signature(self, trees):
+        """Click ``callback=`` callbacks receive (ctx, param, value) from
+        the framework; the author cannot remove ctx/param even when unused.
+
+        Catches both the underscore-prefixed (_ctx, _param) and bare
+        (ctx, param) conventions.
+        """
+        t = trees.code("""\
+def _click_validate_canonical_date(ctx, param, value):
+    return value
+
+def _click_validate_month(_ctx, _param, value):
+    return value
+""")
+        findings = check_vestigial_params(t)
+        assert len(findings) == 0
+
+    def test_does_not_skip_three_param_non_click_signature(self, trees):
+        """Unused params on a non-Click 3-arg signature should still fire."""
+        t = trees.code("""\
+def loader(source, options, value):
+    return value
+""")
+        findings = check_vestigial_params(t)
+        # source and options are unused → 2 findings
+        assert len(findings) == 2
+
 
 class TestDictAsDataclass:
     def test_finds_large_dict_return(self, trees):

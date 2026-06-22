@@ -20,6 +20,21 @@ def build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
     return parents
 
 
+def is_click_callback_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Click ``callback=`` functions have the fixed signature (ctx, param, value).
+
+    Underscore prefixes (``_ctx``, ``_param``) indicate the author isn't using
+    that arg — Click still passes them. The three parameters are dictated by
+    Click, not chosen by the author.
+    """
+    args = list(node.args.posonlyargs) + list(node.args.args)
+    if args and args[0].arg in {"self", "cls"}:
+        args = args[1:]
+    if len(args) != 3:
+        return False
+    return [a.arg.lstrip("_") for a in args] == ["ctx", "param", "value"]
+
+
 def has_dataclass_decorator(node: ast.ClassDef) -> bool:
     """Check if a class has @dataclass or @dataclasses.dataclass (any form)."""
     for deco in node.decorator_list:
