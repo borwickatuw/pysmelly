@@ -582,6 +582,61 @@ class Checkpoint:
         findings = check_param_clumps(t)
         assert len(findings) == 0
 
+    def test_ignores_click_callback_signature(self, trees):
+        """Functions matching the Click callback protocol (ctx, param, value),
+        with optional underscore prefixes for unused args, are not a clump —
+        the signature is a Click contract."""
+        t = trees.code("""\
+def _strip_s3_prefix(_ctx, _param, value):
+    return value.removeprefix("s3://")
+
+def _validate_finding_id_a(_ctx, _param, value):
+    return value
+
+def _validate_finding_id_b(ctx, param, value):
+    return value
+
+def _validate_finding_id_c(_ctx, _param, value):
+    return value
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 0
+
+    def test_still_flags_three_other_named_params(self, trees):
+        """A near-miss that ISN'T the Click signature should still be flagged
+        when it recurs."""
+        t = trees.code("""\
+def a(context, parameter, value):
+    pass
+
+def b(context, parameter, value):
+    pass
+
+def c(context, parameter, value):
+    pass
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 1
+
+    def test_click_callback_method_also_skipped(self, trees):
+        """Methods with the Click callback signature (self, ctx, param, value)
+        are skipped too."""
+        t = trees.code("""\
+class A:
+    def cb(self, _ctx, _param, value):
+        return value
+
+class B:
+    def cb(self, _ctx, _param, value):
+        return value
+
+class C:
+    def cb(self, _ctx, _param, value):
+        return value
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 0
+
 
 class TestMiddleMan:
     def test_finds_pure_delegation_class(self, trees):

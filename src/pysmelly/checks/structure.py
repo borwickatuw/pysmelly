@@ -415,6 +415,21 @@ def check_param_clumps(ctx: AnalysisContext) -> list[Finding]:
     return findings
 
 
+def _is_click_callback_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Click ``callback=`` functions have the fixed signature (ctx, param, value).
+
+    Underscore prefixes (``_ctx``, ``_param``) indicate the author isn't using
+    that arg — Click still passes them. The three parameters are not a clump
+    the author chose; they're a contract dictated by Click.
+    """
+    args = list(node.args.posonlyargs) + list(node.args.args)
+    if args and args[0].arg in {"self", "cls"}:
+        args = args[1:]
+    if len(args) != 3:
+        return False
+    return [a.arg.lstrip("_") for a in args] == ["ctx", "param", "value"]
+
+
 def _has_interface_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Check if a function has CLI dispatch or interface conformance decorators."""
     for deco in node.decorator_list:
@@ -483,6 +498,10 @@ def _extract_all_signatures(all_trees: dict[Path, ast.Module]) -> list[dict]:
             # signatures dictated by the language — the params are not a
             # clump the author chose, they're a contract.
             if node.name in PROTOCOL_DUNDER_METHODS:
+                continue
+            # Click ``callback=`` functions have a fixed (ctx, param, value)
+            # signature — another protocol, not a clump.
+            if _is_click_callback_signature(node):
                 continue
 
             params = _get_meaningful_params(node)
