@@ -1228,6 +1228,149 @@ log = something_else  # something_else isn't a library import
         findings = check_shotgun_surgery(t)
         assert len(findings) == 1
 
+    def test_library_typed_parameter_suppresses_reads(self, trees):
+        """`def helper(ctx: click.Context)` — the parameter is a library
+        object by type contract, so reads on it should suppress even if the
+        function isn't a Click callback or @pass_context-decorated."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+                "b.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+                "c.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+                "d.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_library_typed_param_via_from_import(self, trees):
+        """`def handle(resp: Response)` after `from requests import Response`
+        is just as library-typed as the dotted form."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Probe:
+    def __init__(self):
+        self.status_code = None
+""",
+                "a.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+                "b.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+                "c.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+                "d.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_library_typed_param_optional_wrapper(self, trees):
+        """`Optional[click.Context]` / `click.Context | None` should also
+        count as library-typed."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": """\
+import click
+from typing import Optional
+def helper(ctx: Optional[click.Context]):
+    return ctx.client
+""",
+                "b.py": """\
+import click
+def helper(ctx: click.Context | None):
+    return ctx.client
+""",
+                "c.py": """\
+import click
+from typing import Union
+def helper(ctx: Union[click.Context, None]):
+    return ctx.client
+""",
+                "d.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_project_typed_param_still_flagged(self, trees):
+        """A parameter annotated with a PROJECT type (e.g. AnalysisContext)
+        is NOT library-typed — reads on it should still flag."""
+        t = trees.files(
+            {
+                "context.py": """\
+class AnalysisContext:
+    def __init__(self):
+        self.all_trees = None
+""",
+                "a.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+                "b.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+                "c.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+                "d.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
     def test_does_not_suppress_ctx_outside_click_function(self, trees):
         """A `ctx` parameter on a non-Click function (e.g. AnalysisContext)
         is NOT a Click Context — reads on it should still be flagged."""

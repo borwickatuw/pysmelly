@@ -705,6 +705,72 @@ def _enclosing_click_context_param(
     return None
 
 
+def _annotation_references_library(ann: ast.expr, file_imports: set[str]) -> bool:
+    """True if a type annotation names a library-imported type, recursively
+    looking through Optional/Union/Subscript wrappers and ``X | Y`` unions.
+
+    Examples (with ``import click`` / ``from requests import Response`` in scope)::
+
+        click.Context              → True  (click in file_imports)
+        Response                   → True  (Response in file_imports)
+        Optional[click.Context]    → True
+        click.Context | None       → True
+        Union[click.Context, str]  → True
+        AnalysisContext            → False (project import, filtered out of file_imports)
+    """
+    if isinstance(ann, ast.Name):
+        return ann.id in file_imports
+    if isinstance(ann, ast.Attribute) and isinstance(ann.value, ast.Name):
+        return ann.value.id in file_imports
+    if isinstance(ann, ast.Subscript):
+        slice_node = ann.slice
+        if isinstance(slice_node, ast.Tuple):
+            return any(_annotation_references_library(e, file_imports) for e in slice_node.elts)
+        return _annotation_references_library(slice_node, file_imports)
+    if isinstance(ann, ast.BinOp) and isinstance(ann.op, ast.BitOr):
+        return _annotation_references_library(
+            ann.left, file_imports
+        ) or _annotation_references_library(ann.right, file_imports)
+    return False
+
+
+def _library_typed_params(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, file_imports: set[str]
+) -> set[str]:
+    """Parameter names on ``func`` whose annotation references a library type.
+
+    Captures the helper-function pattern: ``def helper(ctx: click.Context)`` or
+    ``def handle(resp: requests.Response)``. The parameter is a library object
+    by type contract, regardless of where it's called from — reads of its
+    attributes are library API.
+    """
+    params: set[str] = set()
+    args = (
+        list(func.args.posonlyargs) + list(func.args.args) + list(func.args.kwonlyargs)
+    )
+    for arg in args:
+        if arg.annotation is None:
+            continue
+        if _annotation_references_library(arg.annotation, file_imports):
+            params.add(arg.arg)
+    return params
+
+
+def _enclosing_library_typed_params(
+    node: ast.AST,
+    parent_map: dict[ast.AST, ast.AST],
+    library_typed_by_func_id: dict[int, set[str]],
+) -> set[str]:
+    """Library-typed parameter names for the nearest enclosing function, or
+    the empty set if no enclosing function (or no library-typed params)."""
+    cur = parent_map.get(node)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return library_typed_by_func_id.get(id(cur), set())
+        cur = parent_map.get(cur)
+    return set()
+
+
 def _top_level_library_bound_names(
     tree: ast.Module, file_imports: set[str]
 ) -> set[str]:
@@ -1017,6 +1083,16 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         library_bound = library_bound_per_file.get(file_str, set())
         parent_map = ctx.parent_map(tree)
 
+        # Per-function map of parameter names whose type annotation is a
+        # library type (e.g. `ctx: click.Context`, `resp: requests.Response`).
+        # Looked up by id() when processing attribute reads.
+        library_typed_by_func_id: dict[int, set[str]] = {}
+        for func_node in ast.walk(tree):
+            if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                typed = _library_typed_params(func_node, file_imports)
+                if typed:
+                    library_typed_by_func_id[id(func_node)] = typed
+
         # Track per-file to dedup
         seen_in_file: set[tuple[str, str]] = set()
 
@@ -1057,6 +1133,15 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # are Click API, not user attribute reads.
             click_ctx = _enclosing_click_context_param(node, parent_map)
             if click_ctx == var_name:
+                continue
+            # Skip parameters whose type annotation references a library
+            # import — `def helper(ctx: click.Context)` or `def handle(resp:
+            # requests.Response)`. The parameter is a library object by
+            # contract, even if this helper isn't itself decorated.
+            typed_params = _enclosing_library_typed_params(
+                node, parent_map, library_typed_by_func_id
+            )
+            if var_name in typed_params:
                 continue
             # Skip when every class defining this attr is behavior-bearing —
             # the read is object-graph traversal through a value object that
