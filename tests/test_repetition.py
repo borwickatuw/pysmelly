@@ -646,6 +646,83 @@ class Config:
         findings = check_shotgun_surgery(t)
         assert len(findings) == 0
 
+    def test_ignores_directly_imported_module_receivers(self, trees):
+        """`boto3.client` after `import boto3` is library API, not a user
+        attribute we could refactor — even if some project class happens to
+        define a `client` attribute."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Service:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": "import boto3\nx = boto3.client",
+                "b.py": "import boto3\ny = boto3.client",
+                "c.py": "import boto3\nz = boto3.client",
+                "d.py": "import boto3\nw = boto3.client",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_import_alias_receivers(self, trees):
+        """`import boto3 as b` + `b.client` is still library API."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Service:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": "import boto3 as b\nx = b.client",
+                "b.py": "import boto3 as b\ny = b.client",
+                "c.py": "import boto3 as b\nz = b.client",
+                "d.py": "import boto3 as b\nw = b.client",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_from_import_receivers(self, trees):
+        """`from boto3 import client` + `client.list_buckets` — `client` is
+        a directly-imported name, not one of our types."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Service:
+    def __init__(self):
+        self.list_buckets = None
+""",
+                "a.py": "from boto3 import client\nx = client.list_buckets",
+                "b.py": "from boto3 import client\ny = client.list_buckets",
+                "c.py": "from boto3 import client\nz = client.list_buckets",
+                "d.py": "from boto3 import client\nw = client.list_buckets",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_import_filter_is_per_file(self, trees):
+        """A file that DOESN'T import the receiver still gets its access
+        counted — the suppression is per-file, not global."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                # 4 files use config.timeout; none of them import config
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
 
 class TestRepeatedStringParsing:
     def test_finds_same_split_index_in_3_locations(self, trees):

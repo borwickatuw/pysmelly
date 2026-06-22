@@ -585,54 +585,35 @@ COMMON_ATTRS = frozenset(
 )
 
 
-_STDLIB_MODULES = frozenset(
-    {
-        "ast",
-        "os",
-        "sys",
-        "re",
-        "io",
-        "json",
-        "math",
-        "time",
-        "logging",
-        "pathlib",
-        "typing",
-        "collections",
-        "functools",
-        "itertools",
-        "operator",
-        "abc",
-        "enum",
-        "dataclasses",
-        "subprocess",
-        "shutil",
-        "tempfile",
-        "urllib",
-        "http",
-        "socket",
-        "threading",
-        "multiprocessing",
-        "datetime",
-        "hashlib",
-        "hmac",
-        "copy",
-        "inspect",
-        "importlib",
-        "contextlib",
-        "textwrap",
-        "string",
-        "struct",
-        "signal",
-        "asyncio",
-        "unittest",
-        "pytest",
-        "np",
-        "pd",
-        "tf",
-        "torch",
-    }
-)
+def _build_imports_per_file(all_trees: dict[Path, ast.Module]) -> dict[str, set[str]]:
+    """For each file, the set of local names introduced by ``import`` statements.
+
+    Used to recognize "the receiver of this attribute read is a directly-imported
+    library, not one of our value objects." Change-propagation risk doesn't apply
+    to library APIs we don't own.
+
+    Bound names accounted for:
+      - ``import X``                       → ``X``
+      - ``import X as Y``                  → ``Y``
+      - ``import X.Y.Z``                   → ``X`` (the top of the dotted path)
+      - ``import X.Y.Z as W``              → ``W``
+      - ``from A import B``                → ``B``
+      - ``from A import B as C``           → ``C``
+    """
+    result: dict[str, set[str]] = {}
+    for filepath, tree in all_trees.items():
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    bound = alias.asname if alias.asname else alias.name.split(".")[0]
+                    names.add(bound)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    bound = alias.asname if alias.asname else alias.name
+                    names.add(bound)
+        result[str(filepath)] = names
+    return result
 
 
 def _collect_project_defined_attrs(all_trees: dict[Path, ast.Module]) -> set[str]:
@@ -673,6 +654,7 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
 
     # Only flag attributes defined in the project, not framework/stdlib APIs
     project_attrs = _collect_project_defined_attrs(ctx.all_trees)
+    imports_per_file = _build_imports_per_file(ctx.all_trees)
 
     # Collect (var_name, attr_name) -> set of (file, line)
     accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
@@ -680,6 +662,9 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
     for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath):
             continue
+
+        file_str = str(filepath)
+        file_imports = imports_per_file.get(file_str, set())
 
         # Track per-file to dedup
         seen_in_file: set[tuple[str, str]] = set()
@@ -707,8 +692,10 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # Only flag attributes defined in project classes
             if attr_name not in project_attrs:
                 continue
-            # Skip stdlib module attrs (ast.Name, os.path, etc.)
-            if var_name in _STDLIB_MODULES:
+            # Skip when the receiver is a name imported in this file —
+            # `boto3.client`, `click.group`, etc. are library API, not user
+            # attribute reads we could propagate a refactor through.
+            if var_name in file_imports:
                 continue
             # Skip uppercase attr access (enum constants: Severity.HIGH)
             if attr_name[0].isupper():
@@ -717,7 +704,6 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             key = (var_name, attr_name)
             if key not in seen_in_file:
                 seen_in_file.add(key)
-                file_str = str(filepath)
                 if file_str not in accesses[key]:
                     accesses[key][file_str] = node.lineno
 
