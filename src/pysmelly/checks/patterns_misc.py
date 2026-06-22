@@ -902,7 +902,7 @@ def check_arrow_code(ctx: AnalysisContext) -> list[Finding]:
 # --- inconsistent-returns ---
 
 
-def _infer_return_type(node: ast.Return) -> str | None:
+def _infer_return_type(node: ast.Return, ctx: AnalysisContext) -> str | None:
     """Infer a type string from a return statement's value node."""
     if node.value is None:
         return "None"
@@ -936,7 +936,6 @@ def _infer_return_type(node: ast.Return) -> str | None:
         return "str"
 
     if isinstance(val, ast.Call):
-        # Constructor-like calls: int(x), str(x), MyClass() — use the name
         if isinstance(val.func, ast.Name):
             name = val.func.id
             # Builtins with known return types — normalize to the type name
@@ -947,11 +946,29 @@ def _infer_return_type(node: ast.Return) -> str | None:
                 return "int"
             if name in {"float", "abs"}:
                 return "float"
-            if name in {
-                "bool",
-            }:
+            if name in {"bool"}:
                 return "bool"
-            return name
+            if name in {"list", "dict", "tuple", "set", "frozenset", "bytes", "bytearray", "complex"}:
+                return name
+            # Follow the call to the function's declared return type when
+            # we can find it in the project. Without this, `return get_user()`
+            # and `return load_user()` would look like two distinct types
+            # ("get_user", "load_user") even when both declare `-> User`.
+            defs = ctx.function_index.get(name)
+            if defs:
+                annotation = defs[0]["node"].returns
+                if annotation is not None:
+                    return ast.unparse(annotation)
+                # Function exists but has no return annotation — unknown type.
+                return None
+            # Capitalized name we can't resolve — likely a class constructor
+            # from an import (e.g. `return Response(...)`), so the name is
+            # a reasonable type proxy.
+            if name and name[0].isupper():
+                return name
+            # Lowercase function call with no resolvable annotation —
+            # we don't know the return type, so don't guess.
+            return None
         # Method calls: obj.method() — can't infer return type from name
         # (e.g. result.strip() returns str, not "strip")
         return None
@@ -1053,7 +1070,7 @@ def check_inconsistent_returns(ctx: AnalysisContext) -> list[Finding]:
 
             types: set[str] = set()
             for ret in returns:
-                t = _infer_return_type(ret)
+                t = _infer_return_type(ret, ctx)
                 if t is not None:
                     types.add(t)
 

@@ -943,7 +943,13 @@ def _helper(x):
         findings = check_inconsistent_returns(t)
         assert len(findings) == 0
 
-    def test_detects_call_return_types(self, trees):
+    def test_ignores_unresolved_call_names(self, trees):
+        """Bare function-call expressions whose declarations we can't see
+        should NOT be treated as distinct types (their names are not types).
+
+        Before this fix, json_encode/xml_encode/csv_encode were reported as
+        three distinct return types just because their names differed.
+        """
         t = trees.code("""\
 def convert(data, fmt):
     if fmt == "json":
@@ -952,6 +958,75 @@ def convert(data, fmt):
         return xml_encode(data)
     if fmt == "csv":
         return csv_encode(data)
+    return None
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_uses_declared_return_types(self, trees):
+        """When called functions have return annotations, follow them.
+
+        Three functions all declared to return `str` should collapse to a
+        single inferred type, not three.
+        """
+        t = trees.code("""\
+def json_encode(data) -> str:
+    return ""
+
+def xml_encode(data) -> str:
+    return ""
+
+def csv_encode(data) -> str:
+    return ""
+
+def convert(data, fmt):
+    if fmt == "json":
+        return json_encode(data)
+    if fmt == "xml":
+        return xml_encode(data)
+    if fmt == "csv":
+        return csv_encode(data)
+    return None
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 0
+
+    def test_detects_distinct_declared_return_types(self, trees):
+        """When three callees declare three different return types, fire."""
+        t = trees.code("""\
+def to_str(x) -> str:
+    return ""
+
+def to_int(x) -> int:
+    return 0
+
+def to_bytes(x) -> bytes:
+    return b""
+
+def convert(data, fmt):
+    if fmt == "s":
+        return to_str(data)
+    if fmt == "i":
+        return to_int(data)
+    if fmt == "b":
+        return to_bytes(data)
+    return None
+""")
+        findings = check_inconsistent_returns(t)
+        assert len(findings) == 1
+        assert "convert()" in findings[0].message
+
+    def test_capitalized_class_constructors_still_count(self, trees):
+        """Capitalized unresolved names are likely class constructors and
+        still serve as type proxies (e.g. `return Response(...)`)."""
+        t = trees.code("""\
+def respond(kind):
+    if kind == "ok":
+        return OkResponse()
+    if kind == "redirect":
+        return RedirectResponse()
+    if kind == "forbidden":
+        return ForbiddenResponse()
     return None
 """)
         findings = check_inconsistent_returns(t)
