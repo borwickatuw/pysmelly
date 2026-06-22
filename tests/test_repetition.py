@@ -946,6 +946,192 @@ def cmd(ctx, name):
         findings = check_shotgun_surgery(t)
         assert len(findings) == 0
 
+    def test_chained_library_call_propagates(self, trees):
+        """A name bound from `lib_var.method(...)` where lib_var is itself
+        library-bound should also be library-bound — covers compiled regex
+        patterns and session objects."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Team:
+    def __init__(self):
+        self.group = None
+""",
+                "a.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+                "b.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+                "c.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+                "d.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_fstring_reads_suppressed(self, trees):
+        """`f"...{obj.attr}..."` reads are cosmetic; renaming the attr doesn't
+        break the f-string (just adjust the format string)."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Store:
+    def __init__(self):
+        self.source = None
+""",
+                "a.py": 'msg = f"hello {store.source}"',
+                "b.py": 'msg = f"hello {store.source}"',
+                "c.py": 'msg = f"hello {store.source}"',
+                "d.py": 'msg = f"hello {store.source}"',
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_log_call_args_suppressed(self, trees):
+        """Reads passed as positional args to logging-style calls are
+        display-only and shouldn't count as shotgun-surgery sites."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Store:
+    def __init__(self):
+        self.source = None
+""",
+                "a.py": "logger.info('store=%s', store.source)",
+                "b.py": "logger.info('store=%s', store.source)",
+                "c.py": "logger.info('store=%s', store.source)",
+                "d.py": "logger.info('store=%s', store.source)",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_control_flow_reads_still_flagged(self, trees):
+        """A read that drives control flow is NOT cosmetic — keep flagging."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Store:
+    def __init__(self):
+        self.source = None
+""",
+                "a.py": "if store.source == 'x': pass",
+                "b.py": "if store.source == 'x': pass",
+                "c.py": "if store.source == 'x': pass",
+                "d.py": "if store.source == 'x': pass",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_behavior_bearing_class_attrs_suppressed(self, trees):
+        """If every class defining an attr has 2+ non-trivial non-dunder
+        methods, reads of that attr are appropriate traversal — suppress."""
+        t = trees.files(
+            {
+                "models.py": """\
+class SnapshotRef:
+    def __init__(self, snapshot_id, store):
+        self.snapshot_id = snapshot_id
+        self.store = store
+
+    def s3_key(self):
+        return f's3://{self.store}/{self.snapshot_id}'
+
+    def local_dir(self, base):
+        if base is None:
+            raise ValueError('no base')
+        return base / self.snapshot_id
+
+    def summary_exists_locally(self, base):
+        path = self.local_dir(base) / 'summary'
+        return path.exists()
+""",
+                # 4 files read ref.snapshot_id where SnapshotRef is behavior-bearing
+                "a.py": "x = ref.snapshot_id",
+                "b.py": "y = ref.snapshot_id",
+                "c.py": "z = ref.snapshot_id",
+                "d.py": "w = ref.snapshot_id",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_anemic_class_attrs_still_flagged(self, trees):
+        """A class with only data and dunders is the original smell —
+        still flag."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def __repr__(self):
+        return f'Config({self.timeout})'
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_mixed_class_definitions_keep_flagging(self, trees):
+        """When the attr is defined in BOTH a behavior-bearing class and an
+        anemic class, we can't tell which one is being read — keep flagging."""
+        t = trees.files(
+            {
+                "rich.py": """\
+class Rich:
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def compute(self, other):
+        return self.timeout + other
+
+    def validate(self, value):
+        if value is None:
+            raise ValueError('no')
+        return True
+""",
+                "anemic.py": """\
+class Anemic:
+    def __init__(self, timeout):
+        self.timeout = timeout
+""",
+                "a.py": "x = obj.timeout",
+                "b.py": "y = obj.timeout",
+                "c.py": "z = obj.timeout",
+                "d.py": "w = obj.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        # `timeout` is defined in both Rich (behavior-bearing) and Anemic
+        # (data-only). The conservative call is to keep flagging — the
+        # reader might be looking at Anemic.timeout.
+        assert len(findings) == 1
+
     def test_does_not_suppress_ctx_outside_click_function(self, trees):
         """A `ctx` parameter on a non-Click function (e.g. AnalysisContext)
         is NOT a Click Context — reads on it should still be flagged."""

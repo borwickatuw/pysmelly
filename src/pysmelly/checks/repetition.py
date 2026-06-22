@@ -586,15 +586,18 @@ COMMON_ATTRS = frozenset(
 
 
 def _build_library_bound_names(tree: ast.Module, file_imports: set[str]) -> set[str]:
-    """Names bound to the return value of an imported library call.
+    """Names bound to the return value of an imported library call,
+    propagated transitively across chained calls.
 
     Picks up patterns like::
 
-        log = logging.getLogger(__name__)   # log    → library-bound
-        resp = requests.get(url)            # resp   → library-bound
-        m = re.match(pattern, text)         # m      → library-bound
-        log = getLogger(__name__)           # log    → library-bound
-                                            # (after `from logging import getLogger`)
+        log = logging.getLogger(__name__)   # log    → library-bound (1 hop)
+        resp = requests.get(url)            # resp   → library-bound (1 hop)
+        m = re.match(pattern, text)         # m      → library-bound (1 hop)
+
+        # Chained: PAT is library-bound via re.compile(...), so m is too.
+        PAT = re.compile(r"...")            # PAT    → library-bound
+        m = PAT.search(text)                # m      → library-bound (2 hops)
 
     Reads of ``log.warning``/``resp.status_code``/``m.group`` are library API,
     not user-attribute reads we could propagate a refactor through.
@@ -602,27 +605,61 @@ def _build_library_bound_names(tree: ast.Module, file_imports: set[str]) -> set[
     ``file_imports`` is expected to be the LIBRARY-only import set (imports
     of project modules already filtered out), so ``config = make_config()``
     where ``make_config`` is a project function does NOT bind ``config``.
+
+    Fixed-point iteration handles chained calls of arbitrary depth (in
+    practice 2-3).
     """
     bound: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not isinstance(node.value, ast.Call):
-            continue
-        callee = node.value.func
-        is_library_call = False
-        if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
-            if callee.value.id in file_imports:
-                is_library_call = True
-        elif isinstance(callee, ast.Name):
-            if callee.id in file_imports:
-                is_library_call = True
-        if not is_library_call:
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                bound.add(target.id)
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not isinstance(node.value, ast.Call):
+                continue
+            callee = node.value.func
+            ref_name: str | None = None
+            if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+                ref_name = callee.value.id
+            elif isinstance(callee, ast.Name):
+                ref_name = callee.id
+            if ref_name is None:
+                continue
+            if ref_name not in file_imports and ref_name not in bound:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id not in bound:
+                    bound.add(target.id)
+                    changed = True
     return bound
+
+
+_LOGGING_METHODS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "critical", "exception", "log"}
+)
+
+
+def _is_cosmetic_read(node: ast.AST, parent_map: dict[ast.AST, ast.AST]) -> bool:
+    """True if the attribute read is purely for display (f-string interpolation
+    or argument to a logging-style call).
+
+    The Fowler-original shotgun-surgery question is "if I change the type, who
+    breaks?" — but a read inside ``f"...{obj.attr}..."`` doesn't break when
+    ``obj.attr`` is renamed (you just adjust the format string with sed). Same
+    for ``log.info("hi", obj.attr)`` — the call's contract is "render this
+    value." These reads are weaker signal than reads that drive control flow
+    or computation.
+    """
+    cur = parent_map.get(node)
+    while cur is not None:
+        if isinstance(cur, ast.FormattedValue):
+            return True
+        if isinstance(cur, ast.Call) and isinstance(cur.func, ast.Attribute):
+            if cur.func.attr in _LOGGING_METHODS:
+                return True
+        cur = parent_map.get(cur)
+    return False
 
 
 def _is_click_pass_context_decorator(node: ast.expr) -> bool:
@@ -734,6 +771,82 @@ def _build_imports_per_file(all_trees: dict[Path, ast.Module]) -> dict[str, set[
     return result
 
 
+def _is_trivial_method_body(stmts: list[ast.stmt]) -> bool:
+    """A method body is trivial when it's a single statement that's either a
+    pass, a constant return, a bare attribute return (``return self.x``), a
+    bare-name return, or a container literal (``return {...}``/``[]``/etc.).
+    """
+    if len(stmts) != 1:
+        return False
+    stmt = stmts[0]
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Return):
+        if stmt.value is None:
+            return True
+        return isinstance(
+            stmt.value,
+            (ast.Constant, ast.Name, ast.Attribute, ast.Dict, ast.List, ast.Tuple, ast.Set),
+        )
+    return False
+
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def _is_behavior_bearing_class(cls: ast.ClassDef) -> bool:
+    """True if a class has at least 2 non-trivial, non-dunder methods.
+
+    Captures the value-object-with-behavior pattern (``SnapshotRef`` with
+    ``s3_key``/``local_dir``/``summary_exists_locally``/...): real methods
+    that operate on the data, not just a thin record. Reads of attributes
+    on such classes are appropriate object-graph traversal, not the data-
+    with-no-behavior shape shotgun-surgery is trying to surface.
+
+    Threshold of 2 (rather than 1) avoids classifying a record with just
+    ``to_dict`` or ``__repr__`` as behavior-bearing.
+    """
+    real_methods = 0
+    for item in cls.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _is_dunder(item.name):
+            continue
+        if _is_trivial_method_body(item.body):
+            continue
+        real_methods += 1
+        if real_methods >= 2:
+            return True
+    return False
+
+
+def _collect_attr_to_classes(
+    all_trees: dict[Path, ast.Module],
+) -> dict[str, list[ast.ClassDef]]:
+    """For each attribute name defined in project classes, the list of classes
+    that define it (via ``self.X = ...`` or class-level annotation)."""
+    result: dict[str, list[ast.ClassDef]] = defaultdict(list)
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            defines_here: set[str] = set()
+            for item in ast.walk(node):
+                if (
+                    isinstance(item, ast.Attribute)
+                    and isinstance(item.ctx, ast.Store)
+                    and isinstance(item.value, ast.Name)
+                    and item.value.id == "self"
+                ):
+                    defines_here.add(item.attr)
+                elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    defines_here.add(item.target.id)
+            for attr_name in defines_here:
+                result[attr_name].append(node)
+    return result
+
+
 def _collect_project_defined_attrs(all_trees: dict[Path, ast.Module]) -> set[str]:
     """Collect attribute names defined in project classes (self.X = ... or annotations).
 
@@ -773,6 +886,15 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
     # Only flag attributes defined in the project, not framework/stdlib APIs
     project_attrs = _collect_project_defined_attrs(ctx.all_trees)
     imports_per_file = _build_imports_per_file(ctx.all_trees)
+
+    # For the behavior-bearing-class downweighter: which classes define each
+    # attr, and which of those classes are behavior-bearing.
+    attr_to_classes = _collect_attr_to_classes(ctx.all_trees)
+    attrs_all_classes_have_behavior: set[str] = {
+        attr_name
+        for attr_name, classes in attr_to_classes.items()
+        if classes and all(_is_behavior_bearing_class(c) for c in classes)
+    }
 
     # Collect (var_name, attr_name) -> set of (file, line)
     accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
@@ -826,6 +948,17 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # are Click API, not user attribute reads.
             click_ctx = _enclosing_click_context_param(node, parent_map)
             if click_ctx == var_name:
+                continue
+            # Skip when every class defining this attr is behavior-bearing —
+            # the read is object-graph traversal through a value object that
+            # has real methods, not the anemic-dataclass shape this check is
+            # looking for.
+            if attr_name in attrs_all_classes_have_behavior:
+                continue
+            # Skip cosmetic reads — inside f-strings or as args to logging
+            # methods. Renaming the attr doesn't break these; they're
+            # display-only and weaker signal than reads driving logic.
+            if _is_cosmetic_read(node, parent_map):
                 continue
             # Skip uppercase attr access (enum constants: Severity.HIGH)
             if attr_name[0].isupper():
