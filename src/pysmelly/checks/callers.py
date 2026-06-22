@@ -16,9 +16,11 @@ from pysmelly.checks.framework import (
 )
 from pysmelly.checks.helpers import (
     is_imported_elsewhere,
+    is_imported_in_production_elsewhere,
     is_in_dunder_all,
     is_referenced_as_dotted_string,
     is_referenced_as_value,
+    is_referenced_as_value_in_production,
     is_test_file,
     is_used_as_decorator,
 )
@@ -227,6 +229,14 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
     - Functions with 5+ top-level statements are skipped
     - Functions spanning 10+ lines are skipped
     - Cross-directory calls are suppressed (public API boundaries)
+    - Functions referenced as values in production dispatch tables are
+      skipped — the dispatch dict is the real fan-out
+
+    Test code does not justify production code. Test-file imports, test-file
+    direct calls, and test-file value references are excluded from the
+    "called exactly once" judgement. If the production code has exactly one
+    real call site, the finding stands — but the message will note any test
+    callers so the inliner knows they'll have to be refactored too.
 
     Severity is bumped to MEDIUM when the function has many parameters (4+)
     or when all arguments come from a single object (decomposing then
@@ -242,11 +252,19 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         def_file = defs[0]["file"]
-        calls = ctx.call_index.get(func_name, [])
-        if len(calls) != 1:
+        all_calls = ctx.call_index.get(func_name, [])
+        prod_calls = [c for c in all_calls if not is_test_file(Path(c["file"]))]
+        test_calls = [c for c in all_calls if is_test_file(Path(c["file"]))]
+        if len(prod_calls) != 1:
             continue
 
-        if is_imported_elsewhere(func_name, def_file, ctx):
+        if is_imported_in_production_elsewhere(func_name, def_file, ctx):
+            continue
+
+        # Referenced as a value in a production dispatch table — the dict
+        # entry is a real call site we can't enumerate, so don't suggest
+        # inlining what is effectively a callback target.
+        if is_referenced_as_value_in_production(func_name, ctx):
             continue
 
         func_node = defs[0].get("node")
@@ -260,7 +278,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
             if func_node.end_lineno - func_node.lineno + 1 > max_body_lines:
                 continue
 
-        call = calls[0]
+        call = prod_calls[0]
 
         # Skip cross-directory calls — these are public API boundaries
         def_dir = str(Path(def_file).parent)
@@ -268,31 +286,7 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
         if def_dir != call_dir:
             continue
 
-        call_node = call["node"]
-
-        # Count non-self/cls params
-        param_count = 0
-        if func_node:
-            param_count = len([a for a in func_node.args.args if a.arg not in {"self", "cls"}])
-
-        # Detect when all args come from a single object
-        single_source = _args_from_single_object(call_node)
-
-        # Bump severity when heuristics suggest a bad extraction
-        severity = Severity.LOW
-        if param_count >= 4 or single_source:
-            severity = Severity.MEDIUM
-
-        # Build message with context for triage
-        parts = [f"{func_name}()"]
-        if param_count > 0:
-            parts.append(f"has {param_count} params and")
-        parts.append(f"exactly 1 call site ({call['file'].split('/')[-1]}:{call['line']})")
-        if single_source:
-            parts.append(f"— all args from '{single_source}'")
-        parts.append("— consider inlining")
-        msg = " ".join(parts)
-
+        msg, severity = _single_call_site_finding(func_name, func_node, call, test_calls)
         findings.append(
             Finding(
                 file=def_file,
@@ -304,6 +298,32 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+def _single_call_site_finding(
+    func_name: str,
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef | None,
+    call: dict,
+    test_calls: list[dict],
+) -> tuple[str, Severity]:
+    """Build the message and severity for a single-call-site finding."""
+    param_count = 0
+    if func_node:
+        param_count = len([a for a in func_node.args.args if a.arg not in {"self", "cls"}])
+    single_source = _args_from_single_object(call["node"])
+
+    severity = Severity.MEDIUM if (param_count >= 4 or single_source) else Severity.LOW
+
+    parts = [f"{func_name}()"]
+    if param_count > 0:
+        parts.append(f"has {param_count} params and")
+    parts.append(f"exactly 1 call site ({call['file'].split('/')[-1]}:{call['line']})")
+    if single_source:
+        parts.append(f"— all args from '{single_source}'")
+    if test_calls:
+        parts.append(f"(plus {len(test_calls)} test caller(s) — refactor tests too)")
+    parts.append("— consider inlining")
+    return " ".join(parts), severity
 
 
 @check(

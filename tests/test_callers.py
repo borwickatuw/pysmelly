@@ -558,6 +558,98 @@ setup_logging()
         findings = check_single_call_site(t)
         assert len(findings) == 0
 
+    def test_ignores_production_dispatch_table_value(self, trees):
+        """A function referenced as a value in a production dispatch table is
+        a callback target — the dict entry is the real fan-out, not the lone
+        direct call."""
+        t = trees.files(
+            {
+                "src/myapp/lenses.py": """\
+def flat_file_list(findings):
+    pass
+
+def flat_or_rollup(findings):
+    return flat_file_list(findings)
+
+CATEGORY_LENS = {
+    "macos": flat_or_rollup,
+    "corrupt": flat_file_list,
+    "unicode": flat_file_list,
+}
+""",
+            }
+        )
+        findings = check_single_call_site(t)
+        # flat_file_list: 1 direct call + dispatch-table value → suppressed
+        names = [f.message.split("(")[0].strip() for f in findings]
+        assert not any("flat_file_list" in n for n in names)
+
+    def test_test_only_dispatch_does_not_justify(self, trees):
+        """A function referenced as a value ONLY from tests is still a real
+        single-call-site finding — tests don't justify production code."""
+        t = trees.files(
+            {
+                "src/myapp/helpers.py": """\
+def helper():
+    pass
+
+helper()
+""",
+                "tests/test_helpers.py": """\
+from myapp.helpers import helper
+TEST_TABLE = {"k": helper}
+""",
+            }
+        )
+        findings = check_single_call_site(t)
+        assert len(findings) == 1
+        assert "helper" in findings[0].message
+
+    def test_test_only_import_does_not_suppress(self, trees):
+        """Imports from test files don't satisfy the 'imported elsewhere'
+        suppression — tests don't justify production code."""
+        t = trees.files(
+            {
+                "src/myapp/walker.py": """\
+def build_lookup():
+    pass
+
+build_lookup()
+""",
+                "tests/test_walker.py": """\
+from myapp.walker import build_lookup
+build_lookup()
+build_lookup()
+""",
+            }
+        )
+        findings = check_single_call_site(t)
+        assert len(findings) == 1
+        assert "build_lookup" in findings[0].message
+
+    def test_mentions_test_callers_in_message(self, trees):
+        """When production==1 and tests also call directly, the message must
+        note the test callers so the inliner knows tests need refactoring."""
+        t = trees.files(
+            {
+                "src/myapp/walker.py": """\
+def build_lookup():
+    pass
+
+build_lookup()
+""",
+                "tests/test_walker.py": """\
+from myapp.walker import build_lookup
+build_lookup()
+build_lookup()
+""",
+            }
+        )
+        findings = check_single_call_site(t)
+        assert len(findings) == 1
+        assert "test caller" in findings[0].message
+        assert "2 test caller" in findings[0].message
+
 
 class TestInternalOnly:
     def test_finds_internal_only_function(self, trees):

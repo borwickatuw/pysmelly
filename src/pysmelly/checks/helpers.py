@@ -149,15 +149,20 @@ class ReferenceIndices(NamedTuple):
     """Indices built in a single pass over all AST trees."""
 
     import_index: dict[str, set[str]]
-    value_references: set[str]
+    value_references: dict[str, set[str]]
     dotted_string_suffixes: set[str]
     decorator_names: set[str]
 
 
 def build_reference_indices(all_trees: dict[Path, ast.Module]) -> ReferenceIndices:
-    """Single-pass builder for import, value-reference, dotted-string, and decorator indices."""
+    """Single-pass builder for import, value-reference, dotted-string, and decorator indices.
+
+    ``value_references`` maps a name → the set of files where the name appears
+    as a dict value, list/tuple element, or call argument. The per-file map
+    lets callers distinguish production-only references from test-only ones.
+    """
     import_index: dict[str, set[str]] = defaultdict(set)
-    value_references: set[str] = set()
+    value_references: dict[str, set[str]] = defaultdict(set)
     dotted_string_suffixes: set[str] = set()
     decorator_names: set[str] = set()
 
@@ -174,26 +179,26 @@ def build_reference_indices(all_trees: dict[Path, ast.Module]) -> ReferenceIndic
                 for val in node.values:
                     if val is not None:
                         if isinstance(val, ast.Name):
-                            value_references.add(val.id)
+                            value_references[val.id].add(file_str)
                         elif isinstance(val, ast.Attribute):
-                            value_references.add(val.attr)
+                            value_references[val.attr].add(file_str)
             elif isinstance(node, (ast.List, ast.Tuple)):
                 for elt in node.elts:
                     if isinstance(elt, ast.Name):
-                        value_references.add(elt.id)
+                        value_references[elt.id].add(file_str)
                     elif isinstance(elt, ast.Attribute):
-                        value_references.add(elt.attr)
+                        value_references[elt.attr].add(file_str)
             elif isinstance(node, ast.Call):
                 for arg in node.args:
                     if isinstance(arg, ast.Name):
-                        value_references.add(arg.id)
+                        value_references[arg.id].add(file_str)
                     elif isinstance(arg, ast.Attribute):
-                        value_references.add(arg.attr)
+                        value_references[arg.attr].add(file_str)
                 for kw in node.keywords:
                     if isinstance(kw.value, ast.Name):
-                        value_references.add(kw.value.id)
+                        value_references[kw.value.id].add(file_str)
                     elif isinstance(kw.value, ast.Attribute):
-                        value_references.add(kw.value.attr)
+                        value_references[kw.value.attr].add(file_str)
 
             # Dotted string suffixes
             elif (
@@ -218,7 +223,7 @@ def build_reference_indices(all_trees: dict[Path, ast.Module]) -> ReferenceIndic
 
     return ReferenceIndices(
         import_index=dict(import_index),
-        value_references=value_references,
+        value_references=dict(value_references),
         dotted_string_suffixes=dotted_string_suffixes,
         decorator_names=decorator_names,
     )
@@ -228,6 +233,19 @@ def is_imported_elsewhere(func_name: str, def_file: str, ctx: "AnalysisContext")
     """Check if a function is imported in any other file (O(1) via cached index)."""
     importing_files = ctx.import_index.get(func_name, set())
     return bool(importing_files - {def_file})
+
+
+def is_imported_in_production_elsewhere(
+    func_name: str, def_file: str, ctx: "AnalysisContext"
+) -> bool:
+    """Check if a function is imported by a *non-test* file other than its own.
+
+    Test code calling production code does not justify the production code's
+    existence — so checks like single-call-site, which gate on real usage,
+    should ignore imports that live under test/ trees.
+    """
+    importing_files = ctx.import_index.get(func_name, set()) - {def_file}
+    return any(not is_test_file(Path(f)) for f in importing_files)
 
 
 def is_referenced_as_dotted_string(func_name: str, ctx: "AnalysisContext") -> bool:
@@ -258,7 +276,17 @@ def is_referenced_as_value(func_name: str, ctx: "AnalysisContext") -> bool:
 
     O(1) via cached index.
     """
-    return func_name in ctx.value_references
+    return bool(ctx.value_references.get(func_name))
+
+
+def is_referenced_as_value_in_production(func_name: str, ctx: "AnalysisContext") -> bool:
+    """Check if a function name is referenced as a value in any *non-test* file.
+
+    Production dispatch tables (e.g. ``CATEGORY_LENS = {"key": my_func, ...}``)
+    are the real fan-out for callbacks — the single direct call we see is
+    only one path among many. Test-only references don't count.
+    """
+    return any(not is_test_file(Path(f)) for f in ctx.value_references.get(func_name, set()))
 
 
 def is_test_file(filepath: Path) -> bool:

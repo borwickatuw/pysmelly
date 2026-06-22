@@ -33,7 +33,7 @@ class AnalysisContext:
         self._function_index: dict[str, list[dict]] | None = None
         self._call_index: dict[str, list[dict]] | None = None
         self._import_index: dict[str, set[str]] | None = None
-        self._value_references: set[str] | None = None
+        self._value_references: dict[str, set[str]] | None = None
         self._dotted_string_suffixes: set[str] | None = None
         self._decorator_names: set[str] | None = None
         self._parent_maps: dict[int, dict[ast.AST, ast.AST]] = {}
@@ -73,7 +73,7 @@ class AnalysisContext:
         return self._import_index  # type: ignore[return-value]
 
     @property
-    def value_references(self) -> set[str]:
+    def value_references(self) -> dict[str, set[str]]:
         if self._value_references is None:
             self._build_reference_indices()
         return self._value_references  # type: ignore[return-value]
