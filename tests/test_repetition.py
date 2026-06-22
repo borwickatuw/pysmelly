@@ -723,6 +723,261 @@ class Config:
         findings = check_shotgun_surgery(t)
         assert len(findings) == 1
 
+    def test_ignores_receiver_bound_from_imported_library_call(self, trees):
+        """`log = logging.getLogger(__name__)` then `log.warning` — `log` is
+        bound from a library call, so reads of its attrs are library API."""
+        t = trees.files(
+            {
+                # Some project class happens to define `warning` so it lands
+                # in project_attrs (otherwise the existing project_attrs
+                # filter would already suppress).
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "a.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('a')
+""",
+                "b.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('b')
+""",
+                "c.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('c')
+""",
+                "d.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('d')
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_receiver_bound_from_imported_function(self, trees):
+        """`from logging import getLogger` then `log = getLogger(...)` — the
+        callee was imported, so `log` is library-bound."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "a.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('a')
+""",
+                "b.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('b')
+""",
+                "c.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('c')
+""",
+                "d.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('d')
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_re_match_receiver(self, trees):
+        """`m = re.match(...)` then `m.group(...)` is the re.Match API."""
+        t = trees.files(
+            {
+                # Project class with a `group` attribute pulls "group" into
+                # project_attrs.
+                "models.py": """\
+class Team:
+    def __init__(self):
+        self.group = None
+""",
+                "a.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+                "b.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+                "c.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+                "d.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_still_flags_when_callee_is_a_project_function(self, trees):
+        """`config = make_config()` where make_config is a PROJECT function
+        (not a library) must NOT mark `config` as library-bound — that
+        would hide real shotgun-surgery on project factory return values."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+
+def make_config():
+    return Config()
+""",
+                "a.py": """\
+from models import make_config
+config = make_config()
+x = config.timeout
+""",
+                "b.py": """\
+from models import make_config
+config = make_config()
+y = config.timeout
+""",
+                "c.py": """\
+from models import make_config
+config = make_config()
+z = config.timeout
+""",
+                "d.py": """\
+from models import make_config
+config = make_config()
+w = config.timeout
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "config.timeout" in findings[0].message
+
+    def test_ignores_click_context_in_callback(self, trees):
+        """`ctx.invoke`, `ctx.obj`, etc. inside a Click callback (matched by
+        the (ctx, param, value) signature) are Click API, not user attrs."""
+        t = trees.files(
+            {
+                # Project class with `invoke` so it lands in project_attrs.
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.invoke = None
+""",
+                "a.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+                "b.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+                "c.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+                "d.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_click_context_in_pass_context_function(self, trees):
+        """@click.pass_context binds the first param as a Click Context."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.invoke = None
+""",
+                "a.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+                "b.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+                "c.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+                "d.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_does_not_suppress_ctx_outside_click_function(self, trees):
+        """A `ctx` parameter on a non-Click function (e.g. AnalysisContext)
+        is NOT a Click Context — reads on it should still be flagged."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Analysis:
+    def __init__(self):
+        self.tree_count = None
+""",
+                # Plain function with a ctx param, no Click signature/decorator
+                "a.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+                "b.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+                "c.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+                "d.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
 
 class TestRepeatedStringParsing:
     def test_finds_same_split_index_in_3_locations(self, trees):

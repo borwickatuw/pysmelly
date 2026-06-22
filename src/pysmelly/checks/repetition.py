@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from pysmelly.checks.framework import is_migration_file
-from pysmelly.checks.helpers import is_test_file
+from pysmelly.checks.helpers import is_click_callback_signature, is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import MAX_DISPLAY_WIDTH, Finding, Severity, check
 
@@ -585,8 +585,111 @@ COMMON_ATTRS = frozenset(
 )
 
 
+def _build_library_bound_names(tree: ast.Module, file_imports: set[str]) -> set[str]:
+    """Names bound to the return value of an imported library call.
+
+    Picks up patterns like::
+
+        log = logging.getLogger(__name__)   # log    → library-bound
+        resp = requests.get(url)            # resp   → library-bound
+        m = re.match(pattern, text)         # m      → library-bound
+        log = getLogger(__name__)           # log    → library-bound
+                                            # (after `from logging import getLogger`)
+
+    Reads of ``log.warning``/``resp.status_code``/``m.group`` are library API,
+    not user-attribute reads we could propagate a refactor through.
+
+    ``file_imports`` is expected to be the LIBRARY-only import set (imports
+    of project modules already filtered out), so ``config = make_config()``
+    where ``make_config`` is a project function does NOT bind ``config``.
+    """
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not isinstance(node.value, ast.Call):
+            continue
+        callee = node.value.func
+        is_library_call = False
+        if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+            if callee.value.id in file_imports:
+                is_library_call = True
+        elif isinstance(callee, ast.Name):
+            if callee.id in file_imports:
+                is_library_call = True
+        if not is_library_call:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                bound.add(target.id)
+    return bound
+
+
+def _is_click_pass_context_decorator(node: ast.expr) -> bool:
+    """True for ``@click.pass_context`` or bare ``@pass_context``."""
+    if isinstance(node, ast.Attribute) and node.attr == "pass_context":
+        return True
+    if isinstance(node, ast.Name) and node.id == "pass_context":
+        return True
+    return False
+
+
+def _click_context_param_name(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """If ``func`` is a Click callback or has ``@click.pass_context``, return
+    the name of its Click ``Context`` parameter — the first positional arg
+    after self/cls. Otherwise None.
+    """
+    is_click_func = is_click_callback_signature(func) or any(
+        _is_click_pass_context_decorator(d) for d in func.decorator_list
+    )
+    if not is_click_func or not func.args.args:
+        return None
+    first = func.args.args[0].arg
+    if first in {"self", "cls"}:
+        if len(func.args.args) > 1:
+            return func.args.args[1].arg
+        return None
+    return first
+
+
+def _enclosing_click_context_param(
+    node: ast.AST, parent_map: dict[ast.AST, ast.AST]
+) -> str | None:
+    """Return the Click-Context parameter name for the function enclosing
+    ``node``, or None when no such function is found.
+    """
+    cur = parent_map.get(node)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return _click_context_param_name(cur)
+        cur = parent_map.get(cur)
+    return None
+
+
+def _collect_project_module_names(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """Names that identify project modules/packages.
+
+    Includes every analyzed file's stem and every parent-directory component
+    of its path (excluding common source-root names like ``src``). Used to
+    distinguish ``from pysmelly.checks.helpers import X`` (project import,
+    X may be a project function) from ``from logging import getLogger``
+    (library import, getLogger is library).
+    """
+    names: set[str] = set()
+    skip_dirs = {"src", "lib"}
+    for filepath in all_trees:
+        names.add(filepath.stem)
+        for part in filepath.parts[:-1]:
+            if part not in skip_dirs and part not in {".", ".."}:
+                names.add(part)
+    return names
+
+
 def _build_imports_per_file(all_trees: dict[Path, ast.Module]) -> dict[str, set[str]]:
-    """For each file, the set of local names introduced by ``import`` statements.
+    """For each file, the set of local names introduced by *library* import
+    statements — those whose source module is NOT a project module.
 
     Used to recognize "the receiver of this attribute read is a directly-imported
     library, not one of our value objects." Change-propagation risk doesn't apply
@@ -599,16 +702,31 @@ def _build_imports_per_file(all_trees: dict[Path, ast.Module]) -> dict[str, set[
       - ``import X.Y.Z as W``              → ``W``
       - ``from A import B``                → ``B``
       - ``from A import B as C``           → ``C``
+
+    Imports whose source module looks like a project module are excluded so
+    that ``from project_models import make_config`` does NOT mark
+    ``make_config`` as a library symbol (and therefore won't cause
+    ``config = make_config()`` to be treated as library-bound).
     """
+    project_modules = _collect_project_module_names(all_trees)
     result: dict[str, set[str]] = {}
     for filepath, tree in all_trees.items():
         names: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    bound = alias.asname if alias.asname else alias.name.split(".")[0]
+                    source_top = alias.name.split(".")[0]
+                    if source_top in project_modules:
+                        continue
+                    bound = alias.asname if alias.asname else source_top
                     names.add(bound)
             elif isinstance(node, ast.ImportFrom):
+                if node.module is None:
+                    # `from . import X` — relative; treat as project import.
+                    continue
+                source_top = node.module.split(".")[0]
+                if source_top in project_modules:
+                    continue
                 for alias in node.names:
                     bound = alias.asname if alias.asname else alias.name
                     names.add(bound)
@@ -665,6 +783,8 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
 
         file_str = str(filepath)
         file_imports = imports_per_file.get(file_str, set())
+        library_bound = _build_library_bound_names(tree, file_imports)
+        parent_map = ctx.parent_map(tree)
 
         # Track per-file to dedup
         seen_in_file: set[tuple[str, str]] = set()
@@ -696,6 +816,16 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # `boto3.client`, `click.group`, etc. are library API, not user
             # attribute reads we could propagate a refactor through.
             if var_name in file_imports:
+                continue
+            # Skip when the receiver was bound from an imported library call
+            # like `log = logging.getLogger(...)` or `m = re.match(...)`.
+            if var_name in library_bound:
+                continue
+            # Skip Click Context parameters inside Click callbacks or
+            # @click.pass_context functions — `ctx.invoke`, `ctx.obj`, etc.
+            # are Click API, not user attribute reads.
+            click_ctx = _enclosing_click_context_param(node, parent_map)
+            if click_ctx == var_name:
                 continue
             # Skip uppercase attr access (enum constants: Severity.HIGH)
             if attr_name[0].isupper():
