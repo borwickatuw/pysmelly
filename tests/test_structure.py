@@ -563,6 +563,25 @@ def validate_user(first_name, last_name, email):
         findings = check_param_clumps(t)
         assert len(findings) == 1
 
+    def test_ignores_exit_protocol_dunders(self, trees):
+        """__exit__/__aexit__ signatures are dictated by the context-manager
+        protocol — (exc_type, exc, tb) is not a clump the author chose."""
+        t = trees.code("""\
+class JsonlWriter:
+    def __exit__(self, exc_type, exc, tb):
+        pass
+
+class ArchiveCheckpoint:
+    def __exit__(self, exc_type, exc, tb):
+        pass
+
+class Checkpoint:
+    def __exit__(self, exc_type, exc, tb):
+        pass
+""")
+        findings = check_param_clumps(t)
+        assert len(findings) == 0
+
 
 class TestMiddleMan:
     def test_finds_pure_delegation_class(self, trees):

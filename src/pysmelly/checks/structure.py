@@ -6,6 +6,7 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+from pysmelly.checks.framework import PROTOCOL_DUNDER_METHODS
 from pysmelly.checks.helpers import is_test_file
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import MAX_DISPLAY_WIDTH, Finding, Severity, check
@@ -477,6 +478,11 @@ def _extract_all_signatures(all_trees: dict[Path, ast.Module]) -> list[dict]:
             if node.name.startswith("test"):
                 continue
             if _has_interface_decorator(node):
+                continue
+            # Protocol dunders (e.g. __exit__(exc_type, exc, tb)) have
+            # signatures dictated by the language — the params are not a
+            # clump the author chose, they're a contract.
+            if node.name in PROTOCOL_DUNDER_METHODS:
                 continue
 
             params = _get_meaningful_params(node)
