@@ -1186,6 +1186,51 @@ x = order.user.address.city
         findings = check_law_of_demeter(t)
         assert len(findings) == 0
 
+    def test_ignores_imported_module_namespace(self, trees):
+        """Chains rooted in an imported module are namespace access, not Demeter."""
+        t = trees.code("""\
+import globus_sdk
+
+SCOPES = [
+    globus_sdk.AuthClient.scopes.openid,
+    globus_sdk.GroupsClient.scopes.all,
+]
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
+    def test_ignores_from_imported_name(self, trees):
+        """A name pulled in via ``from m import n`` is a library root, not an object."""
+        t = trees.code("""\
+from globus_sdk import TransferClient
+
+x = TransferClient.scopes.all.resource.server
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
+    def test_still_flags_local_object_despite_imports(self, trees):
+        """An imported module in the file must not exempt real object chains."""
+        t = trees.code("""\
+import globus_sdk
+
+def get_city(order):
+    return order.user.address.city
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 1
+        assert "order.user.address.city" in findings[0].message
+
+    def test_ignores_aliased_import(self, trees):
+        """``import x as y`` binds ``y`` — a chain rooted there is namespace access."""
+        t = trees.code("""\
+import numpy as np
+
+x = np.linalg.norm.func.value
+""")
+        findings = check_law_of_demeter(t)
+        assert len(findings) == 0
+
     def test_finds_deeper_chain(self, trees):
         t = trees.code("""\
 x = self.service.repository.model.field.value

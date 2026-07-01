@@ -1230,23 +1230,24 @@ _AST_NAV_ATTRS = frozenset(
     }
 )
 
-_STDLIB_MODULES = frozenset(
-    {
-        "os",
-        "sys",
-        "ast",
-        "re",
-        "io",
-        "json",
-        "logging",
-        "pathlib",
-        "typing",
-        "collections",
-        "functools",
-        "itertools",
-        "datetime",
-    }
-)
+
+def _imported_root_names(tree: ast.Module) -> set[str]:
+    """Collect names bound by imports — the roots of library namespace access.
+
+    Covers ``import a.b.c`` (binds ``a``), ``import x as y`` (binds ``y``),
+    and ``from m import n`` (binds ``n``). A chain rooted in one of these is
+    reaching into an imported namespace, not through an object handed to the
+    code, so it is not a Law-of-Demeter violation.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+    return names
 
 
 def _should_report_chain(
@@ -1254,6 +1255,7 @@ def _should_report_chain(
     tree: ast.Module,
     ctx: AnalysisContext,
     threshold: int,
+    imported_names: set[str],
 ) -> tuple[int, str] | None:
     """Evaluate an attribute chain. Returns (depth, chain_str) if it should be reported."""
     if not isinstance(node.ctx, ast.Load):
@@ -1289,8 +1291,10 @@ def _should_report_chain(
     if sum(1 for a in chain_attrs if a in _AST_NAV_ATTRS) >= 2:
         return None
 
-    # Skip module-level attribute access (os.path.sep, etc.)
-    if root[0].islower() and root in _STDLIB_MODULES:
+    # Skip chains rooted in an imported module/name — reaching into a library
+    # namespace (globus_sdk.AuthClient.scopes.all, os.path.sep) is namespace
+    # traversal, not reaching through an object handed to this code.
+    if root in imported_names:
         return None
 
     # Skip self.request.* chains — idiomatic in web framework views
@@ -1325,12 +1329,13 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
 
         # Dedup: only report the deepest chain per line
         line_findings: dict[int, tuple[int, str]] = {}  # line -> (depth, chain_str)
+        imported_names = _imported_root_names(tree)
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):
                 continue
 
-            result = _should_report_chain(node, tree, ctx, threshold)
+            result = _should_report_chain(node, tree, ctx, threshold, imported_names)
             if result is None:
                 continue
 
