@@ -5,7 +5,35 @@ import subprocess
 
 import pytest
 
+from pysmelly import __version__
 from pysmelly.cli import GUIDANCE_CONTENT, SHORT_GUIDANCE_CONTENT, main
+
+
+class TestVersion:
+    def test_version_matches_package_metadata(self, capsys, monkeypatch, tmp_path):
+        """--version reports the package version, independent of the working directory.
+
+        Regression: the version was previously resolved via `git describe` in the
+        current working directory, so running pysmelly against another repo reported
+        that repo's commit instead of pysmelly's own version.
+        """
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            main(["--version"])
+        assert exc.value.code == 0
+        assert capsys.readouterr().out == f"pysmelly, version {__version__}\n"
+
+    def test_version_does_not_shell_out_to_git(self, capsys, monkeypatch):
+        """--version must not invoke git; the version comes from package metadata."""
+
+        def _fail(*_args, **_kwargs):
+            raise AssertionError("--version must not call subprocess/git")
+
+        monkeypatch.setattr(subprocess, "run", _fail)
+        with pytest.raises(SystemExit) as exc:
+            main(["--version"])
+        assert exc.value.code == 0
+        assert __version__ in capsys.readouterr().out
 
 
 class TestCLI:

@@ -4,10 +4,11 @@ import fnmatch
 import os
 import subprocess
 import sys
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
+
+from pysmelly import __version__
 
 # Import checks to trigger registration
 import pysmelly.checks  # noqa: F401
@@ -32,24 +33,6 @@ from pysmelly.registry import (
 import contextlib
 
 _GIT_HISTORY_CHECKS = {name for name, cat in CHECK_CATEGORIES.items() if cat == "git-history"}
-
-
-def _get_version() -> str:
-    """Get version from git describe (live), falling back to package metadata."""
-    try:
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--always"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-    try:
-        return version("pysmelly")
-    except PackageNotFoundError:
-        return "unknown"
 
 
 def _is_excluded(rel: Path, patterns: list[str]) -> bool:
@@ -720,7 +703,7 @@ class _GroupWithTargets(click.Group):
 
 
 @click.group(cls=_GroupWithTargets, invoke_without_command=True)
-@click.version_option(version=_get_version(), prog_name="pysmelly")
+@click.version_option(version=__version__, prog_name="pysmelly")
 @click.option(
     "--check",
     type=click.Choice(_AST_CHECK_NAMES, case_sensitive=True),
