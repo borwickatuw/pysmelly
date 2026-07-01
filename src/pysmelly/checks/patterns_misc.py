@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pysmelly.checks.framework import is_migration_file
 from pysmelly.checks.helpers import (
+    collect_imported_names,
     enclosing_function,
     get_param_names,
     is_constant_reassigned,
@@ -948,7 +949,16 @@ def _infer_return_type(node: ast.Return, ctx: AnalysisContext) -> str | None:
                 return "float"
             if name in {"bool"}:
                 return "bool"
-            if name in {"list", "dict", "tuple", "set", "frozenset", "bytes", "bytearray", "complex"}:
+            if name in {
+                "list",
+                "dict",
+                "tuple",
+                "set",
+                "frozenset",
+                "bytes",
+                "bytearray",
+                "complex",
+            }:
                 return name
             # Follow the call to the function's declared return type when
             # we can find it in the project. Without this, `return get_user()`
@@ -1231,25 +1241,6 @@ _AST_NAV_ATTRS = frozenset(
 )
 
 
-def _imported_root_names(tree: ast.Module) -> set[str]:
-    """Collect names bound by imports — the roots of library namespace access.
-
-    Covers ``import a.b.c`` (binds ``a``), ``import x as y`` (binds ``y``),
-    and ``from m import n`` (binds ``n``). A chain rooted in one of these is
-    reaching into an imported namespace, not through an object handed to the
-    code, so it is not a Law-of-Demeter violation.
-    """
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
-    return names
-
-
 def _should_report_chain(
     node: ast.Attribute,
     tree: ast.Module,
@@ -1329,7 +1320,7 @@ def check_law_of_demeter(ctx: AnalysisContext) -> list[Finding]:
 
         # Dedup: only report the deepest chain per line
         line_findings: dict[int, tuple[int, str]] = {}  # line -> (depth, chain_str)
-        imported_names = _imported_root_names(tree)
+        imported_names = collect_imported_names(tree)
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):

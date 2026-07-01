@@ -15,6 +15,8 @@ from pysmelly.checks.framework import (
     has_framework_dispatch_decorator,
 )
 from pysmelly.checks.helpers import (
+    attr_call_receiver_root,
+    collect_imported_names,
     has_dataclass_decorator,
     is_click_callback_signature,
     is_imported_elsewhere,
@@ -24,6 +26,7 @@ from pysmelly.checks.helpers import (
     is_referenced_as_value,
     is_referenced_as_value_in_production,
     is_test_file,
+    resolves_to_free_function,
     is_used_as_decorator,
 )
 from pysmelly.context import AnalysisContext
@@ -254,7 +257,9 @@ def check_single_call_site(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         def_file = defs[0]["file"]
-        all_calls = ctx.call_index.get(func_name, [])
+        # Exclude same-named instance-method calls (self.f(), obj.f()); they
+        # share the bare name but do not call this top-level free function.
+        all_calls = [c for c in ctx.call_index.get(func_name, []) if resolves_to_free_function(c)]
         prod_calls = [c for c in all_calls if not is_test_file(Path(c["file"]))]
         test_calls = [c for c in all_calls if is_test_file(Path(c["file"]))]
         if len(prod_calls) != 1:
@@ -606,6 +611,7 @@ def _count_none_guards(all_trees: dict[Path, ast.Module], func_name: str) -> tup
     unguarded = 0
 
     for tree in all_trees.values():
+        imported = collect_imported_names(tree)
         for node in ast.walk(tree):
             # Look for: var = func(...)
             if not isinstance(node, ast.Assign):
@@ -618,13 +624,14 @@ def _count_none_guards(all_trees: dict[Path, ast.Module], func_name: str) -> tup
             if not isinstance(node.value, ast.Call):
                 continue
             call = node.value
-            if (
-                isinstance(call.func, ast.Name)
-                and call.func.id == func_name
-                or isinstance(call.func, ast.Attribute)
-                and call.func.attr == func_name
-            ):
+            if isinstance(call.func, ast.Name) and call.func.id == func_name:
                 pass
+            elif isinstance(call.func, ast.Attribute) and call.func.attr == func_name:
+                # Only a module-qualified call (mod.func()) resolves to the free
+                # function; self.func() / obj.func() is a same-named method call.
+                root = attr_call_receiver_root(call.func)
+                if root is None or root not in imported:
+                    continue
             else:
                 continue
 
@@ -1006,9 +1013,12 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
         if len(defs) != 1:
             continue
 
-        calls = ctx.call_index.get(func_name, [])
-        # Filter out test file callers
-        calls = [c for c in calls if not is_test_file(Path(c["file"]))]
+        # Exclude same-named instance-method calls and test-file callers.
+        calls = [
+            c
+            for c in ctx.call_index.get(func_name, [])
+            if resolves_to_free_function(c) and not is_test_file(Path(c["file"]))
+        ]
         if len(calls) < 3:
             continue
 
@@ -1345,10 +1355,7 @@ def _iter_returns_no_nested(
 
 def _expr_references_name(expr: ast.expr, name: str) -> bool:
     """True if ``expr`` references the local name ``name`` anywhere."""
-    for node in ast.walk(expr):
-        if isinstance(node, ast.Name) and node.id == name:
-            return True
-    return False
+    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(expr))
 
 
 def _projects_dataclass_source(

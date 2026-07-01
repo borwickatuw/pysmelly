@@ -154,23 +154,82 @@ def build_function_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[di
     return func_defs
 
 
+def collect_imported_names(tree: ast.Module) -> set[str]:
+    """Collect names bound by imports in a module.
+
+    Covers ``import a.b.c`` (binds ``a``), ``import x as y`` (binds ``y``),
+    and ``from m import n`` (binds ``n``). These are the roots of library
+    namespace access — a ``mod.func()`` call whose root is one of these is
+    a module-qualified reference, not a method call on an instance.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+    return names
+
+
+def attr_call_receiver_root(func: ast.Attribute) -> str | None:
+    """Root name of an attribute-call receiver: ``a.b.c()`` -> ``a``, ``x.y()`` -> ``x``."""
+    current: ast.expr = func.value
+    while isinstance(current, ast.Attribute):
+        current = current.value
+    if isinstance(current, ast.Name):
+        return current.id
+    return None
+
+
+def resolves_to_free_function(entry: dict) -> bool:
+    """Whether a call-index entry could invoke a top-level free function.
+
+    A bare call ``f()`` (``receiver_kind == "name"``) or a module-qualified
+    call ``mod.f()`` (``receiver_kind == "module"``) can resolve to a free
+    function. An instance-method call ``self.f()`` / ``obj.f()``
+    (``receiver_kind == "instance"``) shares the bare name ``f`` but does not
+    call the free function — it must not inflate that function's caller count.
+    """
+    return entry.get("receiver_kind") != "instance"
+
+
 def build_call_index(all_trees: dict[Path, ast.Module]) -> dict[str, list[dict]]:
     """Build map of all function call sites across the codebase in a single pass.
 
-    Returns {func_name: [{file, line, node}, ...]} for every called name.
+    Returns {func_name: [{file, line, node, receiver_kind}, ...]} for every
+    called name. ``receiver_kind`` is ``"name"`` for a bare ``f()`` call,
+    ``"module"`` for a module-qualified ``mod.f()`` call (receiver root is an
+    imported name), or ``"instance"`` for a method call ``self.f()`` / ``x.f()``
+    on a value. This lets checks that reason about top-level free functions
+    exclude same-named method calls via :func:`resolves_to_free_function`.
     """
     calls: dict[str, list[dict]] = defaultdict(list)
     for filepath, tree in all_trees.items():
+        imported = collect_imported_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             if isinstance(node.func, ast.Name):
                 calls[node.func.id].append(
-                    {"file": str(filepath), "line": node.lineno, "node": node}
+                    {
+                        "file": str(filepath),
+                        "line": node.lineno,
+                        "node": node,
+                        "receiver_kind": "name",
+                    }
                 )
             elif isinstance(node.func, ast.Attribute):
+                root = attr_call_receiver_root(node.func)
+                kind = "module" if root is not None and root in imported else "instance"
                 calls[node.func.attr].append(
-                    {"file": str(filepath), "line": node.lineno, "node": node}
+                    {
+                        "file": str(filepath),
+                        "line": node.lineno,
+                        "node": node,
+                        "receiver_kind": kind,
+                    }
                 )
     return calls
 

@@ -422,6 +422,30 @@ format_row("Alice", 30, "admin")
         assert "3 params" in findings[0].message
         assert findings[0].severity == Severity.LOW
 
+    def test_instance_method_collision_not_counted(self, trees):
+        """Same-named method calls (w.helper()) must not hide a genuine
+        single-call-site by inflating the free function's caller count."""
+        t = trees.code("""\
+def helper():
+    pass
+
+helper()
+
+
+class Widget:
+    def helper(self):
+        pass
+
+
+def uses(w):
+    w.helper()
+    w.helper()
+""")
+        findings = check_single_call_site(t)
+        assert len(findings) == 1
+        assert "helper" in findings[0].message
+        assert "exactly 1 call site" in findings[0].message
+
     def test_bumps_severity_for_many_params(self, trees):
         """Functions with 4+ params and 1 caller are likely bad extractions."""
         t = trees.code("""\
@@ -824,6 +848,38 @@ if y is None:
 """)
         findings = check_return_none_instead_of_raise(t)
         assert len(findings) == 1
+
+    def test_instance_method_guards_not_counted(self, trees):
+        """None-guards on a same-named method (repo.find()) must not count
+        toward the free function's guarded-caller total."""
+        t = trees.code("""\
+def find(name):
+    if not name:
+        return None
+    return lookup(name)
+
+result = find("alice")
+if result is None:
+    handle()
+
+
+class Repo:
+    def find(self, name):
+        return self._cache.get(name)
+
+
+def uses(repo):
+    a = repo.find("x")
+    if a is None:
+        handle()
+    b = repo.find("y")
+    if b is None:
+        handle()
+""")
+        # Only the single bare-name caller guards; the two repo.find() method
+        # guards are excluded, leaving 1 < 2 so nothing is flagged.
+        findings = check_return_none_instead_of_raise(t)
+        assert findings == []
 
     def test_is_not_none_guard(self, trees):
         t = trees.code("""\
@@ -1347,8 +1403,8 @@ except Exception:
         assert len(findings) == 1
         assert "ValueError" in findings[0].message
 
-    def test_method_calls_counted(self, trees):
-        """Attribute calls (obj.method()) are still counted."""
+    def test_module_qualified_calls_counted(self, trees):
+        """Module-qualified calls (lib.process()) resolve to the free function."""
         t = trees.files(
             {
                 "lib.py": "def process():\n    pass",
@@ -1359,6 +1415,52 @@ except Exception:
         )
         findings = check_inconsistent_error_handling(t)
         assert len(findings) == 1
+
+    def test_instance_method_collision_excluded(self, trees):
+        """A same-named method (self.f()/obj.f()) must not inflate the free
+        function's caller count — the reported get_collection_detail bug."""
+        t = trees.files(
+            {
+                "common.py": """\
+def get_detail(gcs, uuid):
+    if not uuid:
+        raise ValueError("no uuid")
+    return gcs.fetch(uuid)
+
+
+class Client:
+    def get_detail(self, cid):
+        return self._api.get(cid)
+""",
+                "callers.py": """\
+from common import get_detail
+
+
+def a(gcs, u):
+    return get_detail(gcs, u)
+
+
+def m1(client, cid):
+    try:
+        return client.get_detail(cid)
+    except KeyError:
+        return None
+
+
+def m2(client, cid):
+    return client.get_detail(cid)
+
+
+def m3(client, cid):
+    return client.get_detail(cid)
+""",
+            }
+        )
+        # Only the single bare-name call (a) resolves to the free function;
+        # the three client.get_detail() method calls are excluded, so the
+        # 3-caller threshold is not met and nothing is flagged.
+        findings = check_inconsistent_error_handling(t)
+        assert findings == []
 
     def test_broad_plus_unhandled_not_flagged(self, trees):
         """Broad + unhandled without any specific — weakest signal, skip."""
