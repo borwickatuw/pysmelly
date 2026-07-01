@@ -31,6 +31,31 @@ INTERFACE_DECORATORS = frozenset(
 )
 
 
+def _shorten_paths(paths: list[str]) -> dict[str, str]:
+    """Map each path to the shortest trailing suffix that is unique in the set.
+
+    A bare basename is used when it already disambiguates; when two paths
+    share a basename (e.g. ``a/views.py`` and ``b/views.py``) each expands to
+    include just enough parent directories to tell them apart. This prevents
+    distinct files from rendering identically in a locations string, which
+    would make a real cross-file duplicate look like a nonsensical self-match.
+    """
+    split = {p: p.split("/") for p in set(paths)}
+    result: dict[str, str] = {}
+    for path, segs in split.items():
+        for depth in range(1, len(segs) + 1):
+            suffix = "/".join(segs[-depth:])
+            if all(
+                other == path or "/".join(other_segs[-depth:]) != suffix
+                for other, other_segs in split.items()
+            ):
+                result[path] = suffix
+                break
+        else:
+            result[path] = path
+    return result
+
+
 def _dedup_and_format_locations(
     items: list[dict],
     file_key: str,
@@ -48,8 +73,10 @@ def _dedup_and_format_locations(
             seen.add(key)
             deduped.append(item)
 
+    short_paths = _shorten_paths([item[file_key] for item in deduped])
+
     def _fmt(item: dict) -> str:
-        filename = item[file_key].split("/")[-1]
+        filename = short_paths[item[file_key]]
         func = item[func_key]
         start = item[line_key]
         if line_end_key and line_end_key in item:

@@ -1,6 +1,7 @@
 """Tests for structural checks."""
 
 from pysmelly.checks.structure import (
+    _shorten_paths,
     check_duplicate_blocks,
     check_duplicate_except_blocks,
     check_large_class,
@@ -10,6 +11,29 @@ from pysmelly.checks.structure import (
     check_param_clumps,
     check_shadowed_methods,
 )
+
+
+class TestShortenPaths:
+    def test_unique_basenames_use_basename(self):
+        result = _shorten_paths(["a/foo.py", "b/bar.py"])
+        assert result == {"a/foo.py": "foo.py", "b/bar.py": "bar.py"}
+
+    def test_colliding_basenames_expand_to_distinguish(self):
+        result = _shorten_paths(["app_a/views.py", "app_b/views.py"])
+        assert result == {
+            "app_a/views.py": "app_a/views.py",
+            "app_b/views.py": "app_b/views.py",
+        }
+
+    def test_expands_only_as_far_as_needed(self):
+        result = _shorten_paths(["x/pkg/mod.py", "y/pkg/mod.py"])
+        assert result == {"x/pkg/mod.py": "x/pkg/mod.py", "y/pkg/mod.py": "y/pkg/mod.py"}
+
+    def test_mixed_collision_and_unique(self):
+        result = _shorten_paths(["a/dup.py", "b/dup.py", "c/uniq.py"])
+        assert result["a/dup.py"] == "a/dup.py"
+        assert result["b/dup.py"] == "b/dup.py"
+        assert result["c/uniq.py"] == "uniq.py"
 
 
 class TestDuplicateBlocks:
@@ -90,6 +114,38 @@ def func_b():
 """)
         findings = check_duplicate_blocks(t)
         assert len(findings) == 0
+
+    def test_same_basename_different_dirs_disambiguated(self, trees):
+        """Duplicates across same-named files in different dirs must show the
+        distinguishing path, not a collapsed basename that looks like a self-match.
+        """
+        body = """\
+def ensure_partition(parent, snapshot_date):
+    if parent not in indexes:
+        raise ValueError("unknown")
+    name = partition_name(parent, snapshot_date)
+    start = snapshot_date.isoformat()
+    end = tomorrow(snapshot_date).isoformat()
+    sql = build_sql(name, parent, start, end)
+    with connection.cursor() as cur:
+        cur.execute(sql)
+    return name
+"""
+        t = trees.files(
+            {
+                "app_a/partitions.py": body,
+                "app_b/partitions.py": body,
+            }
+        )
+        findings = check_duplicate_blocks(t)
+        assert len(findings) == 1
+        msg = findings[0].message
+        # Both distinct files appear, each qualified by its directory —
+        # never the same label twice (which would read as a bogus self-overlap).
+        assert "app_a/partitions.py:ensure_partition()" in msg
+        assert "app_b/partitions.py:ensure_partition()" in msg
+        assert msg.count("app_a/partitions.py:ensure_partition()") == 1
+        assert msg.count("app_b/partitions.py:ensure_partition()") == 1
 
 
 class TestDuplicateExceptBlocks:
