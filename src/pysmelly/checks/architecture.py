@@ -338,9 +338,7 @@ def _collect_exported_names(all_trees: dict[Path, ast.Module]) -> set[str]:
                 if isinstance(target, ast.Name) and target.id == "__all__":
                     if isinstance(node.value, (ast.List, ast.Tuple)):
                         for elt in node.value.elts:
-                            if isinstance(elt, ast.Constant) and isinstance(
-                                elt.value, str
-                            ):
+                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                                 names.add(elt.value)
     return names
 

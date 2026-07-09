@@ -367,9 +367,7 @@ def check_yo_yo_code(ctx: AnalysisContext) -> list[Finding]:
 
     findings: list[Finding] = []
 
-    for file_str, current_lines, stats in churned_files(
-        history, ctx, min_lines=100, min_commits=5
-    ):
+    for file_str, current_lines, stats in churned_files(history, ctx, min_lines=100, min_commits=5):
         gross_churn = stats.total_insertions + stats.total_deletions
         churn_ratio = gross_churn / current_lines
         if churn_ratio < 3.0:
@@ -600,9 +598,7 @@ def check_test_erosion(ctx: AnalysisContext) -> list[Finding]:
         if test_file is None:
             continue
 
-        test_commits = [
-            c for c in history.commits_since_review(test_file) if not is_bulk_commit(c)
-        ]
+        test_commits = [c for c in history.commits_since_review(test_file) if not is_bulk_commit(c)]
         test_count = max(len(test_commits), 1)
         ratio = len(source_commits) / test_count
 

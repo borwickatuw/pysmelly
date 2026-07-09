@@ -91,6 +91,7 @@ def _is_suppressed(finding: Finding, source_lines: dict[str, list[str]]) -> bool
 
 # Checks that use cross-file caller analysis — findings are affected by file exclusions
 
+
 def _find_guidance_path() -> Path | None:
     """Find the guidance file path from CLAUDE.md, falling back to PYSMELLY.md."""
     import re

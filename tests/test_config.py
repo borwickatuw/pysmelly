@@ -2,7 +2,7 @@
 
 import pytest
 
-from pysmelly.config import ConfigError, _validate_config, _warn_parent_config, load_config
+from pysmelly.config import ConfigError, _validate_config, load_config
 
 VALID_CHECKS = {
     "dead-code",
@@ -20,9 +20,7 @@ class TestLoadConfig:
 
     def test_warns_when_parent_has_config(self, tmp_path, capsys):
         """Warn if target dir has no config but a parent does."""
-        (tmp_path / "pyproject.toml").write_text(
-            '[tool.pysmelly]\nskip = ["dead-code"]\n'
-        )
+        (tmp_path / "pyproject.toml").write_text('[tool.pysmelly]\nskip = ["dead-code"]\n')
         src = tmp_path / "src"
         src.mkdir()
         result = load_config(src, VALID_CHECKS)

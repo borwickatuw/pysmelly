@@ -1298,9 +1298,7 @@ def _collect_dict_returning_functions(ctx: AnalysisContext) -> dict[str, list[di
     return results
 
 
-def _enclosing_class(
-    node: ast.AST, parent_map: dict[ast.AST, ast.AST]
-) -> ast.ClassDef | None:
+def _enclosing_class(node: ast.AST, parent_map: dict[ast.AST, ast.AST]) -> ast.ClassDef | None:
     """Return the innermost ClassDef enclosing ``node``, or None."""
     cur = parent_map.get(node)
     while cur is not None:
@@ -1407,9 +1405,7 @@ def _projects_dataclass_source(
         if len(values) < 4:
             continue
         for source_name, source_class in sources.items():
-            referenced = sum(
-                1 for v in values if _expr_references_name(v, source_name)
-            )
+            referenced = sum(1 for v in values if _expr_references_name(v, source_name))
             if referenced >= len(values) - 1:
                 return source_class
 

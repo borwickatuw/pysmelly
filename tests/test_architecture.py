@@ -367,7 +367,6 @@ def use(c):
         assert len(findings) == 1
         assert "unused_field" in findings[0].message
 
-
     def test_skips_class_in_dunder_all(self, trees):
         """Classes listed in __all__ are public API — fields may be read externally."""
         t = trees.files(
