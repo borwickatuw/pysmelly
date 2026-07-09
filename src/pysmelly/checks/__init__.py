@@ -12,6 +12,7 @@ from pysmelly.checks import (  # noqa: F401
     history_growth,
     history_team,
     imports,
+    logging_smells,
     patterns_control,
     patterns_data,
     patterns_misc,
