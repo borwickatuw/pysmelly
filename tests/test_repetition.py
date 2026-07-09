@@ -544,6 +544,91 @@ class Config:
         assert "config.timeout" in findings[0].message
         assert "4 files" in findings[0].message
 
+    def test_anchors_at_defining_class(self, trees):
+        """Finding maps to the attribute's definition site, not the
+        alphabetically-first access site."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert findings[0].file.endswith("models.py")
+        assert "defined on Config" in findings[0].message
+
+    def test_ambiguous_definition_anchors_at_first_access(self, trees):
+        """Attr defined on two classes -> keep the access-site anchor."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+
+class Job:
+    def __init__(self):
+        self.timeout = 60
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert findings[0].file.endswith("a.py")
+        assert "defined on" not in findings[0].message
+
+    def test_counts_scattered_writes(self, trees):
+        """Field written from many files fires — the textbook anemic-model
+        shotgun-surgery shape (previously only reads counted)."""
+        t = trees.files(
+            {
+                "models.py": """\
+class User:
+    def __init__(self):
+        self.email = None
+""",
+                "a.py": "user.email = 'a@example.com'",
+                "b.py": "user.email = 'b@example.com'",
+                "c.py": "user.email = 'c@example.com'",
+                "d.py": "user.email = 'd@example.com'",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "user.email" in findings[0].message
+        assert "written from 4" in findings[0].message
+
+    def test_mixed_reads_and_writes_pool_toward_threshold(self, trees):
+        t = trees.files(
+            {
+                "models.py": """\
+class User:
+    def __init__(self):
+        self.email = None
+""",
+                "a.py": "user.email = 'a@example.com'",
+                "b.py": "user.email = 'b@example.com'",
+                "c.py": "x = user.email",
+                "d.py": "y = user.email",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "4 files" in findings[0].message
+        assert "written from 2" in findings[0].message
+
     def test_ignores_3_files(self, trees):
         t = trees.files(
             {

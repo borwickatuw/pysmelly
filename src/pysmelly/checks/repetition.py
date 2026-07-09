@@ -691,9 +691,7 @@ def _click_context_param_name(
     return first
 
 
-def _enclosing_click_context_param(
-    node: ast.AST, parent_map: dict[ast.AST, ast.AST]
-) -> str | None:
+def _enclosing_click_context_param(node: ast.AST, parent_map: dict[ast.AST, ast.AST]) -> str | None:
     """Return the Click-Context parameter name for the function enclosing
     ``node``, or None when no such function is found.
     """
@@ -745,9 +743,7 @@ def _library_typed_params(
     attributes are library API.
     """
     params: set[str] = set()
-    args = (
-        list(func.args.posonlyargs) + list(func.args.args) + list(func.args.kwonlyargs)
-    )
+    args = list(func.args.posonlyargs) + list(func.args.args) + list(func.args.kwonlyargs)
     for arg in args:
         if arg.annotation is None:
             continue
@@ -771,9 +767,7 @@ def _enclosing_library_typed_params(
     return set()
 
 
-def _top_level_library_bound_names(
-    tree: ast.Module, file_imports: set[str]
-) -> set[str]:
+def _top_level_library_bound_names(tree: ast.Module, file_imports: set[str]) -> set[str]:
     """Library-bound names defined at the module's top level (importable as
     ``from this_module import X``). Subset of _build_library_bound_names that
     ignores assignments inside functions/classes — those aren't re-exportable.
@@ -804,9 +798,7 @@ def _top_level_library_bound_names(
     return bound
 
 
-def _resolve_module_to_filepath(
-    module_name: str, all_trees: dict[Path, ast.Module]
-) -> Path | None:
+def _resolve_module_to_filepath(module_name: str, all_trees: dict[Path, ast.Module]) -> Path | None:
     """Map a dotted module name to a project filepath, if one exists.
 
     Matches by path suffix: ``pkg.subpkg.module`` looks for a path that ends
@@ -981,11 +973,12 @@ def _is_behavior_bearing_class(cls: ast.ClassDef) -> bool:
 
 def _collect_attr_to_classes(
     all_trees: dict[Path, ast.Module],
-) -> dict[str, list[ast.ClassDef]]:
-    """For each attribute name defined in project classes, the list of classes
-    that define it (via ``self.X = ...`` or class-level annotation)."""
-    result: dict[str, list[ast.ClassDef]] = defaultdict(list)
-    for tree in all_trees.values():
+) -> dict[str, list[tuple[str, ast.ClassDef]]]:
+    """For each attribute name defined in project classes, the list of
+    (file, class) pairs that define it (via ``self.X = ...`` or class-level
+    annotation)."""
+    result: dict[str, list[tuple[str, ast.ClassDef]]] = defaultdict(list)
+    for filepath, tree in all_trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
@@ -1001,7 +994,7 @@ def _collect_attr_to_classes(
                 elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
                     defines_here.add(item.target.id)
             for attr_name in defines_here:
-                result[attr_name].append(node)
+                result[attr_name].append((str(filepath), node))
     return result
 
 
@@ -1051,7 +1044,7 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
     attrs_all_classes_have_behavior: set[str] = {
         attr_name
         for attr_name, classes in attr_to_classes.items()
-        if classes and all(_is_behavior_bearing_class(c) for c in classes)
+        if classes and all(_is_behavior_bearing_class(c) for _, c in classes)
     }
 
     # Precompute per-file library-bound sets, then propagate re-exports
@@ -1064,15 +1057,15 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         fp_str = str(filepath)
         file_imports = imports_per_file.get(fp_str, set())
         library_bound_per_file[fp_str] = _build_library_bound_names(tree, file_imports)
-        top_level_bound_per_file[fp_str] = _top_level_library_bound_names(
-            tree, file_imports
-        )
-    _propagate_reexports(
-        ctx.all_trees, library_bound_per_file, top_level_bound_per_file
-    )
+        top_level_bound_per_file[fp_str] = _top_level_library_bound_names(tree, file_imports)
+    _propagate_reexports(ctx.all_trees, library_bound_per_file, top_level_bound_per_file)
 
     # Collect (var_name, attr_name) -> set of (file, line)
     accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
+    # (var_name, attr_name) -> files that WRITE the attribute. Scattered
+    # writes are the textbook shotgun-surgery shape (anemic model fields
+    # mutated from many call sites), so they're called out in the message.
+    write_files: dict[tuple[str, str], set[str]] = defaultdict(set)
 
     for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath):
@@ -1099,8 +1092,11 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):
                 continue
-            if not isinstance(node.ctx, ast.Load):
+            # Reads AND writes both count: a rename breaks either, and
+            # scattered writes to the same field are the stronger signal.
+            if not isinstance(node.ctx, (ast.Load, ast.Store)):
                 continue
+            is_write = isinstance(node.ctx, ast.Store)
             if not isinstance(node.value, ast.Name):
                 continue
 
@@ -1152,13 +1148,16 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             # Skip cosmetic reads — inside f-strings or as args to logging
             # methods. Renaming the attr doesn't break these; they're
             # display-only and weaker signal than reads driving logic.
-            if _is_cosmetic_read(node, parent_map):
+            # (Writes can't be cosmetic — the filter only applies to reads.)
+            if not is_write and _is_cosmetic_read(node, parent_map):
                 continue
             # Skip uppercase attr access (enum constants: Severity.HIGH)
             if attr_name[0].isupper():
                 continue
 
             key = (var_name, attr_name)
+            if is_write:
+                write_files[key].add(file_str)
             if key not in seen_in_file:
                 seen_in_file.add(key)
                 if file_str not in accesses[key]:
@@ -1173,14 +1172,30 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         if len(sorted_files) > 5:
             loc_strs.append("...")
 
+        # Anchor at the attribute's defining class when unambiguous, so the
+        # finding maps to the file a fix would start from — not whichever
+        # access site happens to sort first alphabetically.
+        defining = attr_to_classes.get(attr_name, [])
+        if len(defining) == 1:
+            def_file, def_class = defining[0]
+            anchor_file, anchor_line = def_file, def_class.lineno
+            defined_note = f" (defined on {def_class.name})"
+        else:
+            anchor_file, anchor_line = sorted_files[0]
+            defined_note = ""
+
+        n_write_files = len(write_files.get((var_name, attr_name), ()))
+        write_note = f", written from {n_write_files}" if n_write_files else ""
+
         findings.append(
             Finding(
-                file=sorted_files[0][0],
-                line=sorted_files[0][1],
+                file=anchor_file,
+                line=anchor_line,
                 check="shotgun-surgery",
                 message=(
-                    f"{var_name}.{attr_name} accessed in {len(file_lines)}"
-                    f" files ({', '.join(loc_strs)})"
+                    f"{var_name}.{attr_name}{defined_note} accessed in"
+                    f" {len(file_lines)} files{write_note}"
+                    f" ({', '.join(loc_strs)})"
                     f" — changes to .{attr_name} require updating many files"
                 ),
                 severity=Severity.MEDIUM,
