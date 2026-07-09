@@ -13,13 +13,14 @@ Target audience is AI-assisted code review (Claude Code), but output is useful f
 - `src/pysmelly/discovery.py` - File finding (git-aware), AST parsing
 - `src/pysmelly/output.py` - Text formatter, convergence hotspots section
 - `src/pysmelly/checks/callers.py` - Cross-file call-graph checks (unused-defaults, dead-code, single-call-site, internal-only, pass-through-params, vestigial-params, constant-args, return-none-instead-of-raise, inconsistent-error-handling, dict-as-dataclass)
-- `src/pysmelly/checks/patterns_data.py` - Data pattern checks (foo-equals-foo, constant-dispatch-dicts, trivial-wrappers, dead-constants)
+- `src/pysmelly/checks/patterns_data.py` - Data pattern checks (foo-equals-foo, constant-dispatch-dicts, trivial-wrappers, dead-constants, return-mutable-constant, reimplemented-stdlib, dict-key-typo)
 - `src/pysmelly/checks/patterns_control.py` - Control flow pattern checks (suspicious-fallbacks, exception-flow-control, unreachable-after-return)
-- `src/pysmelly/checks/patterns_naming.py` - Naming pattern checks (hungarian-notation, getattr-strings, plaintext-passwords, late-binding-closures)
+- `src/pysmelly/checks/patterns_naming.py` - Naming pattern checks (hungarian-notation, getattr-strings, plaintext-passwords, late-binding-closures, numbered-variables)
 - `src/pysmelly/checks/patterns_misc.py` - Remaining pattern checks (env-fallbacks, runtime-monkey-patch, boolean-param-explosion, arrow-code, isinstance-chain, inconsistent-returns, fossilized-toggles, temp-accumulators, law-of-demeter)
 - `src/pysmelly/checks/structure.py` - Structural checks (duplicate-blocks, duplicate-except-blocks, param-clumps, middle-man)
 - `src/pysmelly/checks/dead.py` - Dead code extension checks (dead-exceptions, dead-dispatch-entries, orphaned-test-helpers, dead-abstraction, broken-backends)
-- `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes, temporal-coupling, feature-envy, anemic-domain)
+- `src/pysmelly/checks/architecture.py` - Architectural checks (shared-mutable-module-state, write-only-attributes, write-only-globals, temporal-coupling, feature-envy, anemic-domain)
+- `src/pysmelly/checks/inheritance.py` - Inheritance checks (refused-bequest, deep-inheritance, mi-method-collision)
 - `src/pysmelly/checks/imports.py` - Import checks (compat-shims)
 - `src/pysmelly/checks/logging_smells.py` - Logging checks (secrets-in-logs, logging-config-hijack)
 - `src/pysmelly/checks/recommendations.py` - Stdlib alternatives check with TOML catalog

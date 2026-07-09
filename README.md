@@ -98,10 +98,15 @@ pysmelly git-history --ignore-reviewed
 | `runtime-monkey-patch` | Function assigned to attribute of external object at module scope. |
 | `fossilized-toggles` | UPPER_CASE boolean constants that make conditionals always-true/false (dead branches). |
 | `dead-constants` | UPPER_CASE module-level constants never referenced anywhere — e.g. event name constants nobody uses. |
-| `dead-abstraction` | ABCs with zero concrete implementations — speculative generality that never materialized. |
+| `dead-abstraction` | ABCs with zero concrete implementations (MEDIUM), or exactly one (LOW) — speculative generality or single-implementer indirection. |
 | `dead-dispatch-entries` | Dispatch dict entries whose key strings appear nowhere else in the codebase. |
 | `middle-man` | Classes where 75%+ of methods just delegate to a single wrapped object. |
-| `write-only-attributes` | `@dataclass` fields never read anywhere in the codebase — vestigial config accretion. |
+| `write-only-attributes` | `@dataclass` fields never read anywhere in the codebase — vestigial config accretion. `__all__`-exported classes are downgraded to LOW rather than suppressed. |
+| `write-only-globals` | Module-level containers mutated from functions but never read anywhere — dead bookkeeping. |
+| `refused-bequest` | Subclass whose inherited-method overrides are mostly `pass`/`raise NotImplementedError` — wrong base class; prefer composition. |
+| `duplicate-except-blocks` | Identical except handlers across files, or 3+ handlers in one `try` with identical bodies (collapse into a tuple). |
+| `return-mutable-constant` | Function returning a module-level dict/list/set by reference — callers mutate the shared constant. |
+| `dict-key-typo` | Subscript key that's written, never read, and edit-distance-1 from a defined dict key — silent-failure typo. |
 | `isinstance-chain` | Functions with 5+ `isinstance()` checks, or the same type-dispatch ladder repeated across 3+ functions — investigate for polymorphism or dispatch table. |
 | `logging-config-hijack` | `logging.basicConfig()` at import time in library modules, or unguarded `addHandler()` in function bodies. |
 | `boolean-param-explosion` | Functions with 4+ boolean parameters — accumulated flags suggesting decomposition. |
@@ -113,7 +118,7 @@ pysmelly git-history --ignore-reviewed
 | `broken-backends` | Non-abstract classes where every method raises `NotImplementedError` — missing ABC base or broken backend. |
 | `inconsistent-returns` | Functions returning 3+ distinct types across return paths — consider narrowing the return type. |
 | `getattr-strings` | `getattr(obj, 'literal')` without default or `hasattr(obj, 'literal')` — stringly-typed attribute access. |
-| `temporal-coupling` | Methods reading `self.x` only set by another non-`__init__` method — implicit call ordering. |
+| `temporal-coupling` | Methods reading `self.x` only set by another non-`__init__` method, methods dereferencing a `None`-initialized attribute unguarded, or a `None` module global set via `global` in one function and read unguarded in others — implicit call ordering. |
 | `feature-envy` | Methods accessing 3+ attributes of another parameter, more than `self` — logic belongs elsewhere. |
 | `anemic-domain` | Classes with 5+ `__init__` attributes but zero non-dunder methods — data bag with no behavior. |
 | `shotgun-surgery` | Same `obj.attr` read or written in 4+ files — changes to that attribute require updating many files. Anchored at the attribute's defining class when unambiguous. |
@@ -136,6 +141,10 @@ pysmelly git-history --ignore-reviewed
 | `arrow-code` | Functions with nesting depth 5+ (if/for/while/try/with pyramid) — consider extracting inner blocks. |
 | `hungarian-notation` | Variables like `strName`, `intCount`, `lstItems` — use snake_case instead. |
 | `law-of-demeter` | Attribute chains 4+ deep (`a.b.c.d`) — reaching through object internals. |
+| `numbered-variables` | A run of 4+ same-stem numbered names (`item1`…`item10`) — use a list or dict. |
+| `reimplemented-stdlib` | Loops that hand-roll `collections.Counter`, `defaultdict(list)`, or dict merge. |
+| `deep-inheritance` | In-codebase inheritance chain 5+ classes deep — the yo-yo problem. |
+| `mi-method-collision` | Multiple-inheritance class where 2+ incomparable bases define the same method and the subclass overrides none — MRO silently picks one. |
 
 ### Git history checks
 
