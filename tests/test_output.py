@@ -24,7 +24,7 @@ class TestConvergenceHotspots:
             _finding("other.py", "bug-magnet"),
         ]
         output = format_text(findings, total_files=2, context=None)
-        assert "=== convergence hotspots ===" in output
+        assert "=== convergence hotspots (1 file(s)) ===" in output
         assert "app.py: flagged by 3 checks" in output
 
     def test_convergence_appears_before_checks(self):

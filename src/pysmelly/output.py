@@ -135,7 +135,7 @@ def format_text(
         file_checks.setdefault(f.file, set()).add(f.check)
     hotspots = {f: checks for f, checks in file_checks.items() if len(checks) >= 3}
     if hotspots:
-        lines.append("=== convergence hotspots ===")
+        lines.append(f"=== convergence hotspots ({len(hotspots)} file(s)) ===")
         for filepath, checks in sorted(hotspots.items(), key=lambda x: -len(x[1])):
             check_list = ", ".join(sorted(checks))
             lines.append(f"  {filepath}: flagged by {len(checks)} checks ({check_list})")
