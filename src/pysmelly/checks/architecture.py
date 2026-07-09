@@ -343,6 +343,30 @@ def _collect_exported_names(all_trees: dict[Path, ast.Module]) -> set[str]:
     return names
 
 
+_SERIALIZE_ALL_FIELDS = frozenset({"asdict", "astuple", "vars"})
+
+
+def _class_serializes_self(node: ast.ClassDef) -> bool:
+    """True when the class calls asdict/astuple/vars on self — every
+    field is then read via serialization, not attribute access."""
+    for child in ast.walk(node):
+        if not (isinstance(child, ast.Call) and child.args):
+            continue
+        func = child.func
+        if isinstance(func, ast.Name):
+            func_name = func.id
+        elif isinstance(func, ast.Attribute):
+            func_name = func.attr
+        else:
+            continue
+        if func_name not in _SERIALIZE_ALL_FIELDS:
+            continue
+        arg = child.args[0]
+        if isinstance(arg, ast.Name) and arg.id == "self":
+            return True
+    return False
+
+
 def _collect_dataclass_fields(
     all_trees: dict[Path, ast.Module],
 ) -> list[dict]:
@@ -355,6 +379,8 @@ def _collect_dataclass_fields(
             if not isinstance(node, ast.ClassDef):
                 continue
             if not has_dataclass_decorator(node):
+                continue
+            if _class_serializes_self(node):
                 continue
             for item in node.body:
                 if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
@@ -395,8 +421,11 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
     async_max_connections or cache_compression persist long after the
     feature they configured was changed or dropped.
 
-    Classes listed in __all__ are considered public API — their fields
-    may be read by downstream consumers outside this codebase.
+    Classes listed in __all__ are public API — their fields may be read
+    by downstream consumers outside this codebase, so those findings are
+    downgraded to LOW rather than suppressed: a field nothing in the
+    defining repo reads is still worth an investigation, especially when
+    a whole config class accretes them.
     """
     findings = []
 
@@ -408,9 +437,13 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
     exported = _collect_exported_names(ctx.all_trees)
 
     for field in dc_fields:
-        if field["class_name"] in exported:
-            continue
         if field["field_name"] not in all_reads:
+            is_exported = field["class_name"] in exported
+            export_note = (
+                f" ({field['class_name']} is in __all__ — external readers possible)"
+                if is_exported
+                else ""
+            )
             findings.append(
                 Finding(
                     file=field["file"],
@@ -419,10 +452,116 @@ def check_write_only_attributes(ctx: AnalysisContext) -> list[Finding]:
                     message=(
                         f"{field['class_name']}.{field['field_name']} is never "
                         f"read anywhere in the codebase — vestigial field?"
+                        f"{export_note}"
                     ),
-                    severity=Severity.MEDIUM,
+                    severity=Severity.LOW if is_exported else Severity.MEDIUM,
                 )
             )
+
+    return findings
+
+
+# --- write-only-globals ---
+
+# Method calls that mutate a container without yielding a value worth
+# reading. pop/setdefault return values, so they count as reads.
+_CONTAINER_MUTATORS = frozenset(
+    {"append", "extend", "insert", "add", "update", "clear", "remove", "discard"}
+)
+
+
+@check(
+    "write-only-globals",
+    severity=Severity.MEDIUM,
+    description="Module-level containers that are mutated but never read",
+)
+def check_write_only_globals(ctx: AnalysisContext) -> list[Finding]:
+    """Find module-level mutable containers nothing ever reads.
+
+    An events list that functions append to (and maybe clear) but no
+    code iterates, returns, or inspects is dead bookkeeping — it costs
+    memory forever and misleads readers into thinking something consumes
+    it. The module analog of write-only-attributes.
+    """
+    findings = []
+
+    exported = _collect_exported_names(ctx.all_trees)
+
+    # Candidate containers per (file, name), skipping test files
+    candidates: dict[str, tuple[Path, int]] = {}
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not _is_mutable_value(node.value):
+                continue
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and not _is_dunder(target.id)
+                    and target.id not in exported
+                ):
+                    candidates[target.id] = (filepath, node.lineno)
+
+    if not candidates:
+        return findings
+
+    # Scan the entire codebase (tests included — a test reading the
+    # container is still a read) classifying every use by name.
+    func_mutations: dict[str, int] = defaultdict(int)
+    reads: set[str] = set()
+    for filepath, tree in ctx.all_trees.items():
+        parent_map = ctx.parent_map(tree)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Name) and node.id in candidates):
+                continue
+            if isinstance(node.ctx, ast.Store):
+                continue  # (re)assignment — neither read nor container op
+            parent = parent_map.get(node)
+            # X.append(...) — mutating method call
+            is_mutation = (
+                isinstance(parent, ast.Attribute)
+                and parent.value is node
+                and parent.attr in _CONTAINER_MUTATORS
+                and isinstance(parent_map.get(parent), ast.Call)
+            )
+            # X[k] = v / del X[k] — subscript store/delete
+            is_mutation = is_mutation or (
+                isinstance(parent, ast.Subscript)
+                and parent.value is node
+                and isinstance(parent.ctx, (ast.Store, ast.Del))
+            )
+            if not is_mutation:
+                reads.add(node.id)
+                continue
+            # Only function-scope mutations count: module-scope population
+            # of a never-read container is dead-constants territory.
+            current = parent_map.get(node)
+            while current is not None:
+                if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_mutations[node.id] += 1
+                    break
+                current = parent_map.get(current)
+
+    for name, count in sorted(func_mutations.items()):
+        if name in reads or count < 1:
+            continue
+        filepath, line = candidates[name]
+        findings.append(
+            Finding(
+                file=str(filepath),
+                line=line,
+                check="write-only-globals",
+                message=(
+                    f"{name} is mutated in {count} place(s) but never read"
+                    f" anywhere in the codebase — dead bookkeeping;"
+                    f" delete it or add the missing consumer"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
 
     return findings
 
@@ -504,18 +643,256 @@ def _is_test_case_class(node: ast.ClassDef) -> bool:
     return False
 
 
+def _collect_init_none_attrs(class_node: ast.ClassDef) -> set[str]:
+    """Attributes assigned exactly None in __init__."""
+    none_attrs: set[str] = set()
+    for item in class_node.body:
+        if not (isinstance(item, ast.FunctionDef) and item.name == "__init__"):
+            continue
+        for node in ast.walk(item):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is None
+            ):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"
+                    ):
+                        none_attrs.add(target.attr)
+    return none_attrs
+
+
+def _method_guards_attr(method: ast.FunctionDef | ast.AsyncFunctionDef, attr: str) -> bool:
+    """True when the method tests self.attr before using it — a None
+    comparison, or self.attr appearing bare (possibly negated) in an
+    if/while/assert test."""
+
+    def is_self_attr(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == attr
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        )
+
+    for node in ast.walk(method):
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            if any(is_self_attr(o) for o in operands) and any(
+                isinstance(o, ast.Constant) and o.value is None for o in operands
+            ):
+                return True
+        elif isinstance(node, (ast.If, ast.While, ast.Assert)):
+            test = node.test
+            if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+                test = test.operand
+            if is_self_attr(test):
+                return True
+            if isinstance(test, ast.BoolOp) and any(
+                is_self_attr(v)
+                or (
+                    isinstance(v, ast.UnaryOp)
+                    and isinstance(v.op, ast.Not)
+                    and is_self_attr(v.operand)
+                )
+                for v in test.values
+            ):
+                return True
+    return False
+
+
+def _is_dereference(node: ast.AST, parent_map: dict) -> bool:
+    """True when the node's value is immediately used — attribute access,
+    subscript, or call — so a None value would raise."""
+    parent = parent_map.get(node)
+    if isinstance(parent, ast.Attribute) and parent.value is node:
+        return True
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return True
+    return isinstance(parent, ast.Call) and parent.func is node
+
+
+def _none_init_deref_findings(
+    filepath: Path,
+    class_node: ast.ClassDef,
+    methods: list[ast.FunctionDef | ast.AsyncFunctionDef],
+    writes: dict[str, set[str]],
+    parent_map: dict,
+) -> list[Finding]:
+    """None-initialized attribute dereferenced unguarded in a method that
+    never sets it, while another method sets the real value.
+
+    ``self._x = None`` in __init__ passes the "set in __init__" test, but
+    a method doing ``self._x.items`` before the setter runs crashes —
+    the None assignment is a placeholder, not initialization. Private
+    attrs are NOT skipped here: the crash risk is identical and the
+    dereference evidence is strong.
+    """
+    findings = []
+    none_attrs = _collect_init_none_attrs(class_node)
+    if not none_attrs:
+        return findings
+
+    reported: set[tuple[str, str]] = set()
+    for method in methods:
+        if method.name == "__init__":
+            continue
+        method_writes = writes.get(method.name, set())
+        for node in ast.walk(method):
+            if not (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Load)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and node.attr in none_attrs
+            ):
+                continue
+            attr = node.attr
+            if (method.name, attr) in reported:
+                continue
+            if attr in method_writes:
+                continue
+            if not _is_dereference(node, parent_map):
+                continue
+            if _method_guards_attr(method, attr):
+                continue
+            setters = sorted(
+                m for m, w in writes.items() if attr in w and m not in {"__init__", method.name}
+            )
+            if not setters:
+                continue
+            reported.add((method.name, attr))
+            setter_str = ", ".join(f"{s}()" for s in setters)
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=node.lineno,
+                    check="temporal-coupling",
+                    message=(
+                        f"{class_node.name}.{method.name}() dereferences"
+                        f" self.{attr}, which __init__ only sets to None —"
+                        f" crashes unless {setter_str} runs first"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+    return findings
+
+
+def _func_none_guarded_names(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, candidates: set[str]
+) -> set[str]:
+    """Candidate names the function tests before use (None comparison or
+    bare truthiness in an if/while/assert test)."""
+    guarded: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            names = {o.id for o in operands if isinstance(o, ast.Name)}
+            if names & candidates and any(
+                isinstance(o, ast.Constant) and o.value is None for o in operands
+            ):
+                guarded |= names & candidates
+        elif isinstance(node, (ast.If, ast.While, ast.Assert)):
+            test = node.test
+            if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+                test = test.operand
+            if isinstance(test, ast.Name) and test.id in candidates:
+                guarded.add(test.id)
+    return guarded
+
+
+def _module_temporal_coupling_findings(filepath: Path, tree: ast.Module) -> list[Finding]:
+    """Module analog of temporal coupling: a None-initialized module
+    global reassigned via ``global`` in some function and read unguarded
+    in others — behavior depends on which function ran first."""
+    none_globals: dict[str, int] = {}
+    for node in ast.iter_child_nodes(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is None
+        ):
+            none_globals[node.targets[0].id] = node.lineno
+    if not none_globals:
+        return []
+
+    candidates = set(none_globals)
+    assigners: dict[str, list[str]] = defaultdict(list)
+    readers: dict[str, list[str]] = defaultdict(list)
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        declared: set[str] = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Global):
+                declared.update(node.names)
+        assigned: set[str] = set()
+        read: set[str] = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and node.id in candidates:
+                if isinstance(node.ctx, ast.Store) and node.id in declared:
+                    assigned.add(node.id)
+                elif isinstance(node.ctx, ast.Load):
+                    read.add(node.id)
+        guarded = _func_none_guarded_names(func, candidates)
+        for name in assigned:
+            assigners[name].append(func.name)
+        for name in read - assigned - guarded:
+            readers[name].append(func.name)
+
+    findings = []
+    for name, line in sorted(none_globals.items()):
+        if not assigners.get(name) or not readers.get(name):
+            continue
+        assigner_str = ", ".join(f"{m}()" for m in sorted(set(assigners[name]))[:3])
+        reader_list = sorted(set(readers[name]))
+        reader_str = ", ".join(f"{m}()" for m in reader_list[:4])
+        if len(reader_list) > 4:
+            reader_str += ", ..."
+        findings.append(
+            Finding(
+                file=str(filepath),
+                line=line,
+                check="temporal-coupling",
+                message=(
+                    f"module global {name} (initialized None) is set via"
+                    f" `global` in {assigner_str} and read unguarded in"
+                    f" {reader_str} — behavior depends on call order;"
+                    f" pass the value explicitly or encapsulate it"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
+    return findings
+
+
 @check(
     "temporal-coupling",
     severity=Severity.MEDIUM,
     description="Methods reading self.x only set by another non-__init__ method",
 )
 def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
-    """Find attributes that create temporal coupling between methods."""
+    """Find attributes that create temporal coupling between methods.
+
+    Three variants: methods reading a self attribute only ever set by
+    another non-__init__ method; methods dereferencing a None-initialized
+    attribute without a guard; and the module-scope analog — a
+    None-initialized module global set via ``global`` in one function
+    and read unguarded in others.
+    """
     findings = []
 
     for filepath, tree in ctx.all_trees.items():
         if is_test_file(filepath):
             continue
+
+        findings.extend(_module_temporal_coupling_findings(filepath, tree))
 
         for node in ast.iter_child_nodes(tree):
             if not isinstance(node, ast.ClassDef):
@@ -536,6 +913,10 @@ def check_temporal_coupling(ctx: AnalysisContext) -> list[Finding]:
 
             writes, reads = _collect_self_attr_ops(node)
             init_writes = writes.get("__init__", set())
+
+            findings.extend(
+                _none_init_deref_findings(filepath, node, methods, writes, ctx.parent_map(tree))
+            )
 
             # TestCase subclasses: setUp/setUpClass are framework-guaranteed
             # initialization — treat like __init__

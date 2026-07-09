@@ -6,6 +6,7 @@ from pysmelly.checks.architecture import (
     check_shared_mutable_module_state,
     check_temporal_coupling,
     check_write_only_attributes,
+    check_write_only_globals,
 )
 from pysmelly.registry import Severity
 
@@ -367,8 +368,26 @@ def use(c):
         assert len(findings) == 1
         assert "unused_field" in findings[0].message
 
-    def test_skips_class_in_dunder_all(self, trees):
-        """Classes listed in __all__ are public API — fields may be read externally."""
+    def test_asdict_serialized_class_skipped(self, trees):
+        """A dataclass that calls asdict(self) reads every field via
+        serialization — nothing is write-only."""
+        t = trees.code("""\
+from dataclasses import asdict, dataclass
+
+@dataclass
+class Manifest:
+    bucket: str = ""
+    snapshot_id: str = ""
+
+    def to_dict(self):
+        return asdict(self)
+""")
+        findings = check_write_only_attributes(t)
+        assert len(findings) == 0
+
+    def test_exported_class_downgraded_to_low(self, trees):
+        """Classes listed in __all__ are public API — still flagged, but
+        at LOW with the export noted rather than suppressed."""
         t = trees.files(
             {
                 "__init__.py": """\
@@ -389,7 +408,10 @@ def use_config(c):
             }
         )
         findings = check_write_only_attributes(t)
-        assert len(findings) == 0
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.LOW
+        assert "vestigial_field" in findings[0].message
+        assert "__all__" in findings[0].message
 
     def test_still_flags_class_not_in_dunder_all(self, trees):
         """Non-exported classes are still checked normally."""
@@ -418,6 +440,7 @@ def use(c):
         findings = check_write_only_attributes(t)
         assert len(findings) == 1
         assert "InternalState" in findings[0].message
+        assert findings[0].severity == Severity.MEDIUM
 
     def test_dunder_all_as_tuple(self, trees):
         """__all__ defined as a tuple should also work."""
@@ -436,7 +459,8 @@ class Config:
             }
         )
         findings = check_write_only_attributes(t)
-        assert len(findings) == 0
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.LOW
 
 
 class TestTemporalCoupling:
@@ -461,13 +485,81 @@ class Server:
         assert "connection" in messages
         assert "connect()" in messages
 
-    def test_ignores_init_set_attrs(self, trees):
+    def test_none_init_unguarded_deref_fires(self, trees):
+        """self.x = None in __init__ is a placeholder, not initialization:
+        methods dereferencing it unguarded before the setter runs crash."""
         t = trees.code("""\
 class Server:
     def __init__(self):
         self.connection = None
 
     def connect(self):
+        self.connection = make_conn()
+
+    def handle_request(self):
+        return self.connection.send("hello")
+
+    def close(self):
+        self.connection.close()
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 2
+        messages = " ".join(f.message for f in findings)
+        assert "only sets to None" in messages
+        assert "connect()" in messages
+
+    def test_none_init_guarded_deref_ok(self, trees):
+        """A None-guard before the dereference shows the coupling is
+        handled."""
+        t = trees.code("""\
+class Server:
+    def __init__(self):
+        self.connection = None
+
+    def connect(self):
+        self.connection = make_conn()
+
+    def handle_request(self):
+        if self.connection is None:
+            raise RuntimeError("not connected")
+        return self.connection.send("hello")
+
+    def close(self):
+        if not self.connection:
+            return
+        self.connection.close()
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_none_init_value_read_ok(self, trees):
+        """Plain value reads of a None-initialized attr (returns,
+        comparisons) don't crash — only dereferences fire."""
+        t = trees.code("""\
+class Server:
+    def __init__(self):
+        self.connection = None
+
+    def connect(self):
+        self.connection = make_conn()
+
+    def get_connection(self):
+        return self.connection
+
+    def is_connected(self):
+        return self.connection == "open"
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_init_set_to_real_value_ok(self, trees):
+        """Attributes initialized to a real value in __init__ are fine."""
+        t = trees.code("""\
+class Server:
+    def __init__(self):
+        self.connection = make_conn()
+
+    def reconnect(self):
         self.connection = make_conn()
 
     def handle_request(self):
@@ -603,6 +695,175 @@ class MyTests(TestCase):
 """)
         findings = check_temporal_coupling(t)
         assert not any("client" in f.message for f in findings)
+
+
+class TestModuleTemporalCoupling:
+    def test_global_set_in_one_func_read_in_others(self, trees):
+        t = trees.code("""\
+CURRENT_USER = None
+
+def login(name):
+    global CURRENT_USER
+    CURRENT_USER = name
+
+def get_orders():
+    return [o for o in ORDERS if o["user"] == CURRENT_USER]
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 1
+        assert "CURRENT_USER" in findings[0].message
+        assert "login()" in findings[0].message
+        assert "get_orders()" in findings[0].message
+
+    def test_lazy_init_getter_ok(self, trees):
+        """Assigner and reader are the same function — the standard
+        lazy-singleton getter."""
+        t = trees.code("""\
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = make_client()
+    return _client
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_guarded_reader_ok(self, trees):
+        t = trees.code("""\
+CURRENT_USER = None
+
+def login(name):
+    global CURRENT_USER
+    CURRENT_USER = name
+
+def get_orders():
+    if CURRENT_USER is None:
+        raise RuntimeError("not logged in")
+    return [o for o in ORDERS if o["user"] == CURRENT_USER]
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_non_none_init_ok(self, trees):
+        """Globals initialized to a real default aren't call-order traps."""
+        t = trees.code("""\
+CURRENT_LOCALE = "en_US"
+
+def set_locale(loc):
+    global CURRENT_LOCALE
+    CURRENT_LOCALE = loc
+
+def format_price(p):
+    return format_for(CURRENT_LOCALE, p)
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+    def test_never_assigned_via_global_ok(self, trees):
+        """A module constant that's only read is not temporal coupling."""
+        t = trees.code("""\
+DEFAULT_USER = None
+
+def get_user(u=None):
+    return u or DEFAULT_USER
+""")
+        findings = check_temporal_coupling(t)
+        assert len(findings) == 0
+
+
+class TestWriteOnlyGlobals:
+    def test_appended_never_read(self, trees):
+        t = trees.code("""\
+EVENTS_LIST = []
+
+def log_event(e):
+    EVENTS_LIST.append(e)
+
+def reset():
+    EVENTS_LIST.clear()
+""")
+        findings = check_write_only_globals(t)
+        assert len(findings) == 1
+        assert "EVENTS_LIST" in findings[0].message
+        assert "never read" in findings[0].message
+
+    def test_read_via_iteration_ok(self, trees):
+        t = trees.code("""\
+EVENTS_LIST = []
+
+def log_event(e):
+    EVENTS_LIST.append(e)
+
+def report():
+    return [e for e in EVENTS_LIST]
+""")
+        findings = check_write_only_globals(t)
+        assert len(findings) == 0
+
+    def test_read_in_other_file_ok(self, trees):
+        t = trees.files(
+            {
+                "state.py": """\
+EVENTS_LIST = []
+
+def log_event(e):
+    EVENTS_LIST.append(e)
+""",
+                "report.py": """\
+from state import EVENTS_LIST
+
+def report():
+    return len(EVENTS_LIST)
+""",
+            }
+        )
+        findings = check_write_only_globals(t)
+        assert len(findings) == 0
+
+    def test_subscript_writes_count_as_mutation(self, trees):
+        t = trees.code("""\
+METRICS = {}
+
+def record(key, value):
+    METRICS[key] = value
+""")
+        findings = check_write_only_globals(t)
+        assert len(findings) == 1
+        assert "METRICS" in findings[0].message
+
+    def test_subscript_read_ok(self, trees):
+        t = trees.code("""\
+METRICS = {}
+
+def record(key, value):
+    METRICS[key] = METRICS[key] + value
+""")
+        findings = check_write_only_globals(t)
+        assert len(findings) == 0
+
+    def test_module_scope_population_only_ok(self, trees):
+        """A registry populated at module scope and never mutated from a
+        function is dead-constants territory, not this check's."""
+        t = trees.code("""\
+REGISTRY = {}
+REGISTRY["a"] = 1
+REGISTRY["b"] = 2
+""")
+        findings = check_write_only_globals(t)
+        assert len(findings) == 0
+
+    def test_exported_name_ok(self, trees):
+        t = trees.code("""\
+__all__ = ["EVENTS_LIST"]
+EVENTS_LIST = []
+
+def log_event(e):
+    EVENTS_LIST.append(e)
+""")
+        findings = check_write_only_globals(t)
+        assert len(findings) == 0
 
 
 class TestFeatureEnvy:
