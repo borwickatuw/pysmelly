@@ -512,7 +512,7 @@ def check_write_only_globals(ctx: AnalysisContext) -> list[Finding]:
     # container is still a read) classifying every use by name.
     func_mutations: dict[str, int] = defaultdict(int)
     reads: set[str] = set()
-    for filepath, tree in ctx.all_trees.items():
+    for tree in ctx.all_trees.values():
         parent_map = ctx.parent_map(tree)
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Name) and node.id in candidates):
