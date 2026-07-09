@@ -709,6 +709,92 @@ def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
 
 # --- isinstance-chain ---
 
+# Builtin type names can't gain new members, so the "every new type means
+# editing every ladder" failure mode doesn't apply to ladders over them.
+_BUILTIN_TYPE_NAMES = frozenset(
+    {
+        "str",
+        "bytes",
+        "bytearray",
+        "int",
+        "float",
+        "complex",
+        "bool",
+        "list",
+        "tuple",
+        "dict",
+        "set",
+        "frozenset",
+        "type",
+        "object",
+        "NoneType",
+    }
+)
+
+
+def _is_type_name_expr(expr: ast.expr) -> bool:
+    """True for ``type(x).__name__`` or ``x.__class__.__name__``."""
+    if not (isinstance(expr, ast.Attribute) and expr.attr == "__name__"):
+        return False
+    inner = expr.value
+    if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "type":
+        return True
+    return isinstance(inner, ast.Attribute) and inner.attr == "__class__"
+
+
+def _function_dispatch_type_set(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> frozenset[str]:
+    """Type names a function dispatches on, in either spelling.
+
+    Counts bare-name isinstance() targets (``isinstance(x, Circle)``,
+    including tuple targets) and string comparisons against
+    ``type(x).__name__`` / ``x.__class__.__name__`` — including via a
+    variable bound from those expressions. Dotted targets like
+    ``ast.Call`` are deliberately excluded: ladders over another
+    library's node types are how visitors are written, not a missed
+    polymorphism opportunity in this codebase.
+    """
+    names: set[str] = set()
+
+    # Names bound from type(x).__name__ / x.__class__.__name__
+    type_name_vars: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assign) and _is_type_name_expr(child.value):
+            for target in child.targets:
+                if isinstance(target, ast.Name):
+                    type_name_vars.add(target.id)
+
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "isinstance"
+            and len(child.args) == 2
+        ):
+            type_arg = child.args[1]
+            elts = type_arg.elts if isinstance(type_arg, ast.Tuple) else [type_arg]
+            for elt in elts:
+                if isinstance(elt, ast.Name):
+                    names.add(elt.id)
+        elif (
+            isinstance(child, ast.Compare)
+            and len(child.ops) == 1
+            and isinstance(child.ops[0], (ast.Eq, ast.NotEq))
+        ):
+            for expr, other in (
+                (child.left, child.comparators[0]),
+                (child.comparators[0], child.left),
+            ):
+                if not (isinstance(other, ast.Constant) and isinstance(other.value, str)):
+                    continue
+                if _is_type_name_expr(expr) or (
+                    isinstance(expr, ast.Name) and expr.id in type_name_vars
+                ):
+                    names.add(other.value)
+
+    return frozenset(names)
+
 
 @check(
     "isinstance-chain",
@@ -716,14 +802,24 @@ def check_fossilized_toggles(ctx: AnalysisContext) -> list[Finding]:
     description="Function with many isinstance() checks suggesting missed polymorphism",
 )
 def check_isinstance_chain(ctx: AnalysisContext) -> list[Finding]:
-    """Find functions with 5+ isinstance() calls.
+    """Find isinstance ladders: long ones, and recurring ones.
 
-    Long isinstance chains often accumulate as code handles more types
-    over time. They suggest a missed opportunity for polymorphism,
-    a dispatch table, or functools.singledispatch.
+    Two forms, both suggesting a missed opportunity for polymorphism,
+    a dispatch table, or functools.singledispatch:
+
+    - A single function with 5+ isinstance() calls.
+    - The same type-set ladder repeated across 3+ functions (each below
+      the per-function threshold, but recurring — the "every new type
+      means editing every ladder" failure mode). Counts both
+      isinstance() ladders and string dispatch on
+      ``type(x).__name__`` / ``x.__class__.__name__``.
     """
     findings = []
     min_count = 5
+    min_recurrence = 3
+
+    # frozenset of type names -> list of (file, line, func_name)
+    ladder_sites: dict[frozenset[str], list[tuple[str, int, str]]] = {}
 
     for filepath, tree in ctx.all_trees.items():
         for node in ast.walk(tree):
@@ -750,6 +846,36 @@ def check_isinstance_chain(ctx: AnalysisContext) -> list[Finding]:
                         severity=Severity.MEDIUM,
                     )
                 )
+
+            type_set = _function_dispatch_type_set(node)
+            if len(type_set) >= 2 and not type_set <= _BUILTIN_TYPE_NAMES:
+                ladder_sites.setdefault(type_set, []).append(
+                    (str(filepath), node.lineno, node.name)
+                )
+
+    # Recurring ladders: same type-set dispatched on in 3+ functions
+    for type_set, sites in sorted(ladder_sites.items(), key=lambda kv: sorted(kv[0])):
+        if len(sites) < min_recurrence:
+            continue
+        type_list = ", ".join(sorted(type_set))
+        site_strs = [f"{name}() {file}:{line}" for file, line, name in sites[:6]]
+        if len(sites) > 6:
+            site_strs.append("...")
+        first_file, first_line, _ = sites[0]
+        findings.append(
+            Finding(
+                file=first_file,
+                line=first_line,
+                check="isinstance-chain",
+                message=(
+                    f"type dispatch on ({type_list}) repeated in"
+                    f" {len(sites)} functions ({', '.join(site_strs)})"
+                    f" — adding a type means editing every ladder;"
+                    f" consider polymorphism or singledispatch"
+                ),
+                severity=Severity.MEDIUM,
+            )
+        )
     return findings
 
 

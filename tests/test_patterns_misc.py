@@ -699,6 +699,115 @@ def flexible_add(a, b):
         assert len(findings) == 1
         assert "8 isinstance()" in findings[0].message
 
+    def test_recurring_ladder_across_three_functions(self, trees):
+        """Same project-type set in 3 functions fires even though each
+        ladder is below the per-function threshold."""
+        t = trees.code("""\
+class Circle: pass
+class Square: pass
+
+def area(shape):
+    if isinstance(shape, Circle): return 1
+    elif isinstance(shape, Square): return 2
+
+def perimeter(shape):
+    if isinstance(shape, Circle): return 3
+    elif isinstance(shape, Square): return 4
+
+def scale(shape):
+    if isinstance(shape, Circle): return 5
+    elif isinstance(shape, Square): return 6
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 1
+        msg = findings[0].message
+        assert "type dispatch on (Circle, Square)" in msg
+        assert "3 functions" in msg
+        assert "area()" in msg and "perimeter()" in msg and "scale()" in msg
+
+    def test_recurring_ladder_two_functions_no_finding(self, trees):
+        t = trees.code("""\
+class Circle: pass
+class Square: pass
+
+def area(shape):
+    if isinstance(shape, Circle): return 1
+    elif isinstance(shape, Square): return 2
+
+def perimeter(shape):
+    if isinstance(shape, Circle): return 3
+    elif isinstance(shape, Square): return 4
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 0
+
+    def test_recurring_builtin_only_ladder_no_finding(self, trees):
+        """Builtin type-sets can't gain members — no ladder-editing risk."""
+        t = trees.code("""\
+def f(x):
+    if isinstance(x, int): return 1
+    elif isinstance(x, str): return 2
+
+def g(x):
+    if isinstance(x, int): return 3
+    elif isinstance(x, str): return 4
+
+def h(x):
+    if isinstance(x, int): return 5
+    elif isinstance(x, str): return 6
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 0
+
+    def test_class_name_string_dispatch_counts(self, trees):
+        """Dispatch on __class__.__name__ strings joins the same type-set
+        as isinstance ladders over those classes."""
+        t = trees.code("""\
+class Circle: pass
+class Square: pass
+
+def area(shape):
+    if isinstance(shape, Circle): return 1
+    elif isinstance(shape, Square): return 2
+
+def perimeter(shape):
+    if isinstance(shape, Circle): return 3
+    elif isinstance(shape, Square): return 4
+
+def describe(shape):
+    kind = shape.__class__.__name__
+    if kind == "Circle":
+        return "circle"
+    elif kind == "Square":
+        return "square"
+    return "unknown"
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 1
+        assert "3 functions" in findings[0].message
+        assert "describe()" in findings[0].message
+
+    def test_dotted_type_ladders_not_aggregated(self, trees):
+        """isinstance over another library's types (ast.X) is how visitors
+        are written — not aggregated."""
+        t = trees.code("""\
+import ast
+
+def f(x):
+    if isinstance(x, ast.Call): return 1
+    elif isinstance(x, ast.Name): return 2
+
+def g(x):
+    if isinstance(x, ast.Call): return 3
+    elif isinstance(x, ast.Name): return 4
+
+def h(x):
+    if isinstance(x, ast.Call): return 5
+    elif isinstance(x, ast.Name): return 6
+""")
+        findings = check_isinstance_chain(t)
+        assert len(findings) == 0
+
 
 class TestBooleanParamExplosion:
     def test_finds_four_booleans(self, trees):
