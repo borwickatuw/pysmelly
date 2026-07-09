@@ -14,6 +14,7 @@ from pysmelly.checks.helpers import (
     get_param_names,
     is_constant_reassigned,
     is_in_dunder_all,
+    is_test_file,
     iter_uppercase_assigns,
 )
 from pysmelly.context import AnalysisContext
@@ -450,5 +451,290 @@ def check_dead_constants(ctx: AnalysisContext) -> list[Finding]:
                     severity=Severity.MEDIUM,
                 )
             )
+
+    return findings
+
+
+# --- return-mutable-constant ---
+
+
+def _collect_module_mutable_constants(tree: ast.Module) -> dict[str, int]:
+    """Module-level names bound to a mutable literal (dict/list/set).
+
+    Returns {name: lineno}. Only names assigned exactly once at module
+    scope are considered — a name reassigned elsewhere is less clearly a
+    shared constant.
+    """
+    assign_counts: dict[str, int] = {}
+    lines: dict[str, int] = {}
+    values: dict[str, ast.expr] = {}
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        assign_counts[target.id] = assign_counts.get(target.id, 0) + 1
+        lines[target.id] = node.lineno
+        values[target.id] = node.value
+    return {
+        name: lines[name]
+        for name, count in assign_counts.items()
+        if count == 1 and isinstance(values[name], (ast.Dict, ast.List, ast.Set))
+    }
+
+
+@check(
+    "return-mutable-constant",
+    severity=Severity.MEDIUM,
+    description="Function returns a module-level mutable constant by reference",
+)
+def check_return_mutable_constant(ctx: AnalysisContext) -> list[Finding]:
+    """Find functions that ``return`` a module-level mutable container directly.
+
+    ``return DEFAULT_CONFIG`` (a module dict/list/set) hands every caller
+    the same object: any caller that mutates the result mutates it for
+    everyone, and defaults quietly drift. Returning ``dict(DEFAULT_CONFIG)``,
+    ``DEFAULT_CONFIG.copy()``, or ``[*DEFAULT]`` is fine.
+    """
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+        mutable_consts = _collect_module_mutable_constants(tree)
+        if not mutable_consts:
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # A name reassigned inside the function is a local shadow, not
+            # the shared constant.
+            local_names = {
+                t.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Assign)
+                for t in n.targets
+                if isinstance(t, ast.Name)
+            }
+            for stmt in ast.walk(node):
+                if not (isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Name)):
+                    continue
+                name = stmt.value.id
+                if name in local_names:
+                    continue
+                if name not in mutable_consts:
+                    continue
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=stmt.lineno,
+                        check="return-mutable-constant",
+                        message=(
+                            f"{node.name}() returns module-level {name} by"
+                            f" reference — callers mutating the result mutate"
+                            f" the shared constant; return a copy"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
+
+    return findings
+
+
+# --- reimplemented-stdlib ---
+
+
+def _skip_leading_assigns(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Drop leading plain assignments (e.g. `key = key_func(item)`) so the
+    core dict-building shape can be matched regardless of a precomputed
+    key local."""
+    i = 0
+    while i < len(body) and isinstance(body[i], ast.Assign):
+        i += 1
+    return body[i:]
+
+
+def _is_counter_loop(node: ast.For) -> bool:
+    """Match `if k in d: d[k] = d[k] + 1 (or += 1) else: d[k] = 1` — Counter."""
+    body = _skip_leading_assigns(node.body)
+    if len(body) != 1 or not isinstance(body[0], ast.If):
+        return False
+    if_node = body[0]
+    if not (len(if_node.body) == 1 and len(if_node.orelse) == 1):
+        return False
+    # The test is `k in d` or `k not in d`
+    test = if_node.test
+    negated = isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)
+    if negated:
+        test = test.operand
+    if not (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.In, ast.NotIn))
+    ):
+        return False
+
+    inc_branch = if_node.orelse[0] if negated else if_node.body[0]
+    init_branch = if_node.body[0] if negated else if_node.orelse[0]
+
+    def is_increment(stmt: ast.stmt) -> bool:
+        if isinstance(stmt, ast.AugAssign) and isinstance(stmt.op, ast.Add):
+            return isinstance(stmt.target, ast.Subscript)
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Subscript)
+            and isinstance(stmt.value, ast.BinOp)
+            and isinstance(stmt.value.op, ast.Add)
+        ):
+            return True
+        return False
+
+    def is_init_one(stmt: ast.stmt) -> bool:
+        return (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Subscript)
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value == 1
+        )
+
+    return is_increment(inc_branch) and is_init_one(init_branch)
+
+
+def _is_setdefault_append_loop(node: ast.For) -> bool:
+    """Match `if k not in d: d[k] = []` then `d[k].append(...)` — defaultdict(list)."""
+    body = _skip_leading_assigns(node.body)
+    if not (2 <= len(body) <= 3):
+        return False
+    guard = body[0]
+    if not (isinstance(guard, ast.If) and len(guard.body) == 1 and not guard.orelse):
+        return False
+    test = guard.test
+    if not (isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)):
+        # allow `k not in d`
+        if not (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.NotIn)
+        ):
+            return False
+    init = guard.body[0]
+    if not (
+        isinstance(init, ast.Assign)
+        and isinstance(init.targets[0], ast.Subscript)
+        and isinstance(init.value, (ast.List, ast.Dict, ast.Set))
+    ):
+        return False
+    # Some later statement appends/updates the subscript
+    for stmt in body[1:]:
+        for sub in ast.walk(stmt):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr in {"append", "add", "extend"}
+                and isinstance(sub.func.value, ast.Subscript)
+            ):
+                return True
+    return False
+
+
+def _dict_initialized_names(tree: ast.Module) -> set[str]:
+    """Names ever assigned a dict literal / dict() / dict comprehension.
+
+    Used to distinguish `result.update(d)` (dict merge) from
+    `sha256.update(chunk)` (hashlib) and `some_set.update(items)` (set),
+    which share the ``.update()`` spelling but aren't dict merges.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        value = node.value
+        is_dict = isinstance(value, (ast.Dict, ast.DictComp)) or (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "dict"
+        )
+        if not is_dict:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
+def _is_dict_merge_loop(node: ast.For, dict_names: set[str]) -> bool:
+    """Match `for d in dicts: result.update(d)` where result is a dict and
+    each iterated element is merged in — dict union / {**a, **b}."""
+    if len(node.body) != 1 or not isinstance(node.target, ast.Name):
+        return False
+    stmt = node.body[0]
+    if not (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Attribute)
+        and stmt.value.func.attr == "update"
+        and len(stmt.value.args) == 1
+        and isinstance(stmt.value.args[0], ast.Name)
+        and isinstance(node.iter, ast.Name)
+    ):
+        return False
+    # The merged value must be the loop element itself, and the receiver
+    # must be a name known to hold a dict.
+    receiver = stmt.value.func.value
+    return (
+        stmt.value.args[0].id == node.target.id
+        and isinstance(receiver, ast.Name)
+        and receiver.id in dict_names
+    )
+
+
+@check(
+    "reimplemented-stdlib",
+    severity=Severity.LOW,
+    description="Loops that hand-roll collections.Counter/defaultdict/dict-merge",
+)
+def check_reimplemented_stdlib(ctx: AnalysisContext) -> list[Finding]:
+    """Find loops that reimplement a one-liner from the standard library.
+
+    A count-into-a-dict loop is ``collections.Counter``; an
+    if-not-in-then-append loop is ``collections.defaultdict(list)``; a
+    ``for d in dicts: result.update(d)`` loop is ``{**a, **b}`` / dict
+    union. The stdlib forms are clearer and less bug-prone.
+    """
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+        dict_names = _dict_initialized_names(tree)
+        checks = (
+            (_is_counter_loop, "collections.Counter"),
+            (_is_setdefault_append_loop, "collections.defaultdict(list)"),
+            (
+                lambda n, dn=dict_names: _is_dict_merge_loop(n, dn),
+                "dict unpacking `{**a, **b}` or `|`",
+            ),
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.For):
+                continue
+            for predicate, suggestion in checks:
+                if predicate(node):
+                    findings.append(
+                        Finding(
+                            file=str(filepath),
+                            line=node.lineno,
+                            check="reimplemented-stdlib",
+                            message=(
+                                f"loop reimplements {suggestion} — use the stdlib form instead"
+                            ),
+                            severity=Severity.LOW,
+                        )
+                    )
+                    break
 
     return findings

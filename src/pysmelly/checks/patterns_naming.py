@@ -394,3 +394,107 @@ def check_late_binding_closures(ctx: AnalysisContext) -> list[Finding]:
                         )
 
     return findings
+
+
+# --- numbered-variables ---
+
+_NUMBERED_NAME_RE = re.compile(r"^([A-Za-z_][A-Za-z_]*?)(\d+)$")
+
+
+def _collect_numbered_series(
+    assignments: list[tuple[str, int]],
+) -> dict[str, list[int]]:
+    """Group assigned names of the form <stem><int> by stem.
+
+    Returns {stem: [numbers...]} for stems with 4+ distinct numbers where
+    the numbers form a run starting at 0 or 1 (item1..item10, not
+    utf8/sha256/x509 one-offs).
+    """
+    by_stem: dict[str, set[int]] = {}
+    for name, _lineno in assignments:
+        m = _NUMBERED_NAME_RE.match(name)
+        if not m:
+            continue
+        stem, num = m.group(1), int(m.group(2))
+        # Require the stem to end in a letter (skip "v1"/"h2" style) and be
+        # more than one char, so single-letter + digit names don't trip it.
+        if len(stem) < 2 or stem.endswith("_"):
+            continue
+        by_stem.setdefault(stem, set()).add(num)
+
+    series: dict[str, list[int]] = {}
+    for stem, nums in by_stem.items():
+        if len(nums) < 4:
+            continue
+        low = min(nums)
+        if low not in {0, 1}:
+            continue
+        # The numbers should be mostly contiguous (a real series), not
+        # scattered like account_2024, account_2025.
+        span = max(nums) - low + 1
+        if len(nums) >= span * 0.7:
+            series[stem] = sorted(nums)
+    return series
+
+
+@check(
+    "numbered-variables",
+    severity=Severity.LOW,
+    description="Series of variables like item1, item2, ... that should be a list",
+)
+def check_numbered_variables(ctx: AnalysisContext) -> list[Finding]:
+    """Find runs of numbered variables (``item1``…``item10``).
+
+    A series of same-stem, sequentially-numbered names is a list or dict
+    spelled out by hand: every operation over them is copy-pasted, and
+    adding an element means editing every site. Checks module scope and
+    each function body separately.
+    """
+    findings = []
+
+    for filepath, tree in ctx.all_trees.items():
+        if is_test_file(filepath):
+            continue
+
+        # Scopes: module top level, plus each function body.
+        scopes: list[tuple[str, list[tuple[str, int]]]] = []
+
+        module_assigns: list[tuple[str, int]] = []
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        module_assigns.append((target.id, node.lineno))
+        scopes.append(("module scope", module_assigns))
+
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            func_assigns: list[tuple[str, int]] = []
+            for node in ast.walk(func):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            func_assigns.append((target.id, node.lineno))
+            scopes.append((f"{func.name}()", func_assigns))
+
+        for scope_name, assignments in scopes:
+            if not assignments:
+                continue
+            first_line = {name: line for name, line in reversed(assignments)}
+            for stem, nums in _collect_numbered_series(assignments).items():
+                anchor = min(first_line[f"{stem}{n}"] for n in nums if f"{stem}{n}" in first_line)
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=anchor,
+                        check="numbered-variables",
+                        message=(
+                            f"{stem}1..{stem}{max(nums)} ({len(nums)} numbered"
+                            f" variables in {scope_name}) — use a list or dict"
+                        ),
+                        severity=Severity.LOW,
+                    )
+                )
+
+    return findings

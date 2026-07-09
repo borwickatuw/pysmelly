@@ -4,8 +4,83 @@ from pysmelly.checks.patterns_naming import (
     check_getattr_strings,
     check_hungarian_notation,
     check_late_binding_closures,
+    check_numbered_variables,
     check_plaintext_passwords,
 )
+
+
+class TestNumberedVariables:
+    def test_finds_module_series(self, trees):
+        t = trees.code("""\
+item1 = "apple"
+item2 = "banana"
+item3 = "cherry"
+item4 = "date"
+item5 = "elderberry"
+""")
+        findings = check_numbered_variables(t)
+        assert len(findings) == 1
+        assert "item1..item5" in findings[0].message
+        assert "module scope" in findings[0].message
+
+    def test_finds_function_series(self, trees):
+        t = trees.code("""\
+def build():
+    row1 = get(1)
+    row2 = get(2)
+    row3 = get(3)
+    row4 = get(4)
+    return [row1, row2, row3, row4]
+""")
+        findings = check_numbered_variables(t)
+        assert len(findings) == 1
+        assert "build()" in findings[0].message
+
+    def test_three_not_enough(self, trees):
+        t = trees.code("""\
+item1 = "a"
+item2 = "b"
+item3 = "c"
+""")
+        findings = check_numbered_variables(t)
+        assert len(findings) == 0
+
+    def test_non_contiguous_not_flagged(self, trees):
+        """Scattered years (account_2024...) aren't a hand-rolled list."""
+        t = trees.code("""\
+account2019 = "a"
+account2020 = "b"
+account2024 = "c"
+account2030 = "d"
+""")
+        findings = check_numbered_variables(t)
+        assert len(findings) == 0
+
+    def test_series_not_starting_at_zero_or_one(self, trees):
+        t = trees.code("""\
+http500 = "a"
+http501 = "b"
+http502 = "c"
+http503 = "d"
+""")
+        findings = check_numbered_variables(t)
+        assert len(findings) == 0
+
+    def test_separate_stems_counted_separately(self, trees):
+        t = trees.code("""\
+item1 = "a"
+item2 = "b"
+item3 = "c"
+item4 = "d"
+price1 = 1.0
+price2 = 2.0
+price3 = 3.0
+price4 = 4.0
+""")
+        findings = check_numbered_variables(t)
+        assert len(findings) == 2
+        stems = sorted(f.message.split("..")[0].split()[-1] for f in findings)
+        assert stems == ["item1", "price1"]
 
 
 class TestHungarianNotation:

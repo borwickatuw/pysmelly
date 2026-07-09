@@ -4,8 +4,174 @@ from pysmelly.checks.patterns_data import (
     check_constant_dispatch_dicts,
     check_dead_constants,
     check_foo_equals_foo,
+    check_reimplemented_stdlib,
+    check_return_mutable_constant,
     check_trivial_wrappers,
 )
+
+
+class TestReturnMutableConstant:
+    def test_returns_module_dict_by_reference(self, trees):
+        t = trees.code("""\
+DEFAULT_CONFIG = {"host": "localhost", "items": []}
+
+def get_config():
+    return DEFAULT_CONFIG
+""")
+        findings = check_return_mutable_constant(t)
+        assert len(findings) == 1
+        assert "DEFAULT_CONFIG" in findings[0].message
+
+    def test_returns_module_list(self, trees):
+        t = trees.code("""\
+DEFAULTS = [1, 2, 3]
+
+def get_defaults():
+    return DEFAULTS
+""")
+        findings = check_return_mutable_constant(t)
+        assert len(findings) == 1
+
+    def test_returns_copy_ok(self, trees):
+        t = trees.code("""\
+DEFAULT_CONFIG = {"host": "localhost"}
+
+def get_config():
+    return dict(DEFAULT_CONFIG)
+""")
+        findings = check_return_mutable_constant(t)
+        assert len(findings) == 0
+
+    def test_immutable_constant_ok(self, trees):
+        t = trees.code("""\
+DEFAULT_NAME = "localhost"
+
+def get_name():
+    return DEFAULT_NAME
+""")
+        findings = check_return_mutable_constant(t)
+        assert len(findings) == 0
+
+    def test_local_shadow_ok(self, trees):
+        """A local var reassigned in the function isn't the shared constant."""
+        t = trees.code("""\
+CONFIG = {"a": 1}
+
+def build():
+    CONFIG = {"a": 1, "b": 2}
+    return CONFIG
+""")
+        findings = check_return_mutable_constant(t)
+        assert len(findings) == 0
+
+    def test_reassigned_module_var_ok(self, trees):
+        """A module name assigned more than once is not a clear constant."""
+        t = trees.code("""\
+CACHE = {}
+CACHE = load()
+
+def get_cache():
+    return CACHE
+""")
+        findings = check_return_mutable_constant(t)
+        assert len(findings) == 0
+
+
+class TestReimplementedStdlib:
+    def test_counter_loop(self, trees):
+        t = trees.code("""\
+def count_by(items, key_func):
+    counts = {}
+    for item in items:
+        key = key_func(item)
+        if key in counts:
+            counts[key] = counts[key] + 1
+        else:
+            counts[key] = 1
+    return counts
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 1
+        assert "Counter" in findings[0].message
+
+    def test_counter_augassign(self, trees):
+        t = trees.code("""\
+def tally(items):
+    counts = {}
+    for x in items:
+        if x in counts:
+            counts[x] += 1
+        else:
+            counts[x] = 1
+    return counts
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 1
+        assert "Counter" in findings[0].message
+
+    def test_setdefault_append_loop(self, trees):
+        t = trees.code("""\
+def group_by(items, key_func):
+    groups = {}
+    for item in items:
+        key = key_func(item)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(item)
+    return groups
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 1
+        assert "defaultdict" in findings[0].message
+
+    def test_dict_merge_loop(self, trees):
+        t = trees.code("""\
+def merge_dicts(*dicts):
+    result = {}
+    for d in dicts:
+        result.update(d)
+    return result
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 1
+        assert "unpacking" in findings[0].message
+
+    def test_hashlib_update_not_flagged(self, trees):
+        """sha256.update(chunk) shares the .update() spelling but the
+        receiver isn't a dict."""
+        t = trees.code("""\
+import hashlib
+
+def hash_chunks(chunks):
+    sha256 = hashlib.sha256()
+    for chunk in chunks:
+        sha256.update(chunk)
+    return sha256.hexdigest()
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 0
+
+    def test_set_update_not_flagged(self, trees):
+        t = trees.code("""\
+def collect(groups):
+    names = set()
+    for _, members in groups:
+        names.update(members)
+    return names
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 0
+
+    def test_plain_accumulation_ok(self, trees):
+        t = trees.code("""\
+def total(items):
+    result = 0
+    for item in items:
+        result += item
+    return result
+""")
+        findings = check_reimplemented_stdlib(t)
+        assert len(findings) == 0
 
 
 class TestFooEqualsFoo:
