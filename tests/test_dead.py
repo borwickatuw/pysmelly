@@ -645,7 +645,9 @@ class BasePlugin(ABC):
         assert "BasePlugin" in findings[0].message
         assert "2 abstract method(s)" in findings[0].message
 
-    def test_no_finding_when_subclassed(self, trees):
+    def test_single_implementation_fires_low(self, trees):
+        """An ABC with exactly one implementer is indirection without
+        polymorphism — flagged at LOW."""
         t = trees.code("""\
 from abc import ABC, abstractmethod
 
@@ -659,9 +661,31 @@ class ConcreteHandler(BaseHandler):
         return data
 """)
         findings = check_dead_abstractions(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.LOW
+        assert "exactly one implementation (ConcreteHandler)" in findings[0].message
+
+    def test_no_finding_with_two_implementations(self, trees):
+        t = trees.code("""\
+from abc import ABC, abstractmethod
+
+class BaseHandler(ABC):
+    @abstractmethod
+    def handle(self, data):
+        pass
+
+class JsonHandler(BaseHandler):
+    def handle(self, data):
+        return data
+
+class XmlHandler(BaseHandler):
+    def handle(self, data):
+        return data
+""")
+        findings = check_dead_abstractions(t)
         assert len(findings) == 0
 
-    def test_no_finding_when_subclassed_cross_file(self, trees):
+    def test_single_impl_cross_file_fires_low(self, trees):
         t = trees.files(
             {
                 "base.py": """\
@@ -681,6 +705,28 @@ class MyService(BaseService):
 """,
             }
         )
+        findings = check_dead_abstractions(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.LOW
+        assert "MyService" in findings[0].message
+
+    def test_single_impl_exported_abc_ok(self, trees):
+        """An ABC in __all__ is a published extension point — external
+        implementers are expected."""
+        t = trees.code("""\
+from abc import ABC, abstractmethod
+
+__all__ = ["BaseHandler"]
+
+class BaseHandler(ABC):
+    @abstractmethod
+    def handle(self, data):
+        pass
+
+class ConcreteHandler(BaseHandler):
+    def handle(self, data):
+        return data
+""")
         findings = check_dead_abstractions(t)
         assert len(findings) == 0
 

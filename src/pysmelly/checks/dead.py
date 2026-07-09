@@ -335,6 +335,22 @@ def _count_abstract_methods(node: ast.ClassDef) -> int:
     return count
 
 
+def _collect_subclasses(class_name: str, all_trees: dict[Path, ast.Module]) -> list[ast.ClassDef]:
+    """All classes anywhere that list class_name as a base."""
+    subclasses = []
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name == class_name:
+                continue
+            for base in node.bases:
+                if (isinstance(base, ast.Name) and base.id == class_name) or (
+                    isinstance(base, ast.Attribute) and base.attr == class_name
+                ):
+                    subclasses.append(node)
+                    break
+    return subclasses
+
+
 @check(
     "dead-abstraction",
     severity=Severity.MEDIUM,
@@ -346,6 +362,11 @@ def check_dead_abstractions(ctx: AnalysisContext) -> list[Finding]:
     ABCs are created 'for extensibility' that never materializes. The plugin
     system ships, nobody writes plugins, the ABC lives on as a monument to
     speculative generality.
+
+    An ABC with exactly one concrete implementation is the same smell one
+    notch earlier — an interface with a single implementer is indirection
+    without polymorphism — reported at LOW since a second implementation
+    may be genuinely planned (or live outside the repo).
     """
     findings = []
 
@@ -357,6 +378,26 @@ def check_dead_abstractions(ctx: AnalysisContext) -> list[Finding]:
                 continue
 
             if is_subclassed(node.name, ctx.all_trees):
+                if is_in_dunder_all(node.name, tree):
+                    continue
+                subclasses = _collect_subclasses(node.name, ctx.all_trees)
+                concrete = [s for s in subclasses if not _is_abstract_class(s)]
+                if len(subclasses) == 1 and len(concrete) == 1:
+                    findings.append(
+                        Finding(
+                            file=str(filepath),
+                            line=node.lineno,
+                            check="dead-abstraction",
+                            message=(
+                                f"{node.name} (ABC) has exactly one"
+                                f" implementation ({concrete[0].name}) —"
+                                f" a single-implementer interface is"
+                                f" indirection without polymorphism;"
+                                f" consider collapsing"
+                            ),
+                            severity=Severity.LOW,
+                        )
+                    )
                 continue
             if is_in_dunder_all(node.name, tree):
                 continue
