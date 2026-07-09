@@ -3,11 +3,109 @@
 from pysmelly.checks.patterns_data import (
     check_constant_dispatch_dicts,
     check_dead_constants,
+    check_dict_key_typo,
     check_foo_equals_foo,
     check_reimplemented_stdlib,
     check_return_mutable_constant,
     check_trivial_wrappers,
 )
+
+
+class TestDictKeyTypo:
+    def test_finds_typo_of_defined_key(self, trees):
+        t = trees.code("""\
+def create_user(name):
+    return {"name": name, "active": True, "role": "member"}
+
+def deactivate(user):
+    user["actve"] = False
+    return user
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 1
+        assert "actve" in findings[0].message
+        assert "active" in findings[0].message
+
+    def test_case_variant_not_flagged(self, trees):
+        """HTTP-header-style case differences are intentional."""
+        t = trees.code("""\
+def defaults():
+    return {"location": "/", "status": 200}
+
+def set_header(resp):
+    resp["Location"] = "/new"
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 0
+
+    def test_plural_not_flagged(self, trees):
+        t = trees.code("""\
+def schema():
+    return {"subject": "", "title": ""}
+
+def build(doc):
+    doc["subjects"] = []
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 0
+
+    def test_separator_variant_not_flagged(self, trees):
+        t = trees.code("""\
+def headers():
+    return {"Content-Type": "application/json"}
+
+def s3_params(p):
+    p["ContentType"] = "application/json"
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 0
+
+    def test_read_key_not_flagged(self, trees):
+        """A key that's read somewhere is a real key, not a typo."""
+        t = trees.code("""\
+def schema():
+    return {"active": True}
+
+def toggle(user):
+    user["actve"] = not user["actve"]
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 0
+
+    def test_new_field_without_neighbor_not_flagged(self, trees):
+        """A runtime-added field with no near-neighbor is not a typo."""
+        t = trees.code("""\
+def schema():
+    return {"total": 0, "status": "pending"}
+
+def apply(order):
+    order["discount_applied"] = 10
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 0
+
+    def test_short_keys_not_flagged(self, trees):
+        t = trees.code("""\
+def schema():
+    return {"abc": 1}
+
+def mutate(d):
+    d["abd"] = 2
+""")
+        findings = check_dict_key_typo(t)
+        assert len(findings) == 0
+
+
+def test_edit_distance_helper():
+    from pysmelly.checks.patterns_data import _within_edit_distance_1
+
+    assert _within_edit_distance_1("actve", "active")  # deletion
+    assert _within_edit_distance_1("cat", "car")  # substitution
+    assert _within_edit_distance_1("cat", "cats")  # insertion
+    assert not _within_edit_distance_1("actiev", "active")  # transposition = 2
+    assert not _within_edit_distance_1("cat", "cat")
+    assert not _within_edit_distance_1("cat", "dog")
+    assert not _within_edit_distance_1("cat", "cattle")
 
 
 class TestReturnMutableConstant:

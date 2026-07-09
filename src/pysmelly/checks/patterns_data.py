@@ -738,3 +738,151 @@ def check_reimplemented_stdlib(ctx: AnalysisContext) -> list[Finding]:
                     break
 
     return findings
+
+
+# --- dict-key-typo ---
+
+
+def _within_edit_distance_1(a: str, b: str) -> bool:
+    """True if a and b differ by exactly one insertion, deletion, or
+    substitution (edit distance exactly 1 — identical strings return False)."""
+    if a == b:
+        return False
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        # Exactly one substitution
+        diffs = sum(1 for x, y in zip(a, b, strict=True) if x != y)
+        return diffs == 1
+    # One insertion/deletion: the shorter is the longer with one char removed
+    shorter, longer = (a, b) if la < lb else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(shorter) and j < len(longer):
+        if shorter[i] == longer[j]:
+            i += 1
+            j += 1
+        elif skipped:
+            return False
+        else:
+            skipped = True
+            j += 1
+    return True
+
+
+def _is_deliberate_key_variant(a: str, b: str) -> bool:
+    """True when two edit-distance-1 keys differ in a way that signals two
+    intentional keys rather than a typo: case only (Location/location),
+    singular/plural (subject/subjects), or separator/case style
+    (ContentType/Content-Type). These dominate the false positives."""
+    if a.lower() == b.lower():
+        return True
+    if a + "s" == b or b + "s" == a:
+        return True
+
+    def norm(s: str) -> str:
+        return s.replace("-", "").replace("_", "").lower()
+
+    return norm(a) == norm(b)
+
+
+def _collect_dict_literal_keys(all_trees: dict[Path, ast.Module]) -> set[str]:
+    """String keys defined in dict literals anywhere — the 'known shapes'."""
+    keys: set[str] = set()
+    for tree in all_trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                for k in node.keys:
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        keys.add(k.value)
+    return keys
+
+
+def _collect_subscript_string_keys(
+    tree: ast.Module,
+) -> tuple[list[tuple[str, int]], set[str]]:
+    """Return (writes, reads) of string subscript keys in one tree.
+
+    writes: [(key, lineno), ...] for Store-context subscripts.
+    reads: {key, ...} for Load-context subscripts.
+    """
+    writes: list[tuple[str, int]] = []
+    reads: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Subscript):
+            continue
+        sl = node.slice
+        if not (isinstance(sl, ast.Constant) and isinstance(sl.value, str)):
+            continue
+        if isinstance(node.ctx, ast.Store):
+            writes.append((sl.value, node.lineno))
+        elif isinstance(node.ctx, ast.Load):
+            reads.add(sl.value)
+    return writes, reads
+
+
+@check(
+    "dict-key-typo",
+    severity=Severity.MEDIUM,
+    description="Subscript key that looks like a typo of a defined dict key",
+)
+def check_dict_key_typo(ctx: AnalysisContext) -> list[Finding]:
+    """Find dict-key writes that look like typos of a known key.
+
+    ``user["actve"] = False`` when the shape defines ``"active"`` is a
+    silent bug: the write lands in a new key nobody reads, and the real
+    field never changes. Flags a string key written via subscript that
+    (a) never appears in any dict literal, (b) is never read anywhere,
+    and (c) is edit-distance-1 from a key that IS defined in a dict
+    literal. All keys involved are 4+ chars to avoid short-key noise.
+    """
+    findings = []
+
+    literal_keys = _collect_dict_literal_keys(ctx.all_trees)
+    long_literal_keys = {k for k in literal_keys if len(k) >= 4}
+    if not long_literal_keys:
+        return findings
+
+    # Global read set — a key read in any file is a real key, not a typo.
+    all_reads: set[str] = set()
+    per_file: dict[Path, list[tuple[str, int]]] = {}
+    for filepath, tree in ctx.all_trees.items():
+        writes, reads = _collect_subscript_string_keys(tree)
+        all_reads |= reads
+        if not is_test_file(filepath):
+            per_file[filepath] = writes
+
+    reported: set[tuple[str, str, int]] = set()
+    for filepath, writes in per_file.items():
+        for key, lineno in writes:
+            if len(key) < 4:
+                continue
+            if key in literal_keys or key in all_reads:
+                continue
+            neighbors = sorted(
+                t
+                for t in long_literal_keys
+                if _within_edit_distance_1(key, t) and not _is_deliberate_key_variant(key, t)
+            )
+            if not neighbors:
+                continue
+            dedup_key = (str(filepath), key, lineno)
+            if dedup_key in reported:
+                continue
+            reported.add(dedup_key)
+            findings.append(
+                Finding(
+                    file=str(filepath),
+                    line=lineno,
+                    check="dict-key-typo",
+                    message=(
+                        f'key "{key}" is written but never read, and looks'
+                        f' like a typo of defined key "{neighbors[0]}"'
+                        f" — silent-failure bug?"
+                    ),
+                    severity=Severity.MEDIUM,
+                )
+            )
+
+    return findings
