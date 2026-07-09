@@ -271,8 +271,43 @@ def check_duplicate_except_blocks(ctx: AnalysisContext) -> list[Finding]:
 
     Higher confidence than duplicate-blocks: matches exception type,
     structure, AND string literals together.
+
+    Also flags the same-try form: one try statement with 3+ handlers
+    whose bodies are identical ("pokemon handling") — those collapse
+    into a single ``except (A, B, C):`` handler.
     """
     findings = []
+
+    # Same-try pass: identical handler bodies within one try statement
+    for filepath, tree in ctx.all_trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try) or len(node.handlers) < 3:
+                continue
+            by_body: dict[str, list[ast.ExceptHandler]] = defaultdict(list)
+            for handler in node.handlers:
+                wrapper = ast.Module(body=handler.body, type_ignores=[])
+                by_body[_normalize_ast(wrapper)].append(handler)
+            for group in by_body.values():
+                if len(group) < 3:
+                    continue
+                type_names = [_get_exception_type_name(h) for h in group]
+                shown = ", ".join(type_names[:5])
+                if len(type_names) > 5:
+                    shown += ", ..."
+                findings.append(
+                    Finding(
+                        file=str(filepath),
+                        line=group[0].lineno,
+                        check="duplicate-except-blocks",
+                        message=(
+                            f"{len(group)} except handlers in one try have"
+                            f" identical bodies ({shown}) — collapse into"
+                            f" a single `except (...)` tuple handler, or"
+                            f" reconsider catching this many types"
+                        ),
+                        severity=Severity.MEDIUM,
+                    )
+                )
 
     all_handlers: list[dict] = []
     for filepath, tree in ctx.all_trees.items():

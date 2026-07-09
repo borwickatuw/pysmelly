@@ -149,6 +149,57 @@ def ensure_partition(parent, snapshot_date):
 
 
 class TestDuplicateExceptBlocks:
+    def test_same_try_identical_handlers(self, trees):
+        """Pokemon handling: many handlers, one body — collapse to a tuple."""
+        t = trees.code("""\
+def process(x):
+    try:
+        return compute(x)
+    except ValueError:
+        return None
+    except TypeError:
+        return None
+    except KeyError:
+        return None
+    except OSError:
+        return None
+""")
+        findings = check_duplicate_except_blocks(t)
+        assert len(findings) == 1
+        assert "4 except handlers" in findings[0].message
+        assert "identical bodies" in findings[0].message
+        assert "ValueError" in findings[0].message
+
+    def test_same_try_two_identical_handlers_ok(self, trees):
+        t = trees.code("""\
+def process(x):
+    try:
+        return compute(x)
+    except ValueError:
+        return None
+    except TypeError:
+        return None
+""")
+        findings = check_duplicate_except_blocks(t)
+        assert len(findings) == 0
+
+    def test_same_try_different_bodies_ok(self, trees):
+        t = trees.code("""\
+def process(x):
+    try:
+        return compute(x)
+    except ValueError:
+        return None
+    except TypeError:
+        return 0
+    except KeyError:
+        raise
+    except OSError:
+        return retry(x)
+""")
+        findings = check_duplicate_except_blocks(t)
+        assert len(findings) == 0
+
     def test_cross_file_duplicate_with_same_messages(self, trees):
         t = trees.files(
             {
