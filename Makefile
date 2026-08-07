@@ -51,12 +51,24 @@ security-bandit: ## Run bandit security linter
 
 .PHONY: security-deps
 security-deps: ## Check dependency vulnerabilities
-	@uv run pip-audit
+	@uv audit
+
+.PHONY: security-updates
+security-updates: ## CVE scan + outdated package report
+	@echo "=== CVE + adverse-status scan ==="
+	@uv audit
+	@echo ""
+	@echo "=== Outdated packages ==="
+	@uv pip list --outdated
 
 .PHONY: security-secrets
 security-secrets: ## Scan for hardcoded secrets
-	@uv tool run detect-secrets scan --baseline .secrets.baseline 2>/dev/null || \
-		uv tool run detect-secrets scan > .secrets.baseline
+	@if [ -f .secrets.baseline ]; then \
+		uv tool run detect-secrets scan --baseline .secrets.baseline; \
+	else \
+		echo "Creating initial secrets baseline..."; \
+		uv tool run detect-secrets scan > .secrets.baseline; \
+	fi
 
 # =============================================================================
 # Documentation
