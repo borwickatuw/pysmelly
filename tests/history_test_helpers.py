@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import ast
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from pysmelly.context import AnalysisContext
 from pysmelly.git_history import CommitInfo, FileStats, GitHistory, TimeSlice
 
-_NOW = datetime.now(timezone.utc)
+_NOW = datetime.now(UTC)
 _RECENT = _NOW - timedelta(days=30)  # 1 month ago
 _STALE = _NOW - timedelta(days=400)  # ~13 months ago
 

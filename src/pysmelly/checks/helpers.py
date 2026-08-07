@@ -332,14 +332,14 @@ def build_reference_indices(all_trees: dict[Path, ast.Module]) -> ReferenceIndic
     )
 
 
-def is_imported_elsewhere(func_name: str, def_file: str, ctx: "AnalysisContext") -> bool:
+def is_imported_elsewhere(func_name: str, def_file: str, ctx: AnalysisContext) -> bool:
     """Check if a function is imported in any other file (O(1) via cached index)."""
     importing_files = ctx.import_index.get(func_name, set())
     return bool(importing_files - {def_file})
 
 
 def is_imported_in_production_elsewhere(
-    func_name: str, def_file: str, ctx: "AnalysisContext"
+    func_name: str, def_file: str, ctx: AnalysisContext
 ) -> bool:
     """Check if a function is imported by a *non-test* file other than its own.
 
@@ -351,12 +351,12 @@ def is_imported_in_production_elsewhere(
     return any(not is_test_file(Path(f)) for f in importing_files)
 
 
-def is_referenced_as_dotted_string(func_name: str, ctx: "AnalysisContext") -> bool:
+def is_referenced_as_dotted_string(func_name: str, ctx: AnalysisContext) -> bool:
     """Check if a function name appears as the final component of a dotted-path string."""
     return func_name in ctx.dotted_string_suffixes
 
 
-def is_used_as_decorator(func_name: str, ctx: "AnalysisContext") -> bool:
+def is_used_as_decorator(func_name: str, ctx: AnalysisContext) -> bool:
     """Check if a function name is used as a decorator anywhere."""
     return func_name in ctx.decorator_names
 
@@ -374,7 +374,7 @@ def _is_name_or_attr(node: ast.expr, name: str) -> bool:
     return False
 
 
-def is_referenced_as_value(func_name: str, ctx: "AnalysisContext") -> bool:
+def is_referenced_as_value(func_name: str, ctx: AnalysisContext) -> bool:
     """Check if a function name appears as a dict value, list element, or argument.
 
     O(1) via cached index.
@@ -382,7 +382,7 @@ def is_referenced_as_value(func_name: str, ctx: "AnalysisContext") -> bool:
     return bool(ctx.value_references.get(func_name))
 
 
-def is_referenced_as_value_in_production(func_name: str, ctx: "AnalysisContext") -> bool:
+def is_referenced_as_value_in_production(func_name: str, ctx: AnalysisContext) -> bool:
     """Check if a function name is referenced as a value in any *non-test* file.
 
     Production dispatch tables (e.g. ``CATEGORY_LENS = {"key": my_func, ...}``)
