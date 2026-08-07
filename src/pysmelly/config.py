@@ -44,7 +44,7 @@ def _find_config_file(target_dir: Path) -> Path | None:
     pyproject = target_dir / "pyproject.toml"
     if pyproject.is_file():
         try:
-            data = tomllib.loads(pyproject.read_text())
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError:
             return None
         if "tool" in data and "pysmelly" in data["tool"]:
@@ -160,7 +160,7 @@ def load_config(target_dir: Path, valid_check_names: set[str]) -> dict:
         return {}
 
     try:
-        data = tomllib.loads(config_file.read_text())
+        data = tomllib.loads(config_file.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
         print(f"Error: {config_file}: {e}", file=sys.stderr)
         sys.exit(1)

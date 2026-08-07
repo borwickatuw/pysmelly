@@ -128,7 +128,7 @@ def _check_guidance_status() -> str | None:
             "act on findings."
         )
     try:
-        content = guidance_path.read_text()
+        content = guidance_path.read_text(encoding="utf-8")
     except OSError:
         return None
     valid_hashes = {
@@ -254,7 +254,7 @@ def _apply_suppression(findings: list[Finding], base: Path) -> list[Finding]:
     files_with_findings = {f.file for f in findings}
     for file_rel in files_with_findings:
         with contextlib.suppress(OSError):
-            source_lines[file_rel] = (base / file_rel).read_text().splitlines()
+            source_lines[file_rel] = (base / file_rel).read_text(encoding="utf-8").splitlines()
     return [f for f in findings if not _is_suppressed(f, source_lines)]
 
 

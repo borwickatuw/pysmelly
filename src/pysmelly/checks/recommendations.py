@@ -14,7 +14,7 @@ from pysmelly.registry import Finding, Severity, check
 def _load_catalog() -> list[dict]:
     """Load the pattern catalog from the shipped TOML file."""
     catalog_path = files("pysmelly").joinpath("catalog.toml")
-    data = tomllib.loads(catalog_path.read_text())
+    data = tomllib.loads(catalog_path.read_text(encoding="utf-8"))
     return data["patterns"]
 
 
