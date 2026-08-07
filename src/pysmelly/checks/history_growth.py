@@ -9,7 +9,7 @@ from pysmelly.checks.history_helpers import (
     MIN_LINES_MEDIUM,
     churned_files,
     get_line_count,
-    history_time_slices,
+    has_time_slices,
     is_bulk_commit,
     is_test_file,
     slices_since_review,
@@ -120,10 +120,10 @@ def check_churn_without_growth(ctx: AnalysisContext) -> list[Finding]:
     description="Files whose change frequency is increasing over time",
 )
 def check_hotspot_acceleration(ctx: AnalysisContext) -> list[Finding]:
-    result = history_time_slices(ctx, min_slices=4)
-    if result is None:
+    history = ctx.git_history
+    if not has_time_slices(history, min_slices=4):
         return []
-    history, slices = result
+    slices = history.time_slices
 
     findings: list[Finding] = []
 

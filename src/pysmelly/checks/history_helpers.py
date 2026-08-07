@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
+from pysmelly.checks.helpers import MAJORITY
 from pysmelly.git_history import CommitInfo, FileStats, GitHistory, TimeSlice
 
 if TYPE_CHECKING:
     from pysmelly.context import AnalysisContext
 
-_MIN_MESSAGE_QUALITY = 0.5
 _BULK_COMMIT_THRESHOLD = 30
 
 # Files that are naturally stable and shouldn't be flagged
@@ -48,13 +48,9 @@ def get_line_count(file_path: str, all_trees: dict) -> int:
     return tree.body[-1].end_lineno
 
 
-def semantic_guard(history: GitHistory | None) -> GitHistory | None:
-    """Return the history object if semantic checks should run, else None."""
-    if history is None:
-        return None
-    if history.message_quality < _MIN_MESSAGE_QUALITY:
-        return None
-    return history
+def has_semantic_history(history: GitHistory | None) -> TypeGuard[GitHistory]:
+    """Whether history exists with commit messages good enough for semantic checks."""
+    return history is not None and history.message_quality >= MAJORITY
 
 
 def slices_since_review(
@@ -77,36 +73,22 @@ def is_expected_coupling(file_a: str, file_b: str, patterns: list[list[str]]) ->
     return False
 
 
-def coupling_ratio(
-    counts: dict[str, int], file_a: str, file_b: str, co_changes: int, threshold: float
-) -> float | None:
-    """Compute coupling ratio and return it if above threshold, else None.
+def coupling_ratio(counts: dict[str, int], file_a: str, file_b: str, co_changes: int) -> float:
+    """Ratio of co-changes to the less-changed file's commit count.
 
-    Returns co_changes / min(count_a, count_b) when both counts are non-zero
-    and the ratio meets or exceeds *threshold*.
+    Returns co_changes / min(count_a, count_b), or 0.0 when either file has
+    no counted commits (no coupling is measurable). Callers compare against
+    their own threshold.
     """
-    count_a = counts.get(file_a, 0)
-    count_b = counts.get(file_b, 0)
-    min_count = min(count_a, count_b)
+    min_count = min(counts.get(file_a, 0), counts.get(file_b, 0))
     if min_count == 0:
-        return None
-    ratio = co_changes / min_count
-    if ratio < threshold:
-        return None
-    return ratio
+        return 0.0
+    return co_changes / min_count
 
 
-def history_time_slices(
-    ctx: AnalysisContext, min_slices: int
-) -> tuple[GitHistory, list[TimeSlice]] | None:
-    """Return (history, slices) if enough time slices exist, else None."""
-    history = ctx.git_history
-    if history is None:
-        return None
-    slices = history.time_slices
-    if len(slices) < min_slices:
-        return None
-    return history, slices
+def has_time_slices(history: GitHistory | None, min_slices: int) -> TypeGuard[GitHistory]:
+    """Whether history exists with at least *min_slices* time slices."""
+    return history is not None and len(history.time_slices) >= min_slices
 
 
 def churned_files(

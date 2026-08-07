@@ -19,7 +19,7 @@ from pysmelly.checks.history_helpers import (
     is_bulk_commit,
     is_expected_coupling,
     is_test_file,
-    semantic_guard,
+    has_semantic_history,
 )
 from pysmelly.context import AnalysisContext
 from pysmelly.git_history import classify_commit
@@ -316,8 +316,8 @@ def check_change_coupling(ctx: AnalysisContext) -> list[Finding]:
         if a_is_test != b_is_test:
             continue
 
-        ratio = coupling_ratio(file_commit_counts, file_a, file_b, co_changes, threshold=0.7)
-        if ratio is None:
+        ratio = coupling_ratio(file_commit_counts, file_a, file_b, co_changes)
+        if ratio < 0.7:
             continue
 
         # Check import relationship
@@ -398,8 +398,8 @@ def check_yo_yo_code(ctx: AnalysisContext) -> list[Finding]:
     description="Commits that explicitly acknowledge technical debt",
 )
 def check_conscious_debt(ctx: AnalysisContext) -> list[Finding]:
-    history = semantic_guard(ctx.git_history)
-    if history is None:
+    history = ctx.git_history
+    if not has_semantic_history(history):
         return []
 
     analyzed_files = {str(p) for p in ctx.all_trees}
@@ -506,8 +506,8 @@ def check_emergency_hotspots(ctx: AnalysisContext) -> list[Finding]:
     description="Files with heavy fix/feature activity but zero refactoring",
 )
 def check_no_refactoring(ctx: AnalysisContext) -> list[Finding]:
-    history = semantic_guard(ctx.git_history)
-    if history is None:
+    history = ctx.git_history
+    if not has_semantic_history(history):
         return []
 
     findings: list[Finding] = []

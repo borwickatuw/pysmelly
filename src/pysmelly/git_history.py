@@ -162,8 +162,11 @@ def _is_quality_message(message: str) -> bool:
     return message.strip().lower() not in low_quality
 
 
+# CommitInfo is the core git-history record — the history checks exist to read
+# its fields, so cross-file reads of .files are the design, not scattered
+# coupling. re-evaluate-by: 2026-11
 @dataclass
-class CommitInfo:
+class CommitInfo:  # pysmelly: ignore[shotgun-surgery]
     """A single commit with its metadata and affected files."""
 
     hash: str

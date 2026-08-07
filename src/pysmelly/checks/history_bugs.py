@@ -5,15 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from pysmelly.checks.framework import is_migration_file
+from pysmelly.checks.helpers import MAJORITY
 from pysmelly.checks.history_helpers import (
     CATEGORY,
     COCHANGE_SKIP_THRESHOLD,
     coupling_ratio,
-    history_time_slices,
+    has_time_slices,
     is_bulk_commit,
     is_expected_coupling,
     is_test_file,
-    semantic_guard,
+    has_semantic_history,
     slices_since_review,
 )
 from pysmelly.context import AnalysisContext
@@ -28,8 +29,8 @@ from pysmelly.registry import Finding, Severity, check
     description="Files where a majority of commits are fixes — recurring problems",
 )
 def check_bug_magnet(ctx: AnalysisContext) -> list[Finding]:
-    history = semantic_guard(ctx.git_history)
-    if history is None:
+    history = ctx.git_history
+    if not has_semantic_history(history):
         return []
 
     findings: list[Finding] = []
@@ -46,7 +47,7 @@ def check_bug_magnet(ctx: AnalysisContext) -> list[Finding]:
 
         fix_count = sum(1 for c in commits if "fix" in classify_commit(c.message))
         fix_ratio = fix_count / len(commits)
-        if fix_ratio < 0.5:
+        if fix_ratio < MAJORITY:
             continue
 
         pct = int(fix_ratio * 100)
@@ -74,8 +75,8 @@ def check_bug_magnet(ctx: AnalysisContext) -> list[Finding]:
     description="Files that co-change in fix commits — fixing one tends to break the other",
 )
 def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
-    history = semantic_guard(ctx.git_history)
-    if history is None:
+    history = ctx.git_history
+    if not has_semantic_history(history):
         return []
 
     analyzed_files = {str(p) for p in ctx.all_trees}
@@ -118,8 +119,8 @@ def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
         if is_test_file(file_a) != is_test_file(file_b):
             continue
 
-        ratio = coupling_ratio(file_fix_counts, file_a, file_b, co_fixes, threshold=0.6)
-        if ratio is None:
+        ratio = coupling_ratio(file_fix_counts, file_a, file_b, co_fixes)
+        if ratio < 0.6:
             continue
 
         if is_expected_coupling(file_a, file_b, ctx.expected_coupling):
@@ -153,8 +154,8 @@ def check_fix_propagation(ctx: AnalysisContext) -> list[Finding]:
     description="Features that reliably produce fix commits shortly after",
 )
 def check_fix_follows_feature(ctx: AnalysisContext) -> list[Finding]:
-    history = semantic_guard(ctx.git_history)
-    if history is None:
+    history = ctx.git_history
+    if not has_semantic_history(history):
         return []
     if history.is_coarse_grained:
         return []
@@ -212,10 +213,10 @@ def check_fix_follows_feature(ctx: AnalysisContext) -> list[Finding]:
     description="Files that repeatedly burst with activity, go quiet, then burst again",
 )
 def check_stabilization_failure(ctx: AnalysisContext) -> list[Finding]:
-    result = history_time_slices(ctx, min_slices=6)
-    if result is None:
+    history = ctx.git_history
+    if not has_time_slices(history, min_slices=6):
         return []
-    history, slices = result
+    slices = history.time_slices
 
     findings: list[Finding] = []
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from collections import defaultdict
 from pathlib import Path
+from typing import NamedTuple
 
 from pysmelly.checks.framework import is_migration_file
 from pysmelly.checks.helpers import is_click_callback_signature, is_test_file
@@ -609,13 +610,17 @@ def _build_library_bound_names(tree: ast.Module, file_imports: set[str]) -> set[
     Fixed-point iteration handles chained calls of arbitrary depth (in
     practice 2-3).
     """
+    assigns = [node for node in ast.walk(tree) if isinstance(node, ast.Assign)]
+    return _library_bound_fixed_point(assigns, file_imports)
+
+
+def _library_bound_fixed_point(assigns: list[ast.Assign], file_imports: set[str]) -> set[str]:
+    """Fixed-point propagation of library-boundness over assignment statements."""
     bound: set[str] = set()
     changed = True
     while changed:
         changed = False
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
-                continue
+        for node in assigns:
             if not isinstance(node.value, ast.Call):
                 continue
             callee = node.value.func
@@ -772,30 +777,8 @@ def _top_level_library_bound_names(tree: ast.Module, file_imports: set[str]) -> 
     ``from this_module import X``). Subset of _build_library_bound_names that
     ignores assignments inside functions/classes — those aren't re-exportable.
     """
-    bound: set[str] = set()
-    changed = True
-    while changed:
-        changed = False
-        for stmt in tree.body:
-            if not isinstance(stmt, ast.Assign):
-                continue
-            if not isinstance(stmt.value, ast.Call):
-                continue
-            callee = stmt.value.func
-            ref_name: str | None = None
-            if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
-                ref_name = callee.value.id
-            elif isinstance(callee, ast.Name):
-                ref_name = callee.id
-            if ref_name is None:
-                continue
-            if ref_name not in file_imports and ref_name not in bound:
-                continue
-            for target in stmt.targets:
-                if isinstance(target, ast.Name) and target.id not in bound:
-                    bound.add(target.id)
-                    changed = True
-    return bound
+    assigns = [stmt for stmt in tree.body if isinstance(stmt, ast.Assign)]
+    return _library_bound_fixed_point(assigns, file_imports)
 
 
 def _resolve_module_to_filepath(module_name: str, all_trees: dict[Path, ast.Module]) -> Path | None:
@@ -1024,28 +1007,32 @@ def _collect_project_defined_attrs(all_trees: dict[Path, ast.Module]) -> set[str
     return attrs
 
 
-@check(
-    "shotgun-surgery",
-    severity=Severity.MEDIUM,
-    description="Same obj.attr accessed in 4+ files — change propagation risk",
-)
-def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
-    """Find attribute accesses repeated across many files."""
-    findings = []
-    min_files = 4
+class _ShotgunIndices(NamedTuple):
+    """Cross-file indices built once per run for shotgun-surgery."""
 
-    # Only flag attributes defined in the project, not framework/stdlib APIs
-    project_attrs = _collect_project_defined_attrs(ctx.all_trees)
+    project_attrs: set[str]
+    imports_per_file: dict[str, set[str]]
+    attr_to_classes: dict[str, list[tuple[str, ast.ClassDef]]]
+    attrs_all_behavior: set[str]
+    library_bound_per_file: dict[str, set[str]]
+
+
+class _FileFilters(NamedTuple):
+    """Per-file state consulted when deciding whether an attribute access counts."""
+
+    file_imports: set[str]
+    library_bound: set[str]
+    parents: dict[ast.AST, ast.AST]
+    library_typed_by_func_id: dict[int, set[str]]
+
+
+def _shotgun_indices(ctx: AnalysisContext) -> _ShotgunIndices:
+    """Build the cross-file indices the access filter consults."""
     imports_per_file = _build_imports_per_file(ctx.all_trees)
 
     # For the behavior-bearing-class downweighter: which classes define each
     # attr, and which of those classes are behavior-bearing.
     attr_to_classes = _collect_attr_to_classes(ctx.all_trees)
-    attrs_all_classes_have_behavior: set[str] = {
-        attr_name
-        for attr_name, classes in attr_to_classes.items()
-        if classes and all(_is_behavior_bearing_class(c) for _, c in classes)
-    }
 
     # Precompute per-file library-bound sets, then propagate re-exports
     # (`from project_logging import log` where project_logging.log was bound
@@ -1060,11 +1047,93 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         top_level_bound_per_file[fp_str] = _top_level_library_bound_names(tree, file_imports)
     _propagate_reexports(ctx.all_trees, library_bound_per_file, top_level_bound_per_file)
 
-    # Collect (var_name, attr_name) -> set of (file, line)
+    return _ShotgunIndices(
+        # Only flag attributes defined in the project, not framework/stdlib APIs
+        project_attrs=_collect_project_defined_attrs(ctx.all_trees),
+        imports_per_file=imports_per_file,
+        attr_to_classes=attr_to_classes,
+        attrs_all_behavior={
+            attr_name
+            for attr_name, classes in attr_to_classes.items()
+            if classes and all(_is_behavior_bearing_class(c) for _, c in classes)
+        },
+        library_bound_per_file=library_bound_per_file,
+    )
+
+
+def _is_counted_access(
+    node: ast.Attribute, idx: _ShotgunIndices, filters: _FileFilters, *, is_write: bool
+) -> bool:
+    """Whether an ``obj.attr`` access counts toward shotgun-surgery."""
+    if not isinstance(node.value, ast.Name):
+        return False
+    var_name = node.value.id
+    attr_name = node.attr
+
+    # Skip self/cls
+    if var_name in {"self", "cls"}:
+        return False
+    # Skip private attrs
+    if attr_name.startswith("_"):
+        return False
+    # Skip common/framework attrs (stable APIs like .pk, .save, .user)
+    if attr_name in COMMON_ATTRS:
+        return False
+    # Only flag attributes defined in project classes
+    if attr_name not in idx.project_attrs:
+        return False
+    # Skip when the receiver is a name imported in this file —
+    # `boto3.client`, `click.group`, etc. are library API, not user
+    # attribute reads we could propagate a refactor through.
+    if var_name in filters.file_imports:
+        return False
+    # Skip when the receiver was bound from an imported library call
+    # like `log = logging.getLogger(...)` or `m = re.match(...)`.
+    if var_name in filters.library_bound:
+        return False
+    # Skip Click Context parameters inside Click callbacks or
+    # @click.pass_context functions — `ctx.invoke`, `ctx.obj`, etc.
+    # are Click API, not user attribute reads.
+    click_ctx = _enclosing_click_context_param(node, filters.parents)
+    if click_ctx == var_name:
+        return False
+    # Skip parameters whose type annotation references a library
+    # import — `def helper(ctx: click.Context)` or `def handle(resp:
+    # requests.Response)`. The parameter is a library object by
+    # contract, even if this helper isn't itself decorated.
+    typed_params = _enclosing_library_typed_params(
+        node, filters.parents, filters.library_typed_by_func_id
+    )
+    if var_name in typed_params:
+        return False
+    # Skip when every class defining this attr is behavior-bearing —
+    # the read is object-graph traversal through a value object that
+    # has real methods, not the anemic-dataclass shape this check is
+    # looking for.
+    if attr_name in idx.attrs_all_behavior:
+        return False
+    # Skip cosmetic reads — inside f-strings or as args to logging
+    # methods. Renaming the attr doesn't break these; they're
+    # display-only and weaker signal than reads driving logic.
+    # (Writes can't be cosmetic — the filter only applies to reads.)
+    if not is_write and _is_cosmetic_read(node, filters.parents):
+        return False
+    # Skip uppercase attr access (enum constants: Severity.HIGH)
+    return not attr_name[0].isupper()
+
+
+def _collect_shotgun_accesses(
+    ctx: AnalysisContext, idx: _ShotgunIndices
+) -> tuple[dict[tuple[str, str], dict[str, int]], dict[tuple[str, str], set[str]]]:
+    """Collect counted attribute accesses and the files that write each attr.
+
+    Returns (accesses, write_files): accesses maps (var_name, attr_name) to
+    {file: first line}; write_files maps the same key to the files that WRITE
+    the attribute. Scattered writes are the textbook shotgun-surgery shape
+    (anemic model fields mutated from many call sites), so they're called out
+    in the message.
+    """
     accesses: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
-    # (var_name, attr_name) -> files that WRITE the attribute. Scattered
-    # writes are the textbook shotgun-surgery shape (anemic model fields
-    # mutated from many call sites), so they're called out in the message.
     write_files: dict[tuple[str, str], set[str]] = defaultdict(set)
 
     for filepath, tree in ctx.all_trees.items():
@@ -1072,9 +1141,7 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         file_str = str(filepath)
-        file_imports = imports_per_file.get(file_str, set())
-        library_bound = library_bound_per_file.get(file_str, set())
-        parent_map = ctx.parent_map(tree)
+        file_imports = idx.imports_per_file.get(file_str, set())
 
         # Per-function map of parameter names whose type annotation is a
         # library type (e.g. `ctx: click.Context`, `resp: requests.Response`).
@@ -1085,6 +1152,13 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
                 typed = _library_typed_params(func_node, file_imports)
                 if typed:
                     library_typed_by_func_id[id(func_node)] = typed
+
+        filters = _FileFilters(
+            file_imports=file_imports,
+            library_bound=idx.library_bound_per_file.get(file_str, set()),
+            parents=ctx.parent_map(tree),
+            library_typed_by_func_id=library_typed_by_func_id,
+        )
 
         # Track per-file to dedup
         seen_in_file: set[tuple[str, str]] = set()
@@ -1097,71 +1171,30 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
             if not isinstance(node.ctx, (ast.Load, ast.Store)):
                 continue
             is_write = isinstance(node.ctx, ast.Store)
-            if not isinstance(node.value, ast.Name):
+            if not isinstance(node.value, ast.Name) or not _is_counted_access(
+                node, idx, filters, is_write=is_write
+            ):
                 continue
 
-            var_name = node.value.id
-            attr_name = node.attr
-
-            # Skip self/cls
-            if var_name in {"self", "cls"}:
-                continue
-            # Skip private attrs
-            if attr_name.startswith("_"):
-                continue
-            # Skip common/framework attrs (stable APIs like .pk, .save, .user)
-            if attr_name in COMMON_ATTRS:
-                continue
-            # Only flag attributes defined in project classes
-            if attr_name not in project_attrs:
-                continue
-            # Skip when the receiver is a name imported in this file —
-            # `boto3.client`, `click.group`, etc. are library API, not user
-            # attribute reads we could propagate a refactor through.
-            if var_name in file_imports:
-                continue
-            # Skip when the receiver was bound from an imported library call
-            # like `log = logging.getLogger(...)` or `m = re.match(...)`.
-            if var_name in library_bound:
-                continue
-            # Skip Click Context parameters inside Click callbacks or
-            # @click.pass_context functions — `ctx.invoke`, `ctx.obj`, etc.
-            # are Click API, not user attribute reads.
-            click_ctx = _enclosing_click_context_param(node, parent_map)
-            if click_ctx == var_name:
-                continue
-            # Skip parameters whose type annotation references a library
-            # import — `def helper(ctx: click.Context)` or `def handle(resp:
-            # requests.Response)`. The parameter is a library object by
-            # contract, even if this helper isn't itself decorated.
-            typed_params = _enclosing_library_typed_params(
-                node, parent_map, library_typed_by_func_id
-            )
-            if var_name in typed_params:
-                continue
-            # Skip when every class defining this attr is behavior-bearing —
-            # the read is object-graph traversal through a value object that
-            # has real methods, not the anemic-dataclass shape this check is
-            # looking for.
-            if attr_name in attrs_all_classes_have_behavior:
-                continue
-            # Skip cosmetic reads — inside f-strings or as args to logging
-            # methods. Renaming the attr doesn't break these; they're
-            # display-only and weaker signal than reads driving logic.
-            # (Writes can't be cosmetic — the filter only applies to reads.)
-            if not is_write and _is_cosmetic_read(node, parent_map):
-                continue
-            # Skip uppercase attr access (enum constants: Severity.HIGH)
-            if attr_name[0].isupper():
-                continue
-
-            key = (var_name, attr_name)
+            key = (node.value.id, node.attr)
             if is_write:
                 write_files[key].add(file_str)
             if key not in seen_in_file:
                 seen_in_file.add(key)
                 if file_str not in accesses[key]:
                     accesses[key][file_str] = node.lineno
+
+    return accesses, write_files
+
+
+def _shotgun_findings(
+    accesses: dict[tuple[str, str], dict[str, int]],
+    write_files: dict[tuple[str, str], set[str]],
+    attr_to_classes: dict[str, list[tuple[str, ast.ClassDef]]],
+) -> list[Finding]:
+    """Emit findings for attrs accessed in enough files."""
+    findings = []
+    min_files = 4
 
     for (var_name, attr_name), file_lines in sorted(accesses.items()):
         if len(file_lines) < min_files:
@@ -1203,6 +1236,18 @@ def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
         )
 
     return findings
+
+
+@check(
+    "shotgun-surgery",
+    severity=Severity.MEDIUM,
+    description="Same obj.attr accessed in 4+ files — change propagation risk",
+)
+def check_shotgun_surgery(ctx: AnalysisContext) -> list[Finding]:
+    """Find attribute accesses repeated across many files."""
+    idx = _shotgun_indices(ctx)
+    accesses, write_files = _collect_shotgun_accesses(ctx, idx)
+    return _shotgun_findings(accesses, write_files, idx.attr_to_classes)
 
 
 # --- repeated-string-parsing ---

@@ -324,6 +324,7 @@ def check_duplicate_except_blocks(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         # Cross-file only — structural similarity with _find_param_clumps, not extractable
+        # re-evaluate-by: 2026-11
         files = {h["file"] for h in handlers}  # pysmelly: ignore[duplicate-blocks]
         if len(files) < 2:
             continue

@@ -12,7 +12,7 @@ from pysmelly.checks.history_helpers import (
     SKIP_SUFFIXES,
     get_line_count,
     is_test_file,
-    semantic_guard,
+    has_semantic_history,
 )
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
@@ -185,8 +185,8 @@ def check_knowledge_silo(ctx: AnalysisContext) -> list[Finding]:
     description="One file appearing in commits with very different purposes",
 )
 def check_divergent_change(ctx: AnalysisContext) -> list[Finding]:
-    history = semantic_guard(ctx.git_history)
-    if history is None:
+    history = ctx.git_history
+    if not has_semantic_history(history):
         return []
 
     findings: list[Finding] = []

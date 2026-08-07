@@ -17,6 +17,7 @@ from pysmelly.checks.helpers import (
     is_referenced_as_value,
     is_subclassed,
     is_test_file,
+    raises_not_implemented,
 )
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
@@ -445,24 +446,7 @@ def _body_is_raise_not_implemented(
 
     if len(body) != 1:
         return False
-
-    stmt = body[0]
-    if not isinstance(stmt, ast.Raise):
-        return False
-    exc = stmt.exc
-    if exc is None:
-        return False
-    # raise NotImplementedError
-    if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
-        return True
-    # raise NotImplementedError(...)
-    if (
-        isinstance(exc, ast.Call)
-        and isinstance(exc.func, ast.Name)
-        and exc.func.id == "NotImplementedError"
-    ):
-        return True
-    return False
+    return raises_not_implemented(body[0])
 
 
 @check(

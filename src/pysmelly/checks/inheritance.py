@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from pysmelly.checks.helpers import is_test_file
+from pysmelly.checks.helpers import MAJORITY, is_test_file, raises_not_implemented
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
 
@@ -108,15 +108,8 @@ def _is_trivial_override_body(
     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
         if stmt.value.value is Ellipsis:
             return "pass"
-    if isinstance(stmt, ast.Raise):
-        exc = stmt.exc
-        name = None
-        if isinstance(exc, ast.Name):
-            name = exc.id
-        elif isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-            name = exc.func.id
-        if name == "NotImplementedError":
-            return "raise NotImplementedError"
+    if raises_not_implemented(stmt):
+        return "raise NotImplementedError"
     return None
 
 
@@ -156,7 +149,7 @@ def check_refused_bequest(ctx: AnalysisContext) -> list[Finding]:
             continue
         trivial = [(m.name, _is_trivial_override_body(m)) for m in overrides]
         stubbed = [(n, label) for n, label in trivial if label is not None]
-        if len(stubbed) < 3 or len(stubbed) / len(overrides) < 0.5:
+        if len(stubbed) < 3 or len(stubbed) / len(overrides) < MAJORITY:
             continue
 
         base_name = _base_names(node)[0] if _base_names(node) else "base"

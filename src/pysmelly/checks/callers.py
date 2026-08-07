@@ -26,8 +26,9 @@ from pysmelly.checks.helpers import (
     is_referenced_as_value,
     is_referenced_as_value_in_production,
     is_test_file,
-    resolves_to_free_function,
     is_used_as_decorator,
+    raises_not_implemented,
+    resolves_to_free_function,
 )
 from pysmelly.context import AnalysisContext
 from pysmelly.registry import Finding, Severity, check
@@ -1066,6 +1067,7 @@ def check_inconsistent_error_handling(ctx: AnalysisContext) -> list[Finding]:
             continue
 
         def_info = defs[0]
+        # re-evaluate-by: 2026-11
         parts = []  # pysmelly: ignore[temp-accumulators]
         if specific_callers:
             exc_str = ", ".join(sorted(all_specific_names))
@@ -1123,14 +1125,7 @@ def _is_stub_body(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
             return True
         if isinstance(stmt.value, ast.Constant) and stmt.value.value is None:
             return True
-    if isinstance(stmt, ast.Raise) and stmt.exc:
-        exc = stmt.exc
-        if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-            if exc.func.id == "NotImplementedError":
-                return True
-        if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
-            return True
-    return False
+    return raises_not_implemented(stmt)
 
 
 def _has_interface_decorator(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:

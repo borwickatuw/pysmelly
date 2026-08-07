@@ -10,6 +10,20 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     from pysmelly.context import AnalysisContext
 
+# "At least half" — shared by checks that gate on majority behavior
+# (fix-commit ratio, stubbed-override ratio, commit-message quality).
+MAJORITY = 0.5
+
+
+def raises_not_implemented(stmt: ast.stmt) -> bool:
+    """True for ``raise NotImplementedError`` or ``raise NotImplementedError(...)``."""
+    if not isinstance(stmt, ast.Raise) or stmt.exc is None:
+        return False
+    exc = stmt.exc
+    if isinstance(exc, ast.Call):
+        exc = exc.func
+    return isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
+
 
 def build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
     """Build a child→parent mapping for an AST."""
