@@ -23,7 +23,7 @@ A function that accesses attributes/methods of objects from another module more
 than it uses things from its own module. Classic Fowler smell but hard to
 threshold — many functions legitimately work with objects from other modules.
 Would need strong filtering (project-internal modules only, 5+ foreign accesses,
-<2 own-module accesses).
+\<2 own-module accesses).
 
 ## exception-wrapping-chains
 
@@ -52,10 +52,11 @@ re-exports might serve external consumers outside the scanned codebase.
 
 ## look for `dict-builder` function
 
-  As for what pysmelly could detect: this is a "dict-builder function" smell — a function whose primary job is           
-  conditionally assembling a dict through mutation. The signal would be: function has N if blocks that each do dict[key] 
-  = ... or dict.update(...) on the same variable, with the dict passed to a single API call at the end. That's a pattern 
-  that correlates strongly with "hard to read" and "should be decomposed."                                             
+As for what pysmelly could detect: this is a "dict-builder function" smell — a function whose primary job is\
+conditionally assembling a dict through mutation. The signal would be: function has N if blocks that each do dict[key]
+= ... or dict.update(...) on the same variable, with the dict passed to a single API call at the end. That's a pattern
+that correlates strongly with "hard to read" and "should be decomposed."
+
 ## Framework method override detection
 
 Caller-aware checks (unused-defaults, constant-args, etc.) flag Django
@@ -97,6 +98,7 @@ blast-radius and change-coupling dominate on projects with intentional
 subsystem cohesion (category files change together, handler files change
 together). The `expected-coupling` config exists but isn't discoverable.
 Options:
+
 - A `--group` or module-level annotation so related files can be declared
   as a subsystem
 - Auto-detecting directory-level cohesion and suppressing intra-directory
@@ -110,7 +112,7 @@ Sibling files that both inherit from a shared base class (e.g.,
 aren't recognized as having an import relationship. Could check if both
 files import from a common module within the same package.
 
-## "Reviewed on \<date\>" annotation for persisting findings
+## "Reviewed on \<date>" annotation for persisting findings
 
 When `reviewed` doesn't immediately clear a finding (e.g., bug-magnet
 on a file with 37 commits — one new commit doesn't shift the median),
@@ -128,6 +130,7 @@ auto-detecting Django projects and adjusting thresholds.
 
 After refactoring, pysmelly output is identical — same findings, no signal
 that things improved. Options:
+
 - `--compare` flag that diffs against a baseline
 - Trend indicators: "file.py: flagged by 3 checks (down from 4 last run)"
 - A `.pysmelly-baseline.json` that records finding counts per file
@@ -143,6 +146,7 @@ with change-coupling findings.
 
 The keyword classifier conflates cleanup with defect repair. A commit like
 "Fix parameter ordering" is really a refactoring, not a bug fix. Options:
+
 - Require the word "fix" to co-occur with bug-like words (crash, error,
   broken, regression) to count as a true fix
 - Weight conventional commit prefix (`fix:`) higher than keyword matches

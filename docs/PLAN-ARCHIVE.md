@@ -30,27 +30,27 @@
 
 ### Checks inspired by real-world refactoring patterns
 
-| Pattern observed | Check |
-|---|---|
-| Vestigial Optional params that every caller always passes the same value. | **`constant-args`** — param always receives the same literal value from every caller. Suggests the value should be a default or constant. |
+| Pattern observed                                                                      | Check                                                                                                                                               |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vestigial Optional params that every caller always passes the same value.             | **`constant-args`** — param always receives the same literal value from every caller. Suggests the value should be a default or constant.           |
 | Trivial config getter functions that just returned a dict lookup or attribute access. | **`trivial-wrappers`** — functions whose body is a single return of a dict lookup, attribute access, or simple expression. Candidates for inlining. |
 
 ### Checks inspired by PYTHON.md best practices
 
-| Best practice | Check |
-|---|---|
+| Best practice                                                                                                              | Check                                                                                                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Fail fast for required configuration" — `os.environ.get("KEY", "default-value")` where the default hides a missing config | **`env-fallbacks`** — detect `os.environ.get()` or `os.getenv()` calls with non-None defaults. Fail-fast principle says required config should raise, not fall back. |
 
 ### Already covered by existing checks (no new work needed)
 
-| Pattern | Covered by |
-|---|---|
-| Prefixing internal-only functions with underscore | `internal-only` |
-| Removing dead functions with zero callers | `dead-code` |
-| Moving lazy imports to module level | Removed — covered by pylint C0415 |
-| Removing compatibility fallbacks (e.g., tomllib) | `compat-shims` |
-| Simplifying object construction with many name=name kwargs | `foo-equals-foo` |
-| Using canonical constants and failing fast on unknown values | `suspicious-fallbacks` |
+| Pattern                                                      | Covered by                        |
+| ------------------------------------------------------------ | --------------------------------- |
+| Prefixing internal-only functions with underscore            | `internal-only`                   |
+| Removing dead functions with zero callers                    | `dead-code`                       |
+| Moving lazy imports to module level                          | Removed — covered by pylint C0415 |
+| Removing compatibility fallbacks (e.g., tomllib)             | `compat-shims`                    |
+| Simplifying object construction with many name=name kwargs   | `foo-equals-foo`                  |
+| Using canonical constants and failing fast on unknown values | `suspicious-fallbacks`            |
 
 ## Phase 3: Better Output for LLMs
 
@@ -216,6 +216,7 @@ Validated against 10 projects (Flask, requests, FastAPI, Celery, Poetry,
 sentry-python, havoc, outscience, Pydantic, Scrapy, Airflow).
 
 ### 11a: Noise reduction
+
 - [x] knowledge-silo team gate (skip < 3 distinct authors)
 - [x] blast-radius relative threshold (max(8, median_commit_size * 2.5))
 - [x] abandoned-code min-lines filter (skip < 20 lines), test-file skip
@@ -224,23 +225,27 @@ sentry-python, havoc, outscience, Pydantic, Scrapy, Airflow).
 - [x] Bulk commit filter (30+ .py files excluded from per-file checks)
 
 ### 11b: Underperforming check improvements
+
 - [x] divergent-change directory fallback (infer scope from co-changed dirs)
 - [x] divergent-change structural dir filter + own-dir exclusion + test skip
 - conscious-debt and fix-propagation: kept as-is (sound but niche)
 
 ### 11c: Multi-signal convergence
+
 - [x] Convergence hotspots section in output (3+ checks on same file)
 - [x] Hotspots shown first (before per-check details)
 
 ## Phase 12: Validation + Real-World Feedback
 
 ### 12a: Re-validation
+
 - [x] Re-ran all 10 original projects after Phase 11 fixes
 - [x] Confirmed true positives retained (sentry anthropic.py 5-check convergence)
 - [x] Added Airflow (6887 files), Pydantic, Scrapy as new validation targets
 - [x] conscious-debt fired for first time (10 findings on Airflow)
 
 ### 12b: Bug fixes from real-world usage (havoc Claude Code instance)
+
 - [x] Fixed relative import detection in change-coupling
 - [x] Package-level collapsing for blast-radius/change-coupling (havoc: 60→20)
 - [x] `reviewed` resets analysis window for ALL git-history checks

@@ -68,107 +68,107 @@ pysmelly git-history --ignore-reviewed
 
 ### High severity — act on or justify
 
-| Check | What it finds |
-|---|---|
-| `unused-defaults` | Parameter defaults to `None` but every caller always passes a value. The `Optional` is vestigial — make the param required. |
-| `dead-code` | Public functions with zero callers anywhere in the codebase. Cross-references direct calls, imports, dict/list references, and callback passing. |
-| `dead-exceptions` | Custom exception classes never raised or caught anywhere. |
-| `compat-shims` | `try/except ImportError` patterns left over from supporting older Python versions the project no longer targets. |
-| `suspicious-fallbacks` | `.get()` on module-level constant dicts with non-trivial defaults. If the key should always exist, use `[]` indexing and fail fast. |
-| `unreachable-after-return` | Code after `return`/`raise` or exhaustive `if/else` branches — dead tail code from refactoring. |
-| `plaintext-passwords` | `==`/`!=` comparison on password/secret/token variables — use `hmac.compare_digest()` or hash comparison. |
-| `secrets-in-logs` | Secret-shaped values (password, token, card number, CVV) flowing into logging calls — logs outlive requests. |
-| `late-binding-closures` | Lambda/closure in loop captures loop variable by reference — all closures see the final value. |
+| Check                      | What it finds                                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unused-defaults`          | Parameter defaults to `None` but every caller always passes a value. The `Optional` is vestigial — make the param required.                      |
+| `dead-code`                | Public functions with zero callers anywhere in the codebase. Cross-references direct calls, imports, dict/list references, and callback passing. |
+| `dead-exceptions`          | Custom exception classes never raised or caught anywhere.                                                                                        |
+| `compat-shims`             | `try/except ImportError` patterns left over from supporting older Python versions the project no longer targets.                                 |
+| `suspicious-fallbacks`     | `.get()` on module-level constant dicts with non-trivial defaults. If the key should always exist, use `[]` indexing and fail fast.              |
+| `unreachable-after-return` | Code after `return`/`raise` or exhaustive `if/else` branches — dead tail code from refactoring.                                                  |
+| `plaintext-passwords`      | `==`/`!=` comparison on password/secret/token variables — use `hmac.compare_digest()` or hash comparison.                                        |
+| `secrets-in-logs`          | Secret-shaped values (password, token, card number, CVV) flowing into logging calls — logs outlive requests.                                     |
+| `late-binding-closures`    | Lambda/closure in loop captures loop variable by reference — all closures see the final value.                                                   |
 
 ### Medium severity — review each, fix what makes sense
 
-| Check | What it finds |
-|---|---|
-| `env-fallbacks` | `os.environ.get()` or `os.getenv()` with non-None defaults — check whether the fallback is intentional. |
-| `constant-args` | Parameter always receives the same literal value from every caller. The value should be a default or constant. |
-| `vestigial-params` | Parameters declared but never referenced in the function body — with cross-file caller count showing blast radius. |
-| `foo-equals-foo` | Single-use locals gathered into an object — suggests bundling into a dataclass or building directly. |
-| `duplicate-blocks` | Structurally identical code blocks across functions (AST-normalized, so different variable names still match). |
-| `duplicate-except-blocks` | Identical except handlers with same error messages across files. |
-| `temp-accumulators` | `parts = []; parts.append(...); join(parts)` patterns replaceable with comprehensions. |
-| `constant-dispatch-dicts` | Module-level `{"name": func, ...}` tables that can get out of sync — consider decorator registration. |
-| `return-none-instead-of-raise` | Functions returning `None` on error where callers all guard against `None`. The function should raise instead. |
-| `pass-through-params` | Parameters received by a function and only forwarded to another function. The intermediary's signature is vestigial. |
-| `param-clumps` | Groups of 3+ parameters appearing together in 3+ function signatures — extract a dataclass. |
-| `runtime-monkey-patch` | Function assigned to attribute of external object at module scope. |
-| `fossilized-toggles` | UPPER_CASE boolean constants that make conditionals always-true/false (dead branches). |
-| `dead-constants` | UPPER_CASE module-level constants never referenced anywhere — e.g. event name constants nobody uses. |
-| `dead-abstraction` | ABCs with zero concrete implementations (MEDIUM), or exactly one (LOW) — speculative generality or single-implementer indirection. |
-| `dead-dispatch-entries` | Dispatch dict entries whose key strings appear nowhere else in the codebase. |
-| `middle-man` | Classes where 75%+ of methods just delegate to a single wrapped object. |
-| `write-only-attributes` | `@dataclass` fields never read anywhere in the codebase — vestigial config accretion. `__all__`-exported classes are downgraded to LOW rather than suppressed. |
-| `write-only-globals` | Module-level containers mutated from functions but never read anywhere — dead bookkeeping. |
-| `refused-bequest` | Subclass whose inherited-method overrides are mostly `pass`/`raise NotImplementedError` — wrong base class; prefer composition. |
-| `duplicate-except-blocks` | Identical except handlers across files, or 3+ handlers in one `try` with identical bodies (collapse into a tuple). |
-| `return-mutable-constant` | Function returning a module-level dict/list/set by reference — callers mutate the shared constant. |
-| `dict-key-typo` | Subscript key that's written, never read, and edit-distance-1 from a defined dict key — silent-failure typo. |
-| `isinstance-chain` | Functions with 5+ `isinstance()` checks, or the same type-dispatch ladder repeated across 3+ functions — investigate for polymorphism or dispatch table. |
-| `logging-config-hijack` | `logging.basicConfig()` at import time in library modules, or unguarded `addHandler()` in function bodies. |
-| `boolean-param-explosion` | Functions with 4+ boolean parameters — accumulated flags suggesting decomposition. |
-| `exception-flow-control` | Custom exceptions raised and caught in the same `try/except` — used as goto, not error handling. |
-| `inconsistent-error-handling` | Same function called with divergent error handling across callers. |
-| `shared-mutable-module-state` | Module-level mutable containers mutated from other files at import time. |
-| `orphaned-test-helpers` | Test helper functions and unused fixtures with zero callers. |
-| `shadowed-method` | Diamond inheritance where multiple parents define the same method — MRO silently picks one. |
-| `broken-backends` | Non-abstract classes where every method raises `NotImplementedError` — missing ABC base or broken backend. |
-| `inconsistent-returns` | Functions returning 3+ distinct types across return paths — consider narrowing the return type. |
-| `getattr-strings` | `getattr(obj, 'literal')` without default or `hasattr(obj, 'literal')` — stringly-typed attribute access. |
-| `temporal-coupling` | Methods reading `self.x` only set by another non-`__init__` method, methods dereferencing a `None`-initialized attribute unguarded, or a `None` module global set via `global` in one function and read unguarded in others — implicit call ordering. |
-| `feature-envy` | Methods accessing 3+ attributes of another parameter, more than `self` — logic belongs elsewhere. |
-| `anemic-domain` | Classes with 5+ `__init__` attributes but zero non-dunder methods — data bag with no behavior. |
-| `shotgun-surgery` | Same `obj.attr` read or written in 4+ files — changes to that attribute require updating many files. Anchored at the attribute's defining class when unambiguous. |
-| `dict-as-dataclass` | Functions returning dict literals with 4+ string keys — consider a dataclass or NamedTuple. |
-| `repeated-string-parsing` | Same `.split(delim)[N]` in 3+ locations — ad-hoc serialization format needing a dataclass. |
+| Check                          | What it finds                                                                                                                                                                                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `env-fallbacks`                | `os.environ.get()` or `os.getenv()` with non-None defaults — check whether the fallback is intentional.                                                                                                                                               |
+| `constant-args`                | Parameter always receives the same literal value from every caller. The value should be a default or constant.                                                                                                                                        |
+| `vestigial-params`             | Parameters declared but never referenced in the function body — with cross-file caller count showing blast radius.                                                                                                                                    |
+| `foo-equals-foo`               | Single-use locals gathered into an object — suggests bundling into a dataclass or building directly.                                                                                                                                                  |
+| `duplicate-blocks`             | Structurally identical code blocks across functions (AST-normalized, so different variable names still match).                                                                                                                                        |
+| `duplicate-except-blocks`      | Identical except handlers with same error messages across files.                                                                                                                                                                                      |
+| `temp-accumulators`            | `parts = []; parts.append(...); join(parts)` patterns replaceable with comprehensions.                                                                                                                                                                |
+| `constant-dispatch-dicts`      | Module-level `{"name": func, ...}` tables that can get out of sync — consider decorator registration.                                                                                                                                                 |
+| `return-none-instead-of-raise` | Functions returning `None` on error where callers all guard against `None`. The function should raise instead.                                                                                                                                        |
+| `pass-through-params`          | Parameters received by a function and only forwarded to another function. The intermediary's signature is vestigial.                                                                                                                                  |
+| `param-clumps`                 | Groups of 3+ parameters appearing together in 3+ function signatures — extract a dataclass.                                                                                                                                                           |
+| `runtime-monkey-patch`         | Function assigned to attribute of external object at module scope.                                                                                                                                                                                    |
+| `fossilized-toggles`           | UPPER_CASE boolean constants that make conditionals always-true/false (dead branches).                                                                                                                                                                |
+| `dead-constants`               | UPPER_CASE module-level constants never referenced anywhere — e.g. event name constants nobody uses.                                                                                                                                                  |
+| `dead-abstraction`             | ABCs with zero concrete implementations (MEDIUM), or exactly one (LOW) — speculative generality or single-implementer indirection.                                                                                                                    |
+| `dead-dispatch-entries`        | Dispatch dict entries whose key strings appear nowhere else in the codebase.                                                                                                                                                                          |
+| `middle-man`                   | Classes where 75%+ of methods just delegate to a single wrapped object.                                                                                                                                                                               |
+| `write-only-attributes`        | `@dataclass` fields never read anywhere in the codebase — vestigial config accretion. `__all__`-exported classes are downgraded to LOW rather than suppressed.                                                                                        |
+| `write-only-globals`           | Module-level containers mutated from functions but never read anywhere — dead bookkeeping.                                                                                                                                                            |
+| `refused-bequest`              | Subclass whose inherited-method overrides are mostly `pass`/`raise NotImplementedError` — wrong base class; prefer composition.                                                                                                                       |
+| `duplicate-except-blocks`      | Identical except handlers across files, or 3+ handlers in one `try` with identical bodies (collapse into a tuple).                                                                                                                                    |
+| `return-mutable-constant`      | Function returning a module-level dict/list/set by reference — callers mutate the shared constant.                                                                                                                                                    |
+| `dict-key-typo`                | Subscript key that's written, never read, and edit-distance-1 from a defined dict key — silent-failure typo.                                                                                                                                          |
+| `isinstance-chain`             | Functions with 5+ `isinstance()` checks, or the same type-dispatch ladder repeated across 3+ functions — investigate for polymorphism or dispatch table.                                                                                              |
+| `logging-config-hijack`        | `logging.basicConfig()` at import time in library modules, or unguarded `addHandler()` in function bodies.                                                                                                                                            |
+| `boolean-param-explosion`      | Functions with 4+ boolean parameters — accumulated flags suggesting decomposition.                                                                                                                                                                    |
+| `exception-flow-control`       | Custom exceptions raised and caught in the same `try/except` — used as goto, not error handling.                                                                                                                                                      |
+| `inconsistent-error-handling`  | Same function called with divergent error handling across callers.                                                                                                                                                                                    |
+| `shared-mutable-module-state`  | Module-level mutable containers mutated from other files at import time.                                                                                                                                                                              |
+| `orphaned-test-helpers`        | Test helper functions and unused fixtures with zero callers.                                                                                                                                                                                          |
+| `shadowed-method`              | Diamond inheritance where multiple parents define the same method — MRO silently picks one.                                                                                                                                                           |
+| `broken-backends`              | Non-abstract classes where every method raises `NotImplementedError` — missing ABC base or broken backend.                                                                                                                                            |
+| `inconsistent-returns`         | Functions returning 3+ distinct types across return paths — consider narrowing the return type.                                                                                                                                                       |
+| `getattr-strings`              | `getattr(obj, 'literal')` without default or `hasattr(obj, 'literal')` — stringly-typed attribute access.                                                                                                                                             |
+| `temporal-coupling`            | Methods reading `self.x` only set by another non-`__init__` method, methods dereferencing a `None`-initialized attribute unguarded, or a `None` module global set via `global` in one function and read unguarded in others — implicit call ordering. |
+| `feature-envy`                 | Methods accessing 3+ attributes of another parameter, more than `self` — logic belongs elsewhere.                                                                                                                                                     |
+| `anemic-domain`                | Classes with 5+ `__init__` attributes but zero non-dunder methods — data bag with no behavior.                                                                                                                                                        |
+| `shotgun-surgery`              | Same `obj.attr` read or written in 4+ files — changes to that attribute require updating many files. Anchored at the attribute's defining class when unambiguous.                                                                                     |
+| `dict-as-dataclass`            | Functions returning dict literals with 4+ string keys — consider a dataclass or NamedTuple.                                                                                                                                                           |
+| `repeated-string-parsing`      | Same `.split(delim)[N]` in 3+ locations — ad-hoc serialization format needing a dataclass.                                                                                                                                                            |
 
 ### Low severity — informational
 
-| Check | What it finds |
-|---|---|
-| `single-call-site` | Short public functions called exactly once — candidates for inlining. |
-| `internal-only` | Public functions only called within their own file — candidates for `_private` naming. |
-| `trivial-wrappers` | Functions whose body is a single return statement — candidates for inlining. |
-| `stdlib-alternatives` | Stdlib modules where well-known third-party libraries are better, deprecated stdlib/third-party modules, and mixed stdlib/modern usage in the same codebase. |
-| `scattered-constants` | Same string literal repeated across 3+ files — consider a named constant. |
-| `scattered-isinstance` | Same `isinstance` type-check pattern repeated across 3+ files. |
-| `large-class` | Classes with 20+ methods — review for single responsibility. |
-| `long-function` | Functions spanning 100+ lines — review for decomposition. |
-| `long-elif-chain` | 8+ branch if/elif chains comparing the same variable to literals — consider a dict or enum. |
-| `arrow-code` | Functions with nesting depth 5+ (if/for/while/try/with pyramid) — consider extracting inner blocks. |
-| `hungarian-notation` | Variables like `strName`, `intCount`, `lstItems` — use snake_case instead. |
-| `law-of-demeter` | Attribute chains 4+ deep (`a.b.c.d`) — reaching through object internals. |
-| `numbered-variables` | A run of 4+ same-stem numbered names (`item1`…`item10`) — use a list or dict. |
-| `reimplemented-stdlib` | Loops that hand-roll `collections.Counter`, `defaultdict(list)`, or dict merge. |
-| `deep-inheritance` | In-codebase inheritance chain 5+ classes deep — the yo-yo problem. |
-| `mi-method-collision` | Multiple-inheritance class where 2+ incomparable bases define the same method and the subclass overrides none — MRO silently picks one. |
+| Check                  | What it finds                                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `single-call-site`     | Short public functions called exactly once — candidates for inlining.                                                                                        |
+| `internal-only`        | Public functions only called within their own file — candidates for `_private` naming.                                                                       |
+| `trivial-wrappers`     | Functions whose body is a single return statement — candidates for inlining.                                                                                 |
+| `stdlib-alternatives`  | Stdlib modules where well-known third-party libraries are better, deprecated stdlib/third-party modules, and mixed stdlib/modern usage in the same codebase. |
+| `scattered-constants`  | Same string literal repeated across 3+ files — consider a named constant.                                                                                    |
+| `scattered-isinstance` | Same `isinstance` type-check pattern repeated across 3+ files.                                                                                               |
+| `large-class`          | Classes with 20+ methods — review for single responsibility.                                                                                                 |
+| `long-function`        | Functions spanning 100+ lines — review for decomposition.                                                                                                    |
+| `long-elif-chain`      | 8+ branch if/elif chains comparing the same variable to literals — consider a dict or enum.                                                                  |
+| `arrow-code`           | Functions with nesting depth 5+ (if/for/while/try/with pyramid) — consider extracting inner blocks.                                                          |
+| `hungarian-notation`   | Variables like `strName`, `intCount`, `lstItems` — use snake_case instead.                                                                                   |
+| `law-of-demeter`       | Attribute chains 4+ deep (`a.b.c.d`) — reaching through object internals.                                                                                    |
+| `numbered-variables`   | A run of 4+ same-stem numbered names (`item1`…`item10`) — use a list or dict.                                                                                |
+| `reimplemented-stdlib` | Loops that hand-roll `collections.Counter`, `defaultdict(list)`, or dict merge.                                                                              |
+| `deep-inheritance`     | In-codebase inheritance chain 5+ classes deep — the yo-yo problem.                                                                                           |
+| `mi-method-collision`  | Multiple-inheritance class where 2+ incomparable bases define the same method and the subclass overrides none — MRO silently picks one.                      |
 
 ### Git history checks
 
 Run via `pysmelly git-history`. These analyze commit patterns to detect evolutionary signals invisible to static analysis.
 
-| Check | What it finds |
-|---|---|
-| `bug-magnet` | Files where a majority of commits are fixes — recurring problems suggesting structural issues. |
-| `blast-radius` | Files whose changes drag many other files along — poor encapsulation. Collapses same-directory clusters into package-level findings. |
-| `change-coupling` | Files that always change together but have no import relationship — hidden coupling. |
-| `fix-follows-feature` | Features that reliably produce fix commits shortly after — insufficient testing or fragile design. |
-| `yo-yo-code` | High gross churn — code being written, deleted, rewritten repeatedly. Abstractions haven't stabilized. |
-| `hotspot-acceleration` | Files whose change frequency is increasing over time — emerging hotspots. |
-| `divergent-change` | One file appearing in commits with very different purposes — too many responsibilities. |
-| `fix-propagation` | Files that co-change in fix commits — fixing one tends to break the other. |
-| `knowledge-silo` | Files where one author dominates all changes — bus-factor risk. Skipped for projects with < 3 contributors. |
-| `emergency-hotspots` | Files that attract disproportionate emergency/hotfix activity. |
-| `no-refactoring` | Files with heavy fix/feature activity but zero refactoring commits. |
-| `growth-trajectory` | Files growing rapidly within the time window. |
-| `churn-without-growth` | Many commits but stable/shrinking line count — wrong abstractions being reworked. |
-| `stabilization-failure` | Files that repeatedly burst with activity, go quiet, then burst again. |
-| `test-erosion` | Source files changing much more often than their tests. |
-| `abandoned-code` | Files on disk with no commits in the window while directory peers keep evolving. |
-| `conscious-debt` | Commits that explicitly acknowledge technical debt (workaround, hack, TODO). |
+| Check                   | What it finds                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `bug-magnet`            | Files where a majority of commits are fixes — recurring problems suggesting structural issues.                                       |
+| `blast-radius`          | Files whose changes drag many other files along — poor encapsulation. Collapses same-directory clusters into package-level findings. |
+| `change-coupling`       | Files that always change together but have no import relationship — hidden coupling.                                                 |
+| `fix-follows-feature`   | Features that reliably produce fix commits shortly after — insufficient testing or fragile design.                                   |
+| `yo-yo-code`            | High gross churn — code being written, deleted, rewritten repeatedly. Abstractions haven't stabilized.                               |
+| `hotspot-acceleration`  | Files whose change frequency is increasing over time — emerging hotspots.                                                            |
+| `divergent-change`      | One file appearing in commits with very different purposes — too many responsibilities.                                              |
+| `fix-propagation`       | Files that co-change in fix commits — fixing one tends to break the other.                                                           |
+| `knowledge-silo`        | Files where one author dominates all changes — bus-factor risk. Skipped for projects with < 3 contributors.                          |
+| `emergency-hotspots`    | Files that attract disproportionate emergency/hotfix activity.                                                                       |
+| `no-refactoring`        | Files with heavy fix/feature activity but zero refactoring commits.                                                                  |
+| `growth-trajectory`     | Files growing rapidly within the time window.                                                                                        |
+| `churn-without-growth`  | Many commits but stable/shrinking line count — wrong abstractions being reworked.                                                    |
+| `stabilization-failure` | Files that repeatedly burst with activity, go quiet, then burst again.                                                               |
+| `test-erosion`          | Source files changing much more often than their tests.                                                                              |
+| `abandoned-code`        | Files on disk with no commits in the window while directory peers keep evolving.                                                     |
+| `conscious-debt`        | Commits that explicitly acknowledge technical debt (workaround, hack, TODO).                                                         |
 
 When a file is flagged by 3+ different checks, pysmelly surfaces it as a **convergence hotspot** at the top of the output — the highest-confidence signal.
 
@@ -221,6 +221,7 @@ pysmelly src/
 ```
 
 The text output includes a guidance preamble that tells Claude Code to **default to fixing findings**, not explaining why they're acceptable. The three severity levels guide priority:
+
 - **High**: Fix these — dead code, unused defaults, unreachable code
 - **Medium**: Fix unless there's a specific reason not to (framework convention, public API). State the reason if skipping.
 - **Low**: Review and fix where it makes sense — investigation pointers, not mandates
@@ -231,7 +232,7 @@ pysmelly findings include **cross-file context** that single-file linters can't 
 
 - *"format_type is declared but never used in parse_body() — 12 callers still pass it"* — Claude Code can trace the vestigial parameter through the call chain and remove it everywhere
 - *"deploy() param 'timeout' defaults to None but all 3 callers always pass it"* — Claude Code can make the parameter required and simplify the callers
-- *"TASK_BEFORE_EXECUTE = 'task:before\_execute' is never referenced anywhere"* — Claude Code can investigate whether the constant was superseded and delete it
+- *"TASK_BEFORE_EXECUTE = 'task:before_execute' is never referenced anywhere"* — Claude Code can investigate whether the constant was superseded and delete it
 
 ## Requirements
 

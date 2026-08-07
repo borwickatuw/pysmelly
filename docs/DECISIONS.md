@@ -7,6 +7,7 @@
 **Context:** `compat-shims` detects `try/except ImportError` patterns — compatibility shims for older Python versions. The question was whether to remove it (like `lazy-imports` and `too-many-params`) since it's a simple single-file pattern match.
 
 **Rationale:**
+
 - No standard tool flags this. Ruff, pylint, and bandit all miss it.
 - Found a real issue in a production codebase (a tomllib compatibility fallback that was no longer needed).
 - Small amount of code, low maintenance burden.
@@ -35,6 +36,7 @@
 **Decision:** Don't implement `stdlib-shadow`, `function-level-loggers`, `write-only-variables`, `immediately-overwritten`, or `remainder-flags`.
 
 **Rationale:** These are all single-file pattern matches that existing tools already handle or could trivially handle:
+
 - `stdlib-shadow` — ruff A005
 - `function-level-loggers` — pylint W1203/W1201 territory
 - `write-only-variables` — pylint W0612, vulture
@@ -59,6 +61,7 @@ pysmelly's differentiator is cross-file call-graph analysis. Adding single-file 
 **Decision:** Don't implement `parallel-implementations`, `boolean-parameter-smell`, `stale-comments`, or `remainder-flags`.
 
 **Rationale:**
+
 - `parallel-implementations` — Functions with the same name/signature in different files. Hard to detect generically without a clear scope definition; too many legitimate cases (interface implementations, test doubles, overrides).
 - `boolean-parameter-smell` — Functions with boolean params where the first statement is `if flag:`. Too noisy — many legitimate uses of boolean parameters. The interesting case (function should be split) is hard to distinguish from the common case (feature toggle).
 - `stale-comments` — Comments referencing names that no longer exist. Comments aren't structured, so name matching produces false positives on partial matches, English words, etc. Fragile and low-confidence.

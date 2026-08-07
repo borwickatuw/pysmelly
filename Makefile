@@ -77,7 +77,12 @@ security-secrets: ## Scan for hardcoded secrets
 .PHONY: format-docs
 format-docs: ## Format markdown files
 	@command -v mdformat >/dev/null 2>&1 || { echo "Error: mdformat not found. Install with: uv tool install mdformat --with mdformat-gfm"; exit 1; }
-	@mdformat .
+	@git ls-files -coz --exclude-standard '*.md' | xargs -0 mdformat
+
+.PHONY: format-docs-check
+format-docs-check: ## Check markdown formatting without modifying
+	@command -v mdformat >/dev/null 2>&1 || { echo "Error: mdformat not found. Install with: uv tool install mdformat --with mdformat-gfm"; exit 1; }
+	@git ls-files -coz --exclude-standard '*.md' | xargs -0 mdformat --check
 
 # =============================================================================
 # Cleanup

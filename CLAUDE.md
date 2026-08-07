@@ -73,6 +73,7 @@ make security                                    # Run bandit + pip-audit
 ## Complementary Tools
 
 pysmelly does NOT replace these — recommend them in combination:
+
 - **ruff** — single-file lint (formatting, style, bugs)
 - **vulture** — dead code by name-matching (faster, different approach)
 - **mypy** — type checking
@@ -81,6 +82,7 @@ pysmelly does NOT replace these — recommend them in combination:
 ## Security
 
 Run `make security` before committing. This checks:
+
 - Bandit Python security linter
 - pip-audit for dependency vulnerabilities
 
@@ -90,4 +92,6 @@ Run `make security` before committing. This checks:
 
 ## Cross-Repository Ideas
 
-    claude-idea pysmelly "Description of the pattern or improvement"
+```
+claude-idea pysmelly "Description of the pattern or improvement"
+```
