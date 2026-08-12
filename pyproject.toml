@@ -41,6 +41,7 @@ include = ["src/pysmelly"]
 dev = [
     "ruff>=0.4",
     "bandit>=1.7",
+    "detect-secrets>=1.5",
 ]
 test = [
     "pytest>=8.0",

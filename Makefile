@@ -72,13 +72,13 @@ security-updates: ## CVE scan + outdated package report
 	@uv pip list --outdated
 
 .PHONY: security-secrets
-security-secrets: ## Scan for hardcoded secrets
-	@if [ -f .secrets.baseline ]; then \
-		uv tool run detect-secrets scan --baseline .secrets.baseline; \
-	else \
-		echo "Creating initial secrets baseline..."; \
-		uv tool run detect-secrets scan > .secrets.baseline; \
-	fi
+security-secrets: ## Check tracked files for secrets not in .secrets.baseline
+	@test -f .secrets.baseline || { echo "Error: .secrets.baseline missing. Bootstrap with 'make security-secrets-init' and review before committing."; exit 1; }
+	@uv run detect-secrets-hook --baseline .secrets.baseline $$(git ls-files)
+
+.PHONY: security-secrets-init
+security-secrets-init: ## Bootstrap/regenerate .secrets.baseline (review the diff before committing)
+	@uv run detect-secrets scan > .secrets.baseline
 
 # =============================================================================
 # Documentation
