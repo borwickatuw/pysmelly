@@ -1,0 +1,1999 @@
+"""Tests for cross-file repetition checks."""
+
+from pysmelly.checks.repetition import (
+    check_repeated_string_parsing,
+    check_scattered_constants,
+    check_scattered_isinstance,
+    check_shotgun_surgery,
+)
+from pysmelly.registry import Severity
+
+
+class TestScatteredConstants:
+    def test_finds_string_in_3_files_assignments(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'status = "active"',
+                "b.py": 'state = "active"',
+                "c.py": 'default = "active"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "'active'" in findings[0].message
+        assert "3 files" in findings[0].message
+
+    def test_finds_number_in_3_files_comparisons(self, trees):
+        t = trees.files(
+            {
+                "a.py": "if x == 42: pass",
+                "b.py": "if y == 42: pass",
+                "c.py": "if z == 42: pass",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "42" in findings[0].message
+
+    def test_ignores_value_in_only_2_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'status = "active"',
+                "b.py": 'state = "active"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_trivial_values(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = None\ny = True\nz = 0\nw = 1",
+                "b.py": "x = None\ny = True\nz = 0\nw = 1",
+                "c.py": "x = None\ny = True\nz = 0\nw = 1",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_trivial_strings(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'enc = "utf-8"\nx = "a"',
+                "b.py": 'enc = "utf-8"\nx = "a"',
+                "c.py": 'enc = "utf-8"\nx = "a"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_http_status_codes(self, trees):
+        t = trees.files(
+            {
+                "a.py": "if code == 200: pass\nif code == 404: pass",
+                "b.py": "if code == 200: pass\nif code == 404: pass",
+                "c.py": "if code == 200: pass\nif code == 404: pass",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_migration_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": "max_length = 255",
+                "app/migrations/0001_initial.py": "max_length = 255",
+                "app/migrations/0002_update.py": "max_length = 255",
+                "b.py": "max_length = 255",
+            }
+        )
+        findings = check_scattered_constants(t)
+        # Only a.py and b.py count — 2 files, below threshold
+        assert len(findings) == 0
+
+    def test_non_django_migrations_dir_not_skipped(self, trees):
+        """A 'migrations' dir without numbered files is not skipped."""
+        t = trees.files(
+            {
+                "a.py": 'x = "special"',
+                "b.py": 'x = "special"',
+                "migrations/helpers.py": 'x = "special"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+
+    def test_ignores_common_round_numbers(self, trees):
+        t = trees.files(
+            {
+                "a.py": "limit = 100",
+                "b.py": "limit = 100",
+                "c.py": "limit = 100",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dunder_main(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'if __name__ == "__main__": pass',
+                "b.py": 'if __name__ == "__main__": pass',
+                "c.py": 'if __name__ == "__main__": pass',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_argparse_actions(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'parser.add_argument("--verbose", action="store_true")',
+                "b.py": 'parser.add_argument("--quiet", action="store_true")',
+                "c.py": 'parser.add_argument("--debug", action="store_true")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_two_char_strings(self, trees):
+        """Strings of length <= 2 are too short to be interesting."""
+        t = trees.files(
+            {
+                "a.py": 'x = "id"',
+                "b.py": 'y = "id"',
+                "c.py": 'z = "id"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_flags_three_char_strings(self, trees):
+        """Strings of length 3+ are still flagged."""
+        t = trees.files(
+            {
+                "a.py": 'x = "foo"',
+                "b.py": 'y = "foo"',
+                "c.py": 'z = "foo"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+
+    def test_ignores_http_headers(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'h = d["Content-Type"]',
+                "b.py": 'h = d["Content-Type"]',
+                "c.py": 'h = d["Content-Type"]',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_media_types(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'ct = "application/json"',
+                "b.py": 'ct = "application/json"',
+                "c.py": 'ct = "application/json"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dict_get_first_arg(self, trees):
+        """config.get("key") — data-schema key, not a developer constant."""
+        t = trees.files(
+            {
+                "a.py": 'x = config.get("infrastructure")',
+                "b.py": 'y = data.get("infrastructure")',
+                "c.py": 'z = settings.get("infrastructure")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dict_pop_first_arg(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = d.pop("item_id")',
+                "b.py": 'y = d.pop("item_id")',
+                "c.py": 'z = d.pop("item_id")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dict_setdefault_first_arg(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'd.setdefault("errors", [])',
+                "b.py": 'd.setdefault("errors", [])',
+                "c.py": 'd.setdefault("errors", [])',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_flags_non_dict_access_method_calls(self, trees):
+        """Other method calls with string args are still flagged (if in interesting context)."""
+        t = trees.files(
+            {
+                "a.py": 'x = process("special_value")',
+                "b.py": 'y = handle("special_value")',
+                "c.py": 'z = transform("special_value")',
+            }
+        )
+        # Positional args to non-dict-access methods are not in "interesting context"
+        # so they won't be flagged. This test documents the behavior.
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_test_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'status = "active"',
+                "test_b.py": 'status = "active"',
+                "tests/c.py": 'status = "active"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_docstrings(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'def foo():\n    """This is a docstring with magic value."""\n    pass',
+                "b.py": 'def bar():\n    """This is a docstring with magic value."""\n    pass',
+                "c.py": 'def baz():\n    """This is a docstring with magic value."""\n    pass',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_raise_messages(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'raise ValueError("something broke")',
+                "b.py": 'raise RuntimeError("something broke")',
+                "c.py": 'raise TypeError("something broke")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_log_call_kwargs(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'logger.info("request", extra={"source": "api"})',
+                "b.py": 'logger.warning("timeout", extra={"source": "api"})',
+                "c.py": 'logger.error("failed", extra={"source": "api"})',
+            }
+        )
+        # The keyword arg values in log calls should be ignored
+        # but the positional args are also not in interesting context (Call args)
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_subscript_keys(self, trees):
+        """Dict keys are API contracts, not scattered constants."""
+        t = trees.files(
+            {
+                "a.py": 'x = d["config_key"]',
+                "b.py": 'y = d["config_key"]',
+                "c.py": 'z = d["config_key"]',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_includes_keyword_arg_values(self, trees):
+        t = trees.files(
+            {
+                "a.py": "func(timeout=30)",
+                "b.py": "other(timeout=30)",
+                "c.py": "another(timeout=30)",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "30" in findings[0].message
+
+    def test_mixed_contexts_count(self, trees):
+        """Assignment in A, comparison in B, kwarg in C — all count."""
+        t = trees.files(
+            {
+                "a.py": 'status = "pending"',
+                "b.py": 'if x == "pending": pass',
+                "c.py": 'func(status="pending")',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "3 files" in findings[0].message
+
+    def test_single_file_multiple_occurrences_not_flagged(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = "magic"\ny = "magic"\nz = "magic"',
+                "b.py": 'a = "magic"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_ignores_dunder_all_entries(self, trees):
+        t = trees.files(
+            {
+                "a.py": '__all__ = ["MyClass", "helper"]',
+                "b.py": '__all__ = ["MyClass", "helper"]',
+                "c.py": '__all__ = ["MyClass", "helper"]',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 0
+
+    def test_message_format(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = "sentinel"',
+                "b.py": 'y = "sentinel"',
+                "c.py": 'z = "sentinel"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        msg = findings[0].message
+        assert "Literal" in msg
+
+    def test_severity_is_low(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = "sentinel"',
+                "b.py": 'y = "sentinel"',
+                "c.py": 'z = "sentinel"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.LOW
+
+
+class TestScatteredConstantsNamed:
+    """A literal bound to an UPPER_CASE name counts only with that same name."""
+
+    def test_differently_named_constants_sharing_a_value_are_not_reported(self, trees):
+        t = trees.files(
+            {
+                "a.py": "MIN_TOKENS = 9871",
+                "b.py": "SHA_LENGTH = 9871",
+                "c.py": "MAX_DISPLAY_WIDTH = 9871",
+            }
+        )
+        assert check_scattered_constants(t) == []
+
+    def test_one_constant_defined_in_three_files_is_reported(self, trees):
+        t = trees.files(dict.fromkeys(("a.py", "b.py", "c.py"), "TIMEOUT = 9871"))
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert findings[0].message.startswith("Constant TIMEOUT = 9871 appears in 3 files")
+
+    def test_class_level_and_annotated_definitions_are_named(self, trees):
+        t = trees.files(
+            {
+                "a.py": "class A:\n    LIMIT = 9871",
+                "b.py": "LIMIT: int = 9871",
+                "c.py": "class C:\n    LIMIT: int = 9871",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "Constant LIMIT = 9871" in findings[0].message
+
+    def test_negative_constant_is_named(self, trees):
+        t = trees.files(dict.fromkeys(("a.py", "b.py", "c.py"), "FLOOR = -9871"))
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "Constant FLOOR = -9871" in findings[0].message
+
+    def test_upper_case_local_in_a_function_is_a_bare_literal(self, trees):
+        t = trees.files(
+            {
+                "a.py": "def f():\n    LIMIT = 9871",
+                "b.py": "def g():\n    CAP = 9871",
+                "c.py": "def h():\n    MAX = 9871",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert findings[0].message.startswith("Literal 9871")
+
+    def test_named_definition_does_not_count_toward_bare_uses(self, trees):
+        t = trees.files(
+            {
+                "a.py": "MIN_TOKENS = 9871",
+                "b.py": "if x > 9871: pass",
+                "c.py": "if y > 9871: pass",
+            }
+        )
+        assert check_scattered_constants(t) == []
+
+    def test_bare_uses_are_reported_without_the_named_definition(self, trees):
+        t = trees.files(
+            {
+                "a.py": "MIN_TOKENS = 9871",
+                "b.py": "if x > 9871: pass",
+                "c.py": "if y > 9871: pass",
+                "d.py": "limit = 9871",
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert findings[0].message.startswith("Literal 9871 appears in 3 files")
+        assert "a.py" not in findings[0].message
+
+
+_APP_CONFIG = """\
+from django.apps import AppConfig
+
+
+class FilesConfig(AppConfig):
+    name = "files"
+    label = "files"
+"""
+
+_URLCONF = """\
+from django.urls import path
+
+app_name = "files"
+
+urlpatterns = []
+"""
+
+
+class TestScatteredConstantsDjangoIdentifiers:
+    """An AppConfig's ``name``/``label`` and a URLconf's ``app_name`` are Django
+    identifiers: they spell the app's label by convention, not a shared value."""
+
+    def test_app_label_and_url_namespace_do_not_count(self, trees):
+        t = trees.files(
+            {
+                "files/apps.py": _APP_CONFIG,
+                "files/urls.py": _URLCONF,
+                "files/inventory.py": 'if kind == "files": pass',
+                "files/other.py": 'if mode == "files": pass',
+            }
+        )
+        assert check_scattered_constants(t) == []
+
+    def test_subclass_of_a_project_app_config_is_exempt(self, trees):
+        t = trees.files(
+            {
+                "core/apps.py": "from django.apps import AppConfig\n\n"
+                "class BaseConfig(AppConfig):\n    pass\n",
+                "files/apps.py": "from core.apps import BaseConfig\n\n"
+                'class FilesConfig(BaseConfig):\n    name = "files"\n',
+                "files/inventory.py": 'if kind == "files": pass',
+                "files/other.py": 'if mode == "files": pass',
+            }
+        )
+        assert check_scattered_constants(t) == []
+
+    def test_same_names_outside_django_positions_still_count(self, trees):
+        t = trees.files(
+            {
+                # a class that is no AppConfig, and an ``app_name`` in a module
+                # that is no URLconf
+                "files/apps.py": 'class FilesConfig:\n    name = "files"\n',
+                "files/urls.py": 'app_name = "files"\n',
+                "files/inventory.py": 'if kind == "files": pass',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert findings[0].message.startswith("Literal 'files' appears in 3 files")
+
+    def test_other_attributes_of_an_app_config_still_count(self, trees):
+        t = trees.files(
+            {
+                "files/apps.py": _APP_CONFIG + '    verbose_name = "Stored files"\n',
+                "a.py": 'title = "Stored files"',
+                "b.py": 'heading = "Stored files"',
+            }
+        )
+        findings = check_scattered_constants(t)
+        assert len(findings) == 1
+        assert "files/apps.py" in findings[0].message
+
+
+class TestScatteredIsinstance:
+    def test_finds_isinstance_in_3_files(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "b.py": "if isinstance(y, MyModel): pass",
+                "c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 1
+        assert "MyModel" in findings[0].message
+        assert "3 files" in findings[0].message
+
+    def test_ignores_stdlib_types(self, trees):
+        t = trees.files(
+            {
+                "a.py": "if isinstance(x, str): pass",
+                "b.py": "if isinstance(x, int): pass\nif isinstance(x, dict): pass",
+                "c.py": "if isinstance(x, list): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 0
+
+    def test_ignores_types_not_in_codebase(self, trees):
+        t = trees.files(
+            {
+                "a.py": "if isinstance(x, SomeExternal): pass",
+                "b.py": "if isinstance(x, SomeExternal): pass",
+                "c.py": "if isinstance(x, SomeExternal): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 0
+
+    def test_ignores_checks_in_only_2_files(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "b.py": "if isinstance(y, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 0
+
+    def test_ignores_test_files(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "test_b.py": "if isinstance(y, MyModel): pass",
+                "tests/c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 0
+
+    def test_includes_issubclass(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "b.py": "if issubclass(cls, MyModel): pass",
+                "c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 1
+
+    def test_tuple_isinstance_counted_per_element(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, (MyModel, str)): pass",
+                "b.py": "if isinstance(y, (int, MyModel)): pass",
+                "c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 1
+        assert "MyModel" in findings[0].message
+
+    def test_finding_anchored_at_class_definition(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "b.py": "if isinstance(y, MyModel): pass",
+                "c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 1
+        assert findings[0].file == "models.py"
+        assert findings[0].line == 1
+
+    def test_class_defined_in_multiple_files_skipped(self, trees):
+        t = trees.files(
+            {
+                "a.py": "class Handler:\n    pass\nif isinstance(x, Handler): pass",
+                "b.py": "class Handler:\n    pass\nif isinstance(x, Handler): pass",
+                "c.py": "if isinstance(x, Handler): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 0
+
+    def test_attribute_isinstance_counted(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, models.MyModel): pass",
+                "b.py": "if isinstance(y, models.MyModel): pass",
+                "c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 1
+
+    def test_multiple_classes_flagged_independently(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class Foo:\n    pass\nclass Bar:\n    pass",
+                "a.py": "isinstance(x, Foo)\nisinstance(x, Bar)",
+                "b.py": "isinstance(x, Foo)\nisinstance(x, Bar)",
+                "c.py": "isinstance(x, Foo)\nisinstance(x, Bar)",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 2
+        names = {f.message.split("isinstance(x, ")[1].split(")")[0] for f in findings}
+        assert names == {"Foo", "Bar"}
+
+    def test_mixed_test_and_non_test_files(self, trees):
+        """Only non-test files count toward the threshold."""
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "b.py": "if isinstance(y, MyModel): pass",
+                "test_c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 0
+
+    def test_severity_is_medium(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class MyModel:\n    pass",
+                "a.py": "if isinstance(x, MyModel): pass",
+                "b.py": "if isinstance(y, MyModel): pass",
+                "c.py": "if isinstance(z, MyModel): pass",
+            }
+        )
+        findings = check_scattered_isinstance(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM
+
+
+class TestShotgunSurgery:
+    def test_finds_4_file_access(self, trees):
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "config.timeout" in findings[0].message
+        assert "4 files" in findings[0].message
+
+    def test_call_of_a_value_typed_field_is_another_objects_method(self, trees):
+        """``dotted.split(".")`` is a str's method, not ``Halves.split``, a datetime."""
+        accessors = {name: 'parts = dotted.split(".")' for name in ("a.py", "b.py", "c.py", "d.py")}
+        model = "from datetime import datetime\nclass Halves:\n    split: datetime | None\n"
+        findings = check_shotgun_surgery(trees.files({"models.py": model, **accessors}))
+        assert findings == []
+
+    def test_read_of_a_value_typed_field_still_counts(self, trees):
+        accessors = {name: "when = halves.split" for name in ("a.py", "b.py", "c.py", "d.py")}
+        model = "from datetime import datetime\nclass Halves:\n    split: datetime\n"
+        findings = check_shotgun_surgery(trees.files({"models.py": model, **accessors}))
+        assert len(findings) == 1
+
+    def test_call_of_a_callable_field_still_counts(self, trees):
+        """``ctx.report(...)`` calls the ``report: Reporter`` field it reads."""
+        accessors = {name: 'ctx.report("step")' for name in ("a.py", "b.py", "c.py", "d.py")}
+        model = "class JobContext:\n    report: Reporter\n    path: str\n"
+        findings = check_shotgun_surgery(trees.files({"models.py": model, **accessors}))
+        assert len(findings) == 1
+        assert "ctx.report" in findings[0].message
+
+    def test_call_of_an_unannotated_field_still_counts(self, trees):
+        accessors = {name: "config.hook()" for name in ("a.py", "b.py", "c.py", "d.py")}
+        model = "class Config:\n    def __init__(self, hook):\n        self.hook = hook\n"
+        findings = check_shotgun_surgery(trees.files({"models.py": model, **accessors}))
+        assert len(findings) == 1
+
+    def test_anchors_at_defining_class(self, trees):
+        """Finding maps to the attribute's definition site, not the
+        alphabetically-first access site, once a site shows the receiver
+        is that class."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                "a.py": "def f(config: Config):\n    return config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert findings[0].file.endswith("models.py")
+        assert "defined on Config" in findings[0].message
+
+    def test_unresolved_receiver_makes_no_defined_on_claim(self, trees):
+        """``cur.execute`` on a DB cursor is not ``OpHandler.execute`` because
+        OpHandler is the one project class declaring ``execute``."""
+        use = "def f(conn):\n    cur = conn.cursor()\n    cur.execute('select 1')\n"
+        t = trees.files(
+            {
+                "registry.py": "class OpHandler:\n    execute: Callable\n",
+                **dict.fromkeys(("a.py", "b.py", "c.py", "d.py"), use),
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert findings[0].file == "a.py"
+        assert findings[0].message.startswith("cur.execute accessed in 4 files")
+
+    def test_receiver_evidence_shapes(self, trees):
+        """A parameter annotation (a string, or an arm of ``|``), an annotated
+        assignment and a constructor call each tie the receiver to the class."""
+        model = "class Config:\n    timeout: int\n"
+        for evidence in (
+            "def f(config: 'Config | None'):\n    return config.timeout",
+            "def f(*, config: mod.Config):\n    return config.timeout",
+            "config: Config = load()\nx = config.timeout",
+            "def f():\n    config = Config()\n    return config.timeout",
+            "def f():\n    config = mod.Config(timeout=3)\n    return config.timeout",
+        ):
+            files = dict.fromkeys(("b.py", "c.py", "d.py"), "y = config.timeout")
+            t = trees.files({"models.py": model, "a.py": evidence, **files})
+            (finding,) = check_shotgun_surgery(t)
+            assert "defined on Config" in finding.message, evidence
+
+    def test_evidence_in_another_function_does_not_count(self, trees):
+        """The binding is read in the scope that holds the access."""
+        evidence = "def g(config: Config):\n    pass\n\ndef f():\n    return config.timeout\n"
+        files = dict.fromkeys(("b.py", "c.py", "d.py"), "y = config.timeout")
+        t = trees.files(
+            {"models.py": "class Config:\n    timeout: int\n", "a.py": evidence, **files}
+        )
+        (finding,) = check_shotgun_surgery(t)
+        assert "defined on" not in finding.message
+
+    def test_evidence_picks_one_of_several_defining_classes(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class Config:\n    timeout: int\n\nclass Job:\n    timeout: int\n",
+                "a.py": "def f(config: Job):\n    return config.timeout",
+                **dict.fromkeys(("b.py", "c.py", "d.py"), "y = config.timeout"),
+            }
+        )
+        (finding,) = check_shotgun_surgery(t)
+        assert finding.file == "models.py"
+        assert finding.line == 4
+        assert "defined on Job" in finding.message
+
+    def test_evidence_for_two_defining_classes_makes_no_claim(self, trees):
+        t = trees.files(
+            {
+                "models.py": "class Config:\n    timeout: int\n\nclass Job:\n    timeout: int\n",
+                "a.py": "def f(config: Job):\n    return config.timeout",
+                "b.py": "def f(config: Config):\n    return config.timeout",
+                **dict.fromkeys(("c.py", "d.py"), "y = config.timeout"),
+            }
+        )
+        (finding,) = check_shotgun_surgery(t)
+        assert finding.file == "a.py"
+        assert "defined on" not in finding.message
+
+    def test_ambiguous_definition_anchors_at_first_access(self, trees):
+        """Attr defined on two classes -> keep the access-site anchor."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+
+class Job:
+    def __init__(self):
+        self.timeout = 60
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert findings[0].file.endswith("a.py")
+        assert "defined on" not in findings[0].message
+
+    def test_counts_scattered_writes(self, trees):
+        """Field written from many files fires — the textbook anemic-model
+        shotgun-surgery shape (previously only reads counted)."""
+        t = trees.files(
+            {
+                "models.py": """\
+class User:
+    def __init__(self):
+        self.email = None
+""",
+                "a.py": "user.email = 'a@example.com'",
+                "b.py": "user.email = 'b@example.com'",
+                "c.py": "user.email = 'c@example.com'",
+                "d.py": "user.email = 'd@example.com'",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "user.email" in findings[0].message
+        assert "written from 4" in findings[0].message
+
+    def test_mixed_reads_and_writes_pool_toward_threshold(self, trees):
+        t = trees.files(
+            {
+                "models.py": """\
+class User:
+    def __init__(self):
+        self.email = None
+""",
+                "a.py": "user.email = 'a@example.com'",
+                "b.py": "user.email = 'b@example.com'",
+                "c.py": "x = user.email",
+                "d.py": "y = user.email",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "4 files" in findings[0].message
+        assert "written from 2" in findings[0].message
+
+    def test_ignores_3_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_common_attrs(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = obj.name",
+                "b.py": "y = obj.name",
+                "c.py": "z = obj.name",
+                "d.py": "w = obj.name",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_self(self, trees):
+        t = trees.files(
+            {
+                "a.py": """\
+class A:
+    def f(self): return self.timeout
+""",
+                "b.py": """\
+class B:
+    def f(self): return self.timeout
+""",
+                "c.py": """\
+class C:
+    def f(self): return self.timeout
+""",
+                "d.py": """\
+class D:
+    def f(self): return self.timeout
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_private_attrs(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config._timeout",
+                "b.py": "y = config._timeout",
+                "c.py": "z = config._timeout",
+                "d.py": "w = config._timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "tests/test_c.py": "z = config.timeout",
+                "tests/test_d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        # Only 2 non-test files, below threshold
+        assert len(findings) == 0
+
+    def test_different_var_names_not_grouped(self, trees):
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = settings.timeout",
+                "c.py": "z = opts.timeout",
+                "d.py": "w = params.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_framework_attrs_not_in_project(self, trees):
+        """Attrs not defined in any project class are framework/stdlib — skip."""
+        t = trees.files(
+            {
+                "a.py": "x = logger.warning('a')",
+                "b.py": "x = logger.warning('b')",
+                "c.py": "x = logger.warning('c')",
+                "d.py": "x = logger.warning('d')",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_directly_imported_module_receivers(self, trees):
+        """`boto3.client` after `import boto3` is library API, not a user
+        attribute we could refactor — even if some project class happens to
+        define a `client` attribute."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Service:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": "import boto3\nx = boto3.client",
+                "b.py": "import boto3\ny = boto3.client",
+                "c.py": "import boto3\nz = boto3.client",
+                "d.py": "import boto3\nw = boto3.client",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_import_alias_receivers(self, trees):
+        """`import boto3 as b` + `b.client` is still library API."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Service:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": "import boto3 as b\nx = b.client",
+                "b.py": "import boto3 as b\ny = b.client",
+                "c.py": "import boto3 as b\nz = b.client",
+                "d.py": "import boto3 as b\nw = b.client",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_from_import_receivers(self, trees):
+        """`from boto3 import client` + `client.list_buckets` — `client` is
+        a directly-imported name, not one of our types."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Service:
+    def __init__(self):
+        self.list_buckets = None
+""",
+                "a.py": "from boto3 import client\nx = client.list_buckets",
+                "b.py": "from boto3 import client\ny = client.list_buckets",
+                "c.py": "from boto3 import client\nz = client.list_buckets",
+                "d.py": "from boto3 import client\nw = client.list_buckets",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_import_filter_is_per_file(self, trees):
+        """A file that DOESN'T import the receiver still gets its access
+        counted — the suppression is per-file, not global."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                # 4 files use config.timeout; none of them import config
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_ignores_receiver_bound_from_imported_library_call(self, trees):
+        """`log = logging.getLogger(__name__)` then `log.warning` — `log` is
+        bound from a library call, so reads of its attrs are library API."""
+        t = trees.files(
+            {
+                # Some project class happens to define `warning` so it lands
+                # in project_attrs (otherwise the existing project_attrs
+                # filter would already suppress).
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "a.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('a')
+""",
+                "b.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('b')
+""",
+                "c.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('c')
+""",
+                "d.py": """\
+import logging
+log = logging.getLogger(__name__)
+log.warning('d')
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_receiver_bound_from_imported_function(self, trees):
+        """`from logging import getLogger` then `log = getLogger(...)` — the
+        callee was imported, so `log` is library-bound."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "a.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('a')
+""",
+                "b.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('b')
+""",
+                "c.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('c')
+""",
+                "d.py": """\
+from logging import getLogger
+log = getLogger(__name__)
+log.warning('d')
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_re_match_receiver(self, trees):
+        """`m = re.match(...)` then `m.group(...)` is the re.Match API."""
+        t = trees.files(
+            {
+                # Project class with a `group` attribute pulls "group" into
+                # project_attrs.
+                "models.py": """\
+class Team:
+    def __init__(self):
+        self.group = None
+""",
+                "a.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+                "b.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+                "c.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+                "d.py": """\
+import re
+m = re.match('x', 'xyz')
+print(m.group(0))
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_still_flags_when_callee_is_a_project_function(self, trees):
+        """`config = make_config()` where make_config is a PROJECT function
+        (not a library) must NOT mark `config` as library-bound — that
+        would hide real shotgun-surgery on project factory return values."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+
+def make_config():
+    return Config()
+""",
+                "a.py": """\
+from models import make_config
+config = make_config()
+x = config.timeout
+""",
+                "b.py": """\
+from models import make_config
+config = make_config()
+y = config.timeout
+""",
+                "c.py": """\
+from models import make_config
+config = make_config()
+z = config.timeout
+""",
+                "d.py": """\
+from models import make_config
+config = make_config()
+w = config.timeout
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "config.timeout" in findings[0].message
+
+    def test_ignores_click_context_in_callback(self, trees):
+        """`ctx.invoke`, `ctx.obj`, etc. inside a Click callback (matched by
+        the (ctx, param, value) signature) are Click API, not user attrs."""
+        t = trees.files(
+            {
+                # Project class with `invoke` so it lands in project_attrs.
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.invoke = None
+""",
+                "a.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+                "b.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+                "c.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+                "d.py": """\
+def _cb(ctx, param, value):
+    ctx.invoke(other)
+    return value
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_ignores_click_context_in_pass_context_function(self, trees):
+        """@click.pass_context binds the first param as a Click Context."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.invoke = None
+""",
+                "a.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+                "b.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+                "c.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+                "d.py": """\
+import click
+@click.pass_context
+def cmd(ctx, name):
+    ctx.invoke(other)
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_chained_library_call_propagates(self, trees):
+        """A name bound from `lib_var.method(...)` where lib_var is itself
+        library-bound should also be library-bound — covers compiled regex
+        patterns and session objects."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Team:
+    def __init__(self):
+        self.group = None
+""",
+                "a.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+                "b.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+                "c.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+                "d.py": """\
+import re
+PAT = re.compile(r'x')
+m = PAT.search('xyz')
+print(m.group(0))
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_fstring_reads_suppressed(self, trees):
+        """`f"...{obj.attr}..."` reads are cosmetic; renaming the attr doesn't
+        break the f-string (just adjust the format string)."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Store:
+    def __init__(self):
+        self.source = None
+""",
+                "a.py": 'msg = f"hello {store.source}"',
+                "b.py": 'msg = f"hello {store.source}"',
+                "c.py": 'msg = f"hello {store.source}"',
+                "d.py": 'msg = f"hello {store.source}"',
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_log_call_args_suppressed(self, trees):
+        """Reads passed as positional args to logging-style calls are
+        display-only and shouldn't count as shotgun-surgery sites."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Store:
+    def __init__(self):
+        self.source = None
+""",
+                "a.py": "logger.info('store=%s', store.source)",
+                "b.py": "logger.info('store=%s', store.source)",
+                "c.py": "logger.info('store=%s', store.source)",
+                "d.py": "logger.info('store=%s', store.source)",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_control_flow_reads_still_flagged(self, trees):
+        """A read that drives control flow is NOT cosmetic — keep flagging."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Store:
+    def __init__(self):
+        self.source = None
+""",
+                "a.py": "if store.source == 'x': pass",
+                "b.py": "if store.source == 'x': pass",
+                "c.py": "if store.source == 'x': pass",
+                "d.py": "if store.source == 'x': pass",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_behavior_bearing_class_attrs_suppressed(self, trees):
+        """If every class defining an attr has 2+ non-trivial non-dunder
+        methods, reads of that attr are appropriate traversal — suppress."""
+        t = trees.files(
+            {
+                "models.py": """\
+class SnapshotRef:
+    def __init__(self, snapshot_id, store):
+        self.snapshot_id = snapshot_id
+        self.store = store
+
+    def s3_key(self):
+        return f's3://{self.store}/{self.snapshot_id}'
+
+    def local_dir(self, base):
+        if base is None:
+            raise ValueError('no base')
+        return base / self.snapshot_id
+
+    def summary_exists_locally(self, base):
+        path = self.local_dir(base) / 'summary'
+        return path.exists()
+""",
+                # 4 files read ref.snapshot_id where SnapshotRef is behavior-bearing
+                "a.py": "x = ref.snapshot_id",
+                "b.py": "y = ref.snapshot_id",
+                "c.py": "z = ref.snapshot_id",
+                "d.py": "w = ref.snapshot_id",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_anemic_class_attrs_still_flagged(self, trees):
+        """A class with only data and dunders is the original smell —
+        still flag."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def __repr__(self):
+        return f'Config({self.timeout})'
+""",
+                "a.py": "x = config.timeout",
+                "b.py": "y = config.timeout",
+                "c.py": "z = config.timeout",
+                "d.py": "w = config.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_mixed_class_definitions_keep_flagging(self, trees):
+        """When the attr is defined in BOTH a behavior-bearing class and an
+        anemic class, we can't tell which one is being read — keep flagging."""
+        t = trees.files(
+            {
+                "rich.py": """\
+class Rich:
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def compute(self, other):
+        return self.timeout + other
+
+    def validate(self, value):
+        if value is None:
+            raise ValueError('no')
+        return True
+""",
+                "anemic.py": """\
+class Anemic:
+    def __init__(self, timeout):
+        self.timeout = timeout
+""",
+                "a.py": "x = obj.timeout",
+                "b.py": "y = obj.timeout",
+                "c.py": "z = obj.timeout",
+                "d.py": "w = obj.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        # `timeout` is defined in both Rich (behavior-bearing) and Anemic
+        # (data-only). The conservative call is to keep flagging — the
+        # reader might be looking at Anemic.timeout.
+        assert len(findings) == 1
+
+    def test_reexported_library_symbol_suppressed(self, trees):
+        """`log = logging.getLogger(...)` in one module, then `from that
+        module import log` in another — `log` in the importer is still a
+        library object, so `log.warning` reads suppress."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "_logging.py": """\
+import logging
+log = logging.getLogger(__name__)
+""",
+                "a.py": """\
+from _logging import log
+log.warning('a')
+""",
+                "b.py": """\
+from _logging import log
+log.warning('b')
+""",
+                "c.py": """\
+from _logging import log
+log.warning('c')
+""",
+                "d.py": """\
+from _logging import log
+log.warning('d')
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_reexport_of_reexport_propagates(self, trees):
+        """If A defines log (library-bound), B re-exports log from A, and C
+        imports log from B — fixed-point propagation should still mark log
+        as library-bound in C."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Alert:
+    def __init__(self):
+        self.warning = None
+""",
+                "first.py": """\
+import logging
+log = logging.getLogger(__name__)
+""",
+                "second.py": """\
+from first import log
+""",
+                "a.py": "from second import log\nlog.warning('a')",
+                "b.py": "from second import log\nlog.warning('b')",
+                "c.py": "from second import log\nlog.warning('c')",
+                "d.py": "from second import log\nlog.warning('d')",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_reexport_only_propagates_top_level_bindings(self, trees):
+        """An assignment inside a function isn't importable as a top-level
+        name, so re-export propagation should ignore it. If only an
+        in-function binding exists in the source module, the importer is
+        actually importing the name from somewhere else (or it'd fail at
+        import time) — we shouldn't claim it's library-bound."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Config:
+    def __init__(self):
+        self.timeout = 30
+""",
+                "src.py": """\
+import logging
+def _build():
+    # `log` here is local — not importable as `from src import log`
+    log = logging.getLogger('x')
+    return log
+log = something_else  # something_else isn't a library import
+""",
+                # 4 files import `log` from src and read log.timeout.
+                # `log` in src is NOT top-level library-bound, so the import
+                # doesn't suppress. (timeout is in project_attrs via Config.)
+                "a.py": "from src import log\nx = log.timeout",
+                "b.py": "from src import log\ny = log.timeout",
+                "c.py": "from src import log\nz = log.timeout",
+                "d.py": "from src import log\nw = log.timeout",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_library_typed_parameter_suppresses_reads(self, trees):
+        """`def helper(ctx: click.Context)` — the parameter is a library
+        object by type contract, so reads on it should suppress even if the
+        function isn't a Click callback or @pass_context-decorated."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+                "b.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+                "c.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+                "d.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_library_typed_param_via_from_import(self, trees):
+        """`def handle(resp: Response)` after `from requests import Response`
+        is just as library-typed as the dotted form."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Probe:
+    def __init__(self):
+        self.status_code = None
+""",
+                "a.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+                "b.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+                "c.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+                "d.py": """\
+from requests import Response
+def handle(resp: Response):
+    return resp.status_code
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_library_typed_param_optional_wrapper(self, trees):
+        """`Optional[click.Context]` / `click.Context | None` should also
+        count as library-typed."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Handler:
+    def __init__(self):
+        self.client = None
+""",
+                "a.py": """\
+import click
+from typing import Optional
+def helper(ctx: Optional[click.Context]):
+    return ctx.client
+""",
+                "b.py": """\
+import click
+def helper(ctx: click.Context | None):
+    return ctx.client
+""",
+                "c.py": """\
+import click
+from typing import Union
+def helper(ctx: Union[click.Context, None]):
+    return ctx.client
+""",
+                "d.py": """\
+import click
+def helper(ctx: click.Context):
+    return ctx.client
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 0
+
+    def test_project_typed_param_still_flagged(self, trees):
+        """A parameter annotated with a PROJECT type (e.g. AnalysisContext)
+        is NOT library-typed — reads on it should still flag."""
+        t = trees.files(
+            {
+                "context.py": """\
+class AnalysisContext:
+    def __init__(self):
+        self.all_trees = None
+""",
+                "a.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+                "b.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+                "c.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+                "d.py": """\
+from context import AnalysisContext
+def visit(ctx: AnalysisContext):
+    return ctx.all_trees
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+    def test_does_not_suppress_ctx_outside_click_function(self, trees):
+        """A `ctx` parameter on a non-Click function (e.g. AnalysisContext)
+        is NOT a Click Context — reads on it should still be flagged."""
+        t = trees.files(
+            {
+                "models.py": """\
+class Analysis:
+    def __init__(self):
+        self.tree_count = None
+""",
+                # Plain function with a ctx param, no Click signature/decorator
+                "a.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+                "b.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+                "c.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+                "d.py": """\
+def analyze(ctx, other_arg, more, args):
+    return ctx.tree_count
+""",
+            }
+        )
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+
+
+class TestRepeatedStringParsing:
+    def test_finds_same_split_index_in_3_locations(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'city = addr.split("|")[1]',
+                "b.py": 'city = address.split("|")[1]',
+                "c.py": 'city = loc.split("|")[1]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 1
+        assert '.split("|")[1]' in findings[0].message
+        assert "3 locations" in findings[0].message
+
+    def test_ignores_fewer_than_3(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'city = addr.split("|")[1]',
+                "b.py": 'city = addr.split("|")[1]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_finds_intermediate_variable_pattern(self, trees):
+        """parts = x.split(delim) then parts[N] is the real-world pattern."""
+        t = trees.files(
+            {
+                "a.py": """\
+def get_city(addr):
+    parts = addr.split("|")
+    return parts[1]
+""",
+                "b.py": """\
+def get_state(addr):
+    parts = addr.split("|")
+    return parts[2]
+""",
+                "c.py": """\
+def get_zip(addr):
+    parts = addr.split("|")
+    return parts[3]
+""",
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert '"|"' in messages
+
+    def test_finds_multiple_indices_same_delimiter(self, trees):
+        """3+ different indices with same delimiter = parsing a format."""
+        t = trees.code("""\
+street = addr.split("|")[0]
+city = addr.split("|")[1]
+state = addr.split("|")[2]
+zip_code = addr.split("|")[3]
+""")
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) >= 1
+        messages = " ".join(f.message for f in findings)
+        assert "different indices" in messages or ".split" in messages
+
+    def test_ignores_non_string_delimiter(self, trees):
+        t = trees.files(
+            {
+                "a.py": "x = data.split(delim)[0]",
+                "b.py": "x = data.split(delim)[0]",
+                "c.py": "x = data.split(delim)[0]",
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_skips_test_files(self, trees):
+        t = trees.files(
+            {
+                "tests/test_parse.py": """\
+x = data.split("|")[0]
+y = data.split("|")[1]
+z = data.split("|")[2]
+""",
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_different_delimiters_not_grouped(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = data.split("|")[0]',
+                "b.py": 'x = data.split(",")[0]',
+                "c.py": 'x = data.split(":")[0]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 0
+
+    def test_severity_is_medium(self, trees):
+        t = trees.files(
+            {
+                "a.py": 'x = s.split("|")[0]',
+                "b.py": 'x = s.split("|")[0]',
+                "c.py": 'x = s.split("|")[0]',
+            }
+        )
+        findings = check_repeated_string_parsing(t)
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM
+
+    def test_ignores_split_with_no_delimiter(self, trees):
+        """``s.split()`` splits on whitespace — there is no delimiter to group by."""
+        t = trees.files({name: "x = data.split()[0]" for name in ("a.py", "b.py", "c.py")})
+        assert check_repeated_string_parsing(t) == []
+
+    def test_ignores_non_string_literal_delimiter(self, trees):
+        t = trees.files({name: "x = data.split(3)[0]" for name in ("a.py", "b.py", "c.py")})
+        assert check_repeated_string_parsing(t) == []
+
+    def test_ignores_other_methods_than_split(self, trees):
+        t = trees.files({name: 'x = data.partition("~")[0]' for name in ("a.py", "b.py", "c.py")})
+        assert check_repeated_string_parsing(t) == []
+
+    def test_ignores_slice_and_non_integer_index(self, trees):
+        sources = ['a = d.split("~")[1:]', 'b = d.split("~")["k"]', 'c = d.split("~")[i]']
+        t = trees.files(dict(zip(("a.py", "b.py", "c.py"), sources, strict=True)))
+        assert check_repeated_string_parsing(t) == []
+
+    def test_ignores_negative_index(self, trees):
+        """``[-1]`` is a UnaryOp, not an int constant — the same rule as before."""
+        t = trees.files({name: 'x = data.split("~")[-1]' for name in ("a.py", "b.py", "c.py")})
+        assert check_repeated_string_parsing(t) == []
+
+    def test_ignores_subscript_on_variable_not_bound_by_split(self, trees):
+        body = "def f(raw):\n    other = raw.strip()\n    return other[1]\n"
+        t = trees.files({name: body for name in ("a.py", "b.py", "c.py")})
+        assert check_repeated_string_parsing(t) == []
+
+    def test_chained_and_two_step_forms_pool_together(self, trees):
+        """Both shapes feed one (delimiter, index) tally, so three files reach the threshold."""
+        two_step = 'def f(raw):\n    parts = raw.split("~")\n    return parts[1]\n'
+        t = trees.files(
+            {"a.py": 'x = raw.split("~")[1]', "b.py": two_step, "c.py": 'y = s.split("~")[1]'}
+        )
+        assert len(check_repeated_string_parsing(t)) == 1
+
+
+class TestScatteredConstantsContexts:
+    """Which parent position a literal has to sit in to be counted.
+
+    Each row is a one-line source repeated across three files, so a finding
+    means the position counts and no finding means it does not. The literal is
+    ``'zqvalue'`` — long enough and odd enough to clear the triviality filter.
+    """
+
+    COUNTED = (
+        "x = {v}",
+        "x: str = {v}",
+        "if y == {v}: pass",
+        "def f(a={v}): pass",
+        "def f(*, a={v}): pass",
+        "f(a={v})",
+        # The dict-access exemption covers the positional key only, so a
+        # keyword default on the same call is still a scattered constant
+        # when the call may be project code (the project defines ``pop``).
+        "class C:\n    def pop(self, k, default=None): pass\nC().pop('k', default={v})",
+    )
+
+    IGNORED = (
+        # Targets whose value repeats across files by design
+        "__all__ = {v}",
+        "default_auto_field = {v}",
+        # A log call's keyword is message plumbing, not a named constant
+        "log.info('m', extra={v})",
+        # A keyword to a call that resolves outside the analyzed code is that
+        # library's API contract (Phase 33-2): no analyzed code defines ``pop``.
+        "d.pop('k', default={v})",
+        # Positions the check deliberately stays out of
+        "config.get({v})",
+        "f({v})",
+        "d[{v}]",
+        "x = [{v}]",
+        "__all__ = [{v}]",
+        "x += {v}",
+    )
+
+    @staticmethod
+    def _findings(trees, source):
+        return check_scattered_constants(
+            trees.files(dict.fromkeys(("a.py", "b.py", "c.py"), source))
+        )
+
+    def test_counted_positions(self, trees):
+        for template in self.COUNTED:
+            assert self._findings(trees, template.format(v="'zqvalue'")), template
+
+    def test_ignored_positions(self, trees):
+        for template in self.IGNORED:
+            assert self._findings(trees, template.format(v="'zqvalue'")) == [], template
+
+    def test_negation_reports_only_the_negative_value(self, trees):
+        """The literal inside ``-9871`` is skipped; the expression wrapping it is reported."""
+        findings = self._findings(trees, "x = -9871")
+        assert len(findings) == 1
+        assert "-9871" in findings[0].message
+
+    def test_negative_float_counted(self, trees):
+        assert len(self._findings(trees, "x = -98.71")) == 1
+
+    def test_other_unary_operators_are_not_negative_literals(self, trees):
+        """Only ``USub`` makes a literal negative — ``~`` and ``+`` leave nothing to report."""
+        assert self._findings(trees, "x = ~9871") == []
+        assert self._findings(trees, "x = +9871") == []
+
+
+class TestShotgunSurgerySharedCollectors:
+    """The attribute, import and re-export collectors the checks share.
+
+    Each case drives ``check_shotgun_surgery`` over four accessing files — the
+    threshold — so that a finding means the collector recorded what it should.
+    """
+
+    ACCESSORS = ("a.py", "b.py", "c.py", "d.py")
+
+    def test_class_level_annotation_defines_the_attribute(self, trees):
+        """``deadline: int`` declares the attribute exactly as ``self.deadline = ...`` does."""
+        files = dict.fromkeys(self.ACCESSORS, "def f(config: Config):\n    x = config.deadline")
+        t = trees.files({"models.py": "class Config:\n    deadline: int\n", **files})
+        findings = check_shotgun_surgery(t)
+        assert len(findings) == 1
+        assert "defined on Config" in findings[0].message
+
+    def test_attribute_on_a_nested_class_belongs_to_the_outer_one(self, trees):
+        """The collector walks the whole class body, inner classes included."""
+        outer = "class Config:\n    class Nested:\n        deadline: int\n"
+        t = trees.files({"models.py": outer, **dict.fromkeys(self.ACCESSORS, "x = c.deadline")})
+        assert len(check_shotgun_surgery(t)) == 1
+
+    def test_dotted_import_alias_marks_the_receiver_as_library(self, trees):
+        """``import a.b.c as ET`` binds ``ET``, so ``ET.deadline`` is library API."""
+        body = "import xml.etree.ElementTree as ET\nx = ET.deadline\n"
+        files = dict.fromkeys(self.ACCESSORS, body)
+        t = trees.files({"models.py": "class Config:\n    deadline: int\n", **files})
+        assert check_shotgun_surgery(t) == []
+
+    def test_import_shapes_that_leave_the_receiver_project_side(self, trees):
+        """Neither shape binds the receiver to a library, so the read still counts.
+
+        ``import xml.etree`` binds only the dotted path's root, ``xml``; and
+        ``from . import models`` carries no module to classify, so it is
+        treated as a project import.
+        """
+        bodies = ("import xml.etree\nx = etree.deadline\n", "from . import m\nx = m.deadline\n")
+        for body in bodies:
+            files = dict.fromkeys(self.ACCESSORS, body)
+            t = trees.files({"models.py": "class Config:\n    deadline: int\n", **files})
+            assert len(check_shotgun_surgery(t)) == 1, body
+
+    def test_reexport_under_an_alias_carries_the_library_binding(self, trees):
+        """``from _logging import log as logger`` binds the alias, not the original name."""
+        source = "import logging\nlog = logging.getLogger(__name__)\n"
+        body = "from _logging import log as logger\nlogger.deadline\n"
+        files = dict.fromkeys(self.ACCESSORS, body)
+        t = trees.files(
+            {"models.py": "class Config:\n    deadline: int\n", "_logging.py": source, **files}
+        )
+        assert check_shotgun_surgery(t) == []

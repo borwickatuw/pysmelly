@@ -1,0 +1,41 @@
+"""Code smell checks.
+
+Import all check modules to trigger registration via @check decorator.
+"""
+
+from pysmelly.checks import (  # noqa: F401
+    architecture,
+    bypassed_helpers,
+    caller_decided,
+    caller_split,
+    callers,
+    constant_roles,
+    dead,
+    dual_stack,
+    history_age,
+    history_bugs,
+    history_coupling,
+    history_growth,
+    history_ratchets,
+    history_shape,
+    history_team,
+    imports,
+    inheritance,
+    literal_dispatch,
+    logging_smells,
+    migrations,
+    near_duplicates,
+    optional_fields,
+    patterns_control,
+    patterns_data,
+    patterns_misc,
+    patterns_naming,
+    reachability,
+    recommendations,
+    record_keys,
+    repetition,
+    return_shape,
+    singleton_param,
+    structure,
+    swallowed_kwargs,
+)

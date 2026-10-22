@@ -1,0 +1,268 @@
+[project]
+name = "pysmelly"
+dynamic = ["version"]
+description = "AST-based Python code smell detector for AI-assisted code review"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "University of Washington" }]
+keywords = ["python", "lint", "code-smell", "ast", "refactoring", "code-review"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = ["click>=8.0"]
+
+[project.scripts]
+pysmelly = "pysmelly.cli:cli"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pysmelly"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pysmelly"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.4",
+    "pyright>=1.1",
+    "vulture>=2.15",
+    "pylint>=3.3",
+    "bandit>=1.7",
+    "detect-secrets>=1.5",
+    "fileplan==0.8.0",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.uv]
+default-groups = ["dev", "test"]
+
+[tool.ruff]
+line-length = 100
+# mdformat owns markdown (make format-docs); keep ruff out of .md so two
+# formatters never contend over the Python fences in docs.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+preview = true
+select = [
+    "A",      # flake8-builtins
+    "ARG",    # flake8-unused-arguments
+    "B",      # flake8-bugbear
+    "BLE",    # flake8-blind-except
+    "C90",    # mccabe
+    "E",      # pycodestyle errors
+    "ERA",    # eradicate
+    "F",      # pyflakes
+    "FBT",    # flake8-boolean-trap
+    "I",      # isort — ruff format normalizes an import block but never
+              # reorders it, so this is what replaces isort
+    "N",      # pep8-naming
+    "PL",     # pylint
+    "S",      # flake8-bandit
+    "SIM",    # flake8-simplify
+    "T20",    # flake8-print
+    "TRY",    # tryceratops
+    "UP",     # pyupgrade
+    "W",      # pycodestyle warnings
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.pylint]
+max-args = 6
+max-statements = 60
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",    # assert in tests
+    "ARG002",  # unused fixture args
+    "PLR6301", # methods could be functions
+    "PLR2004", # magic values in assertions
+    "PLC2701", # private name imports
+    "PLC1901", # empty string comparisons
+    "S603",    # subprocess calls in test fixtures
+    "S404",    # subprocess import in test fixtures
+    "S607",    # partial executable paths in test fixtures
+    "S105",    # hardcoded password (test fixtures use 'pickles' etc)
+    "S106",    # hardcoded password kwarg
+    "S311",    # non-cryptographic random in test fixtures
+    "T20",     # print in tests is OK
+    "PLR0915", # many statements in test functions
+    "PLR0912", # many branches
+    "C901",    # complexity
+    "FBT001",  # boolean positional in test helper params
+    "FBT002",  # boolean default in test helper params
+    "PLR0913", # many args (test fixtures)
+    "PLR0914", # many locals in test setup
+    "PLR0911", # many returns
+    "PLR0904", # many public methods on test classes
+    "PLR0916", # many boolean expressions
+    "PLR0917", # many positional args
+    "PLR1702", # nested blocks in test setup
+    "E501",    # long lines in test data fixtures
+    "ERA001",  # commented-out code in test fixtures (often shows the literal)
+    "TRY003",  # error messages in test fixtures
+    "SIM102",  # nested ifs in tests
+    "SIM103",  # needless bool in tests
+    "SIM105",  # try/except/pass in tests
+    "PLR6201", # tuple membership in tests
+    "PLC0415", # local imports in tests
+    "F841",    # unused vars in tests (sometimes intentional)
+    "B007",    # unused loop var in tests
+]
+"src/pysmelly/cli.py" = [
+    "T20",     # print is the UI for this CLI tool
+    "PLR0913", # CLI commands have many flags
+    "PLR0915", # CLI commands span many statements
+    "PLR0912", # CLI commands have many branches
+    "C901",    # CLI commands are inherently complex
+    "FBT001",  # boolean args injected by Click framework
+    "FBT002",  # boolean defaults from Click flags
+    "PLR0911", # CLI dispatch has many return paths
+    "PLR0914", # CLI commands have many locals
+    "PLR0917", # CLI commands have many positional args
+    "PLR1702", # CLI dispatch has nested blocks
+    "TRY003",  # CLI error messages
+    "S404",    # subprocess import for git is intentional
+    "S603",    # git subprocess calls are intentional
+    "S607",    # git on PATH is intentional
+    "E501",    # Click help strings can be long
+]
+"src/pysmelly/checks/*.py" = [
+    "PLR0913", # check functions take context + many params
+    "PLR0915", # check functions span many statements (analyzing code)
+    "PLR0912", # check functions have many branches (different cases)
+    "C901",    # check functions are inherently complex (AST analysis)
+    "PLR2004", # check thresholds (like "5 isinstance checks") are deliberate
+    "PLR0911", # check functions have many early returns (guards)
+    "PLR0914", # AST analysis needs many locals
+    "PLR0904", # check classes have many public methods
+    "PLR0916", # complex AST conditions
+    "PLR0917", # check helpers have many positional args
+    "PLR1702", # AST walking has deeply nested blocks
+    "TRY003",  # check error messages
+    "SIM103",  # explicit booleans more readable in check logic
+    "ERA001",  # code-pattern comments document what AST shapes are matched
+    "SIM102",  # nested ifs (type check + attr check) are clearer than combined
+    "SIM108",  # nested ifs sometimes clearer than ternary in AST analysis
+    "PLW2901", # loop var redefinition in AST iteration
+    "B904",    # raising in except without `from` is fine for re-raising context
+]
+"src/pysmelly/output.py" = [
+    "T20",     # print is the output for this tool
+    "PLR0911", # formatter has many return paths
+    "PLR1702", # formatter has nested branches
+    "C901",    # format_text complexity is inherent to multi-format output
+    "PLR0912", # format_text has many branches (one per output mode)
+    "FBT001",  # summary: bool param to format_text is keyword-friendly via Click
+    "FBT002",  # summary default
+    "PLR2004", # convergence threshold (>=3 checks) is documented
+    "S311",    # random.choice for taglines is not security-sensitive
+]
+"src/pysmelly/git_history.py" = [
+    "S603",    # git subprocess calls are intentional
+    "S607",    # git on PATH is intentional
+    "S404",    # subprocess import is intentional
+    "PLR0915", # git parsing has many statements
+    "PLR0912", # git parsing has many branches
+    "C901",    # git parsing complexity
+    "PLR0913", # git parsers take many params
+    "PLR0914", # git parsers have many locals
+    "PLR0911", # git parsing has many early returns
+    "PLR0916", # complex commit classification
+    "PLR0917", # git parsers take many positional args
+    "PLR1702", # git parsing has nested loops
+    "TRY003",  # git parsing error messages
+    "PLR2004", # message length thresholds, parts.split counts
+    "PLW2901", # loop var stripping (record/line) is idiomatic
+]
+"src/pysmelly/discovery.py" = [
+    "S603",    # git subprocess calls are intentional
+    "S607",    # git on PATH is intentional
+    "S404",    # subprocess import is intentional
+]
+"src/pysmelly/config.py" = [
+    "TRY003",  # config validation error messages
+    "T20",     # print errors to stderr
+    "C901",    # _validate_config has many cases inherent to validation
+    "PLR0912", # _validate_config has many branches per key type
+]
+"src/pysmelly/context.py" = [
+    "PLR0914", # AST context has many cached indices
+    "FBT001",  # verbose flag is part of the public API
+    "PLC0415", # lazy imports of helpers avoid circular dependencies
+]
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+skips = [
+    "B101", # pairs with ruff S101 ("tests/*" per-file-ignores; bandit excludes tests/ anyway)
+    "B404", # pairs with ruff S404 (cli.py, git_history.py, discovery.py per-file-ignores)
+    "B603", # pairs with ruff S603 (cli.py, git_history.py, discovery.py per-file-ignores)
+    "B607", # pairs with ruff S607 (cli.py, discovery.py per-file-ignores: git on PATH is intentional)
+    "B311", # pairs with ruff S311 (output.py per-file-ignores: random.choice for taglines)
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--strict-markers -ra --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+# Ratchet: kept just under the measured total so a real regression fails the
+# gate instead of coasting under a decorative floor. Re-measure with
+# `make test-cov` before raising it.
+fail_under = 85
+show_missing = true
+
+[tool.pysmelly]
+# Two repo-wide skips, each with its own rationale and its own trigger
+# (settled 2026-09-22, plan item 15). The register rows in docs/PYSMELLY.md
+# carry the derive commands; do not write counts here.
+#
+# isinstance-chain — dispatch on AST node type is an isinstance chain by
+# construction: you cannot add methods to ast.List. Covers node-type dispatch
+# ONLY. A chain dispatching on pysmelly's own classification is a finding to
+# fix, not to skip (docs/PYSMELLY.md, "What the isinstance-chain skip does
+# not cover"). Re-evaluate at the second following PYSMELLY-REVIEW audit.
+#
+# arrow-code — depth is a property of how a traversal is written, not of the
+# AST: the 2026-09-18 review and plan item 19 flattened walks without a single
+# suppression. What the skip still covers is the nesting a flattened walk
+# would hide rather than simplify. Re-evaluate at the second following
+# PYSMELLY-REVIEW audit, or as soon as `uv run pysmelly . --check arrow-code`
+# reports nothing, at which point the skip is dead and comes out.
+#
+# (shotgun-surgery is no longer skipped globally; the reasoning now sits with
+# the inline ignore on CommitInfo in src/pysmelly/git_history.py.)
+skip = ["isinstance-chain", "arrow-code"]

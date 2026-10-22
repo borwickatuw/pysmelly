@@ -1,0 +1,21 @@
+<!-- pysmelly-guidance 0679ec1c1685 -->
+
+# pysmelly — findings register and review conventions
+
+Run `make pysmelly` from the repo root. The recipe scans `.`, never `src/`:
+pysmelly loads `[tool.pysmelly]` from the **target directory's**
+`pyproject.toml` and does not walk upward, so a `src/` target runs
+config-less with the `tests/` + `conftest.py` exclude silently disabled.
+`bin/report` parses this same recipe for its pysmelly column, so the
+report measures whatever the recipe names; `tests/test_pysmelly_target.py`
+asserts every target it names carries a `[tool.pysmelly]` table. Full
+guidance: https://github.com/borwickatuw/pysmelly#readme, or regenerate the
+generic guide with `pysmelly init --short` — to a scratch path, since
+everything below this paragraph is hand-maintained.
+
+The target runs the source checks only. The history checks are a separate
+command and nothing in `make check` reaches them:
+
+```bash
+pysmelly git-history --more-please    # stabilization, coupling, growth
+```

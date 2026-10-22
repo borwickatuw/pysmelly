@@ -1,0 +1,47 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+
+# fileplan session state (lock, claims)
+local/
+
+# Claude Code local settings, minus the tracked skills and shared settings
+.claude/*
+!.claude/skills/
+!.claude/settings.json
+
+# detect-secrets bootstrap temp file (see SECURITY.md Practice #8)
+.secrets.baseline.tmp

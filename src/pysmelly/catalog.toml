@@ -1,0 +1,202 @@
+# =============================================================================
+# Unconditional — better alternatives exist
+# =============================================================================
+
+[[patterns]]
+name = "urllib-to-requests"
+description = "HTTP client"
+imports = ["urllib.request", "http.client"]
+suggest = "requests or httpx"
+
+[[patterns]]
+name = "argparse-to-click"
+description = "complex CLI argument parsing"
+imports = ["argparse"]
+condition_fn = "complex_argparse"
+suggest = "click or typer"
+
+[[patterns]]
+name = "xml-minidom"
+description = "XML DOM parsing"
+imports = ["xml.dom.minidom"]
+suggest = "xml.etree.ElementTree or lxml"
+
+[[patterns]]
+name = "configparser-to-toml"
+description = "config file parsing"
+imports = ["configparser"]
+condition_fn = "chooses_ini_format"
+suggest = "tomllib (stdlib) + tomli-w, or pydantic-settings"
+
+[[patterns]]
+name = "xmlrpc-obsolete"
+description = "XML-RPC protocol"
+imports = ["xmlrpc.client", "xmlrpc.server"]
+suggest = "HTTP + JSON via requests/httpx (XML-RPC is effectively dead)"
+
+[[patterns]]
+name = "ftplib-insecure"
+description = "FTP file transfer"
+imports = ["ftplib"]
+suggest = "paramiko (SFTP) or cloud storage SDKs"
+
+# =============================================================================
+# Conditional — already using the better thing in this codebase
+# =============================================================================
+
+[[patterns]]
+name = "os-path-vs-pathlib"
+description = "path manipulation"
+imports = ["os.path"]
+condition = "also-imports:pathlib"
+suggest = "pathlib (already used in codebase)"
+
+[[patterns]]
+name = "unittest-vs-pytest"
+description = "test framework"
+imports = ["unittest"]
+exclude_imports = ["unittest.mock"]
+condition = "also-imports:pytest"
+suggest = "pytest (already used in codebase)"
+
+[[patterns]]
+name = "logging-vs-structlog"
+description = "structured logging"
+imports = ["logging"]
+condition = "also-imports:structlog"
+suggest = "structlog (already used in codebase)"
+
+[[patterns]]
+name = "sqlite3-vs-sqlalchemy"
+description = "database access"
+imports = ["sqlite3"]
+condition = "also-imports:sqlalchemy"
+suggest = "sqlalchemy (already used in codebase)"
+
+[[patterns]]
+name = "threading-vs-futures"
+description = "concurrency primitives"
+imports = ["threading", "multiprocessing"]
+condition = "also-imports:concurrent.futures"
+suggest = "concurrent.futures (already used in codebase)"
+
+# =============================================================================
+# Deprecated stdlib — removed in recent Python versions
+# =============================================================================
+
+[[patterns]]
+name = "cgi-removed"
+description = "CGI scripting"
+imports = ["cgi", "cgitb"]
+suggest = "flask, fastapi, or any WSGI/ASGI framework (removed in Python 3.13)"
+
+[[patterns]]
+name = "imp-removed"
+description = "import machinery"
+imports = ["imp"]
+suggest = "importlib (removed in Python 3.12)"
+
+[[patterns]]
+name = "distutils-removed"
+description = "package building"
+imports = ["distutils"]
+suggest = "setuptools or hatchling (removed in Python 3.12)"
+
+[[patterns]]
+name = "telnetlib-removed"
+description = "Telnet client"
+imports = ["telnetlib"]
+suggest = "paramiko or asyncssh (removed in Python 3.13)"
+
+[[patterns]]
+name = "nntplib-removed"
+description = "NNTP client"
+imports = ["nntplib"]
+suggest = "HTTP-based APIs (removed in Python 3.13)"
+
+# =============================================================================
+# Deprecated third-party — superseded or obsolete
+# =============================================================================
+
+[[patterns]]
+name = "pkg-resources-deprecated"
+description = "package metadata"
+imports = ["pkg_resources"]
+suggest = "importlib.metadata + importlib.resources (pkg_resources is deprecated)"
+
+[[patterns]]
+name = "nose-deprecated"
+description = "test runner"
+imports = ["nose"]
+suggest = "pytest (nose is unmaintained)"
+
+[[patterns]]
+name = "mock-standalone"
+description = "test mocking"
+imports = ["mock"]
+suggest = "unittest.mock (stdlib) or pytest-mock"
+
+[[patterns]]
+name = "six-obsolete"
+description = "Python 2/3 compatibility"
+imports = ["six"]
+suggest = "native Python 3 (six is unnecessary on Python 3)"
+
+# =============================================================================
+# Pairs — two libraries that do one job (dual-stack-dependency)
+# =============================================================================
+#
+# A pair is reported when production code uses both sides, the minority side
+# has under 30% of the use sites, and its imports are older than the
+# majority's (git blame). Which side is the minority is measured, not
+# declared, so the order of the sides does not matter. A side's
+# `no_substitute` lists names the other side has no replacement for; their
+# uses do not count, since they cannot move.
+
+[[pairs]]
+name = "requests-httpx"
+description = "HTTP requests"
+sides = [
+    { label = "requests", imports = ["requests"] },
+    { label = "httpx", imports = ["httpx"] },
+]
+
+[[pairs]]
+name = "os-path-pathlib"
+description = "path manipulation"
+sides = [
+    # pathlib has no lexical normalization, common-path, case-folding or
+    # environment-variable expansion.
+    { label = "os.path", imports = ["os.path"], no_substitute = [
+        "os.path.normpath",
+        "os.path.normcase",
+        "os.path.commonpath",
+        "os.path.commonprefix",
+        "os.path.expandvars",
+    ] },
+    { label = "pathlib", imports = ["pathlib"] },
+]
+
+[[pairs]]
+name = "argparse-click"
+description = "command-line parsing"
+sides = [
+    { label = "argparse", imports = ["argparse"] },
+    { label = "click", imports = ["click"] },
+]
+
+[[pairs]]
+name = "attrs-dataclasses"
+description = "record classes"
+sides = [
+    { label = "attrs", imports = ["attr", "attrs"] },
+    { label = "dataclasses", imports = ["dataclasses"] },
+]
+
+[[pairs]]
+name = "json-orjson"
+description = "JSON encoding"
+sides = [
+    { label = "json", imports = ["json"] },
+    { label = "orjson", imports = ["orjson"] },
+]
